@@ -42,6 +42,9 @@
   "build": {
     "appId": "com.bullsnote.app",
     "productName": "BullsNote",
+    "directories": {
+      "output": "release"
+    },
     "files": [
       "dist/**/*",
       "electron/**/*",

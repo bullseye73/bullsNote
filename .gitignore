@@ -1,11 +1,43 @@
+# 의존성 / 빌드 산출물
 node_modules
 dist
 release
 out
 *.log
 tsconfig.tsbuildinfo
+
+# Electron 패키징 산출물 (혹시 커스텀 경로로 나올 경우)
+*.exe
+*.msi
+*.dmg
+*.pkg
+*.AppImage
+*.deb
+*.rpm
+*.snap
+*.zip
+
+# OS / 에디터
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 환경변수 / 시크릿 (토큰·키 절대 커밋 금지)
+.env
+.env.*
+!.env.example
+
+# npm 디버그 로그
+npm-debug.log*
+
+# 일회성 테스트 잔재
 $prof
 ederr.log
 edom.html
 etest-capture.js
+etest-capture-*.js
 /etest/
