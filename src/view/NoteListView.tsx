@@ -13,8 +13,7 @@ import {
   IconTrash,
 } from '@tabler/icons-react';
 import { useState } from 'react';
-import { TreeNode } from '../model/Note';
-import { getPathTitles } from '../model/Note';
+import { PastelColorConfig, PASTEL_COLORS, getPastelConfig, TreeNode, getPathTitles } from '../model/Note';
 import { noteBodyText } from '../model/HashtagService';
 import { useNotes } from '../controller/NotesController';
 
@@ -23,8 +22,34 @@ function excerpt(content: string): string {
   return t.length > 120 ? `${t.slice(0, 120)}…` : t;
 }
 
-function RowActions({ id, hasChildren, hasPrevSibling, hasParent }: { id: string; hasChildren: boolean; hasPrevSibling: boolean; hasParent: boolean }) {
-  const { create, duplicate, remove, togglePin, toggleFavorite, indent, outdent, notes, projects, moveNoteToProject } = useNotes();
+function RowActions({
+  id,
+  hasChildren,
+  hasPrevSibling,
+  hasParent,
+  active,
+  colorCfg,
+}: {
+  id: string;
+  hasChildren: boolean;
+  hasPrevSibling: boolean;
+  hasParent: boolean;
+  active: boolean;
+  colorCfg: PastelColorConfig;
+}) {
+  const {
+    create,
+    duplicate,
+    remove,
+    togglePin,
+    toggleFavorite,
+    indent,
+    outdent,
+    updateColor,
+    notes,
+    projects,
+    moveNoteToProject,
+  } = useNotes();
   const note = notes.find((n) => n.id === id)!;
   const descendantCount = (() => {
     let c = 0;
@@ -43,56 +68,123 @@ function RowActions({ id, hasChildren, hasPrevSibling, hasParent }: { id: string
     }
     return c;
   })();
+
   return (
     <Group gap={2} wrap="nowrap" onClick={(e) => e.stopPropagation()}>
-      {/* 생성: 초록 */}
+      {/* 생성: 하위 노트 추가 */}
       <Tooltip label="하위 노트 추가">
-        <ActionIcon size="sm" variant="light" color="green" onClick={() => create(id)} aria-label="하위 노트 추가">
+        <ActionIcon
+          size="sm"
+          variant="subtle"
+          onClick={() => create(id)}
+          aria-label="하위 노트 추가"
+          style={{
+            color: active ? '#087f5b' : 'var(--mantine-color-green-6)',
+            backgroundColor: active ? 'rgba(8, 127, 91, 0.12)' : undefined,
+          }}
+        >
           <IconPlus size={14} />
         </ActionIcon>
       </Tooltip>
-      {/* 이동: 회색 */}
+      {/* 이동: 들여쓰기 */}
       <Tooltip label="들여쓰기 (이전 형제의 자식으로)">
-        <ActionIcon size="sm" variant="subtle" color="gray" disabled={!hasPrevSibling} onClick={() => indent(id)} aria-label="들여쓰기">
+        <ActionIcon
+          size="sm"
+          variant="subtle"
+          disabled={!hasPrevSibling}
+          onClick={() => indent(id)}
+          aria-label="들여쓰기"
+          style={{
+            color: active ? (hasPrevSibling ? colorCfg.iconColor : 'rgba(0,0,0,0.25)') : undefined,
+          }}
+        >
           <IconIndentIncrease size={14} />
         </ActionIcon>
       </Tooltip>
+      {/* 이동: 내어쓰기 */}
       <Tooltip label="내어쓰기 (부모와 같은 레벨로)">
-        <ActionIcon size="sm" variant="subtle" color="gray" disabled={!hasParent} onClick={() => outdent(id)} aria-label="내어쓰기">
+        <ActionIcon
+          size="sm"
+          variant="subtle"
+          disabled={!hasParent}
+          onClick={() => outdent(id)}
+          aria-label="내어쓰기"
+          style={{
+            color: active ? (hasParent ? colorCfg.iconColor : 'rgba(0,0,0,0.25)') : undefined,
+          }}
+        >
           <IconIndentDecrease size={14} />
         </ActionIcon>
       </Tooltip>
-      {/* 상태: 활성 시 채움색 */}
+      {/* 상태: 상단 고정 */}
       <Tooltip label={note.pinned ? '핀 해제' : '상단 고정'}>
         <ActionIcon
           size="sm"
           variant={note.pinned ? 'filled' : 'subtle'}
-          color="blue"
+          color={note.pinned ? 'blue' : undefined}
           onClick={() => togglePin(id)}
           aria-label="핀"
+          style={{
+            color: !note.pinned && active ? colorCfg.iconColor : undefined,
+            backgroundColor: note.pinned && active ? colorCfg.border : undefined,
+          }}
         >
           <IconPin size={14} />
         </ActionIcon>
       </Tooltip>
+      {/* 상태: 즐겨찾기 */}
       <Tooltip label={note.favorite ? '즐겨찾기 해제' : '즐겨찾기 등록'}>
         <ActionIcon
           size="sm"
           variant={note.favorite ? 'filled' : 'subtle'}
-          color="yellow"
+          color={note.favorite ? 'yellow' : undefined}
           onClick={() => toggleFavorite(id)}
           aria-label="즐겨찾기"
+          style={{
+            color: !note.favorite && active ? colorCfg.iconColor : undefined,
+          }}
         >
           <IconStar size={14} />
         </ActionIcon>
       </Tooltip>
-      {/* 관리 메뉴: 복제/이동/삭제로 그룹화 */}
+      {/* 관리 메뉴 */}
       <Menu position="bottom-end" withArrow shadow="md" withinPortal>
         <Menu.Target>
-          <ActionIcon size="sm" variant="subtle" color="gray" aria-label="노트 관리 메뉴">
+          <ActionIcon
+            size="sm"
+            variant="subtle"
+            aria-label="노트 관리 메뉴"
+            style={{
+              color: active ? colorCfg.iconColor : undefined,
+            }}
+          >
             <IconDots size={14} />
           </ActionIcon>
         </Menu.Target>
         <Menu.Dropdown>
+          <Menu.Label>노트 색상 변경</Menu.Label>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 5, padding: '4px 8px' }}>
+            {Object.values(PASTEL_COLORS).map((c) => {
+              const isCurrent = (note.color || 'blue') === c.id;
+              return (
+                <Tooltip key={c.id} label={c.name} position="top" withArrow>
+                  <ActionIcon
+                    size="sm"
+                    radius="xl"
+                    onClick={() => updateColor(id, c.id)}
+                    style={{
+                      backgroundColor: c.bg,
+                      border: `2px solid ${c.border}`,
+                      boxShadow: isCurrent ? `0 0 0 2px ${c.textColor}` : undefined,
+                      transform: isCurrent ? 'scale(1.2)' : 'none',
+                      transition: 'all 0.15s ease',
+                    }}
+                  />
+                </Tooltip>
+              );
+            })}
+          </div>
+          <Menu.Divider />
           <Menu.Label>노트 관리</Menu.Label>
           <Menu.Item leftSection={<IconCopy size={14} />} onClick={() => duplicate(id)}>
             복제
@@ -133,21 +225,37 @@ function RowActions({ id, hasChildren, hasPrevSibling, hasParent }: { id: string
   );
 }
 
-function TreeRow({ node, depth, prevSibling, collapsed, onToggle }: { node: TreeNode; depth: number; prevSibling: boolean; collapsed: Set<string>; onToggle(id: string): void }) {
+function TreeRow({
+  node,
+  depth,
+  prevSibling,
+  collapsed,
+  onToggle,
+}: {
+  node: TreeNode;
+  depth: number;
+  prevSibling: boolean;
+  collapsed: Set<string>;
+  onToggle(id: string): void;
+}) {
   const { selectedId, select, setActiveTag } = useNotes();
   const n = node.note;
   const active = n.id === selectedId;
   const isCollapsed = collapsed.has(n.id);
+  const cfg = getPastelConfig(n.color);
+
   return (
     <>
       <Card
         withBorder
         shadow={active ? 'sm' : 'none'}
+        className={active ? 'active-pastel-card' : 'inactive-note-card'}
         style={{
           cursor: 'pointer',
           marginLeft: depth * 16,
-          borderColor: active ? 'var(--mantine-color-blue-5)' : undefined,
-          background: active ? 'var(--mantine-color-blue-0)' : undefined,
+          borderColor: active ? cfg.border : undefined,
+          borderLeft: active ? `5px solid ${cfg.border}` : `4px solid ${cfg.border}`,
+          background: active ? cfg.bg : undefined,
         }}
         onClick={() => select(n.id)}
         p="xs"
@@ -163,24 +271,50 @@ function TreeRow({ node, depth, prevSibling, collapsed, onToggle }: { node: Tree
                   onToggle(n.id);
                 }}
                 aria-label={isCollapsed ? '펼치기' : '접기'}
+                style={{
+                  color: active ? cfg.iconColor : undefined,
+                }}
               >
                 {isCollapsed ? <IconChevronRight size={14} /> : <IconChevronDown size={14} />}
               </ActionIcon>
             ) : (
               <span style={{ width: 22, flexShrink: 0 }} />
             )}
-            <Text fw={600} truncate size="sm">
+            <Text fw={700} truncate size="sm" style={{ color: active ? cfg.textColor : undefined }}>
               {n.title || '제목 없음'}
             </Text>
             {node.children.length > 0 && (
-              <Badge size="xs" variant="light" style={{ flexShrink: 0 }}>
+              <Badge
+                size="xs"
+                variant={active ? 'filled' : 'light'}
+                style={{
+                  flexShrink: 0,
+                  backgroundColor: active ? cfg.badgeBg : undefined,
+                  color: active ? cfg.badgeColor : undefined,
+                  border: 'none',
+                }}
+              >
                 {node.children.length}
               </Badge>
             )}
           </Group>
-          <RowActions id={n.id} hasChildren={node.children.length > 0} hasPrevSibling={prevSibling} hasParent={n.parentId !== null} />
+          <RowActions
+            id={n.id}
+            hasChildren={node.children.length > 0}
+            hasPrevSibling={prevSibling}
+            hasParent={n.parentId !== null}
+            active={active}
+            colorCfg={cfg}
+          />
         </Group>
-        <Text size="xs" c="dimmed" lineClamp={2} mt={2} pl={24}>
+        <Text
+          size="xs"
+          lineClamp={2}
+          mt={2}
+          pl={24}
+          c={active ? undefined : 'dimmed'}
+          style={{ color: active ? cfg.dimmedColor : undefined }}
+        >
           {excerpt(n.content) || '내용 없음'}
         </Text>
         <Group gap={4} mt={4} pl={24}>
@@ -188,8 +322,13 @@ function TreeRow({ node, depth, prevSibling, collapsed, onToggle }: { node: Tree
             <Badge
               key={t}
               size="xs"
-              variant="light"
-              style={{ cursor: 'pointer' }}
+              variant={active ? 'filled' : 'light'}
+              style={{
+                cursor: 'pointer',
+                backgroundColor: active ? cfg.badgeBg : undefined,
+                color: active ? cfg.badgeColor : undefined,
+                border: 'none',
+              }}
               onClick={(e) => {
                 e.stopPropagation();
                 setActiveTag(t);
@@ -202,7 +341,14 @@ function TreeRow({ node, depth, prevSibling, collapsed, onToggle }: { node: Tree
       </Card>
       {!isCollapsed &&
         node.children.map((c, i) => (
-          <TreeRow key={c.note.id} node={c} depth={depth + 1} prevSibling={i > 0} collapsed={collapsed} onToggle={onToggle} />
+          <TreeRow
+            key={c.note.id}
+            node={c}
+            depth={depth + 1}
+            prevSibling={i > 0}
+            collapsed={collapsed}
+            onToggle={onToggle}
+          />
         ))}
     </>
   );
@@ -234,28 +380,42 @@ export function NoteListView() {
           {flat.map((n) => {
             const active = n.id === selectedId;
             const path = getPathTitles(notes, n.id);
+            const cfg = getPastelConfig(n.color);
             return (
               <Card
                 key={n.id}
                 withBorder
                 shadow={active ? 'sm' : 'none'}
+                className={active ? 'active-pastel-card' : 'inactive-note-card'}
                 style={{
                   cursor: 'pointer',
-                  borderColor: active ? 'var(--mantine-color-blue-5)' : undefined,
-                  background: active ? 'var(--mantine-color-blue-0)' : undefined,
+                  borderColor: active ? cfg.border : undefined,
+                  borderLeft: active ? `5px solid ${cfg.border}` : `4px solid ${cfg.border}`,
+                  background: active ? cfg.bg : undefined,
                 }}
                 onClick={() => select(n.id)}
                 p="xs"
               >
                 {path.length > 1 && (
-                  <Text size="xs" c="dimmed" truncate>
+                  <Text
+                    size="xs"
+                    c={active ? undefined : 'dimmed'}
+                    style={{ color: active ? cfg.dimmedColor : undefined }}
+                    truncate
+                  >
                     {path.slice(0, -1).join(' / ')} /
                   </Text>
                 )}
-                <Text fw={600} truncate size="sm">
+                <Text fw={700} truncate size="sm" style={{ color: active ? cfg.textColor : undefined }}>
                   {n.title || '제목 없음'}
                 </Text>
-                <Text size="xs" c="dimmed" lineClamp={2} mt={2}>
+                <Text
+                  size="xs"
+                  c={active ? undefined : 'dimmed'}
+                  style={{ color: active ? cfg.dimmedColor : undefined }}
+                  lineClamp={2}
+                  mt={2}
+                >
                   {excerpt(n.content) || '내용 없음'}
                 </Text>
                 <Group gap={4} mt={4}>
@@ -263,8 +423,13 @@ export function NoteListView() {
                     <Badge
                       key={t}
                       size="xs"
-                      variant="light"
-                      style={{ cursor: 'pointer' }}
+                      variant={active ? 'filled' : 'light'}
+                      style={{
+                        cursor: 'pointer',
+                        backgroundColor: active ? cfg.badgeBg : undefined,
+                        color: active ? cfg.badgeColor : undefined,
+                        border: 'none',
+                      }}
                       onClick={(e) => {
                         e.stopPropagation();
                         setActiveTag(t);

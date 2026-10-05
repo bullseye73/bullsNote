@@ -56,6 +56,7 @@ function migrate(raw: unknown): Note[] {
         id: n.id as string,
         title: typeof n.title === 'string' ? n.title : '제목 없음',
         projectId,
+        color: typeof (n as { color?: unknown }).color === 'string' ? (n as { color: string }).color : 'blue',
         content: looksLikeHtml(content) ? htmlToMarkdown(content) : content,
         tags: Array.isArray(n.tags) ? n.tags.filter((t: unknown) => typeof t === 'string') : [],
         pinned: !!n.pinned,
@@ -130,6 +131,7 @@ export function seedNotes(): Note[] {
       id: 'seed-1',
       title: 'BullsNote 시작하기 #환영',
       projectId: DEFAULT_PROJECT_ID,
+      color: 'blue',
       content: [
         '## 노션처럼 메모하세요',
         '',
@@ -153,6 +155,7 @@ export function seedNotes(): Note[] {
       id: 'seed-1-1',
       title: '마크다운 치트시트',
       projectId: DEFAULT_PROJECT_ID,
+      color: 'mint',
       content: [
         '# 제목 1',
         '## 제목 2',
@@ -183,6 +186,7 @@ export function seedNotes(): Note[] {
       id: 'seed-2',
       title: '주간 회의록 #회의록',
       projectId: DEFAULT_PROJECT_ID,
+      color: 'peach',
       content: ['참석: 팀 전원', '', '- 안건 1: 릴리즈 일정 #프로젝트', '- 안건 2: 버그 트리아지 #버그'].join('\n'),
       tags: ['회의록', '프로젝트', '버그'],
       pinned: false,

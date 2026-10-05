@@ -24,6 +24,109 @@ export function createProjectId(): string {
   return `proj-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
+export interface PastelColorConfig {
+  id: string;
+  name: string;
+  /** 밝은 파스텔 배경색 */
+  bg: string;
+  /** 선택 시 강조 테두리 색 */
+  border: string;
+  /** 파스텔 배경 위의 본문 텍스트 색 (다크모드에서도 완벽한 가독성을 제공하는 짙은 톤) */
+  textColor: string;
+  /** 파스텔 배경 위의 보조/요약 텍스트 색 */
+  dimmedColor: string;
+  /** 태그 뱃지 배경색 */
+  badgeBg: string;
+  /** 태그 뱃지 글자색 */
+  badgeColor: string;
+  /** 아이콘 버튼 색상 */
+  iconColor: string;
+}
+
+export const PASTEL_COLORS: Record<string, PastelColorConfig> = {
+  blue: {
+    id: 'blue',
+    name: '스카이 블루',
+    bg: '#e7f5ff',
+    border: '#339af0',
+    textColor: '#183247',
+    dimmedColor: '#365873',
+    badgeBg: 'rgba(24, 50, 71, 0.12)',
+    badgeColor: '#183247',
+    iconColor: '#183247',
+  },
+  mint: {
+    id: 'mint',
+    name: '민트 그린',
+    bg: '#e6fcf5',
+    border: '#20c997',
+    textColor: '#0c382e',
+    dimmedColor: '#2b5c50',
+    badgeBg: 'rgba(12, 56, 46, 0.12)',
+    badgeColor: '#0c382e',
+    iconColor: '#0c382e',
+  },
+  yellow: {
+    id: 'yellow',
+    name: '버터 옐로우',
+    bg: '#fff9db',
+    border: '#fcc419',
+    textColor: '#493803',
+    dimmedColor: '#6d5718',
+    badgeBg: 'rgba(73, 56, 3, 0.12)',
+    badgeColor: '#493803',
+    iconColor: '#493803',
+  },
+  peach: {
+    id: 'peach',
+    name: '피치 오렌지',
+    bg: '#ffe8cc',
+    border: '#ff922b',
+    textColor: '#4e2802',
+    dimmedColor: '#78430e',
+    badgeBg: 'rgba(78, 40, 2, 0.12)',
+    badgeColor: '#4e2802',
+    iconColor: '#4e2802',
+  },
+  pink: {
+    id: 'pink',
+    name: '파스텔 핑크',
+    bg: '#ffe3e3',
+    border: '#ff6b6b',
+    textColor: '#4c1414',
+    dimmedColor: '#7a2929',
+    badgeBg: 'rgba(76, 20, 20, 0.12)',
+    badgeColor: '#4c1414',
+    iconColor: '#4c1414',
+  },
+  purple: {
+    id: 'purple',
+    name: '라벤더 퍼플',
+    bg: '#f3f0ff',
+    border: '#845ef7',
+    textColor: '#2f1554',
+    dimmedColor: '#522c85',
+    badgeBg: 'rgba(47, 21, 84, 0.12)',
+    badgeColor: '#2f1554',
+    iconColor: '#2f1554',
+  },
+  gray: {
+    id: 'gray',
+    name: '소프트 그레이',
+    bg: '#f1f3f5',
+    border: '#868e96',
+    textColor: '#212529',
+    dimmedColor: '#495057',
+    badgeBg: 'rgba(33, 37, 41, 0.12)',
+    badgeColor: '#212529',
+    iconColor: '#212529',
+  },
+};
+
+export function getPastelConfig(colorId?: string): PastelColorConfig {
+  return PASTEL_COLORS[colorId || 'blue'] || PASTEL_COLORS.blue;
+}
+
 export interface NoteSnapshot {
   title: string;
   /** 마크다운 콘텐츠 */
@@ -37,6 +140,8 @@ export interface Note {
   title: string;
   /** 소속 프로젝트 id */
   projectId: string;
+  /** 노트별 파스텔 색상 키 (blue, mint, yellow, peach, pink, purple, gray) */
+  color?: string;
   /** 마크다운 콘텐츠 */
   content: string;
   /** 소문자 정규화된 태그 (# 제외, 예: "회의록") */
@@ -65,6 +170,7 @@ export function createEmptyNote(partial?: Partial<Note>): Note {
     id: createNoteId(),
     title: '제목 없음',
     projectId: DEFAULT_PROJECT_ID,
+    color: 'blue',
     content: '',
     tags: [],
     pinned: false,

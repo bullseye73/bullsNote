@@ -11,6 +11,7 @@ import {
   createTheme,
 } from '@mantine/core';
 import '@mantine/core/styles.css';
+import './index.css';
 import { useDisclosure, useHotkeys } from '@mantine/hooks';
 import { IconLayoutSidebarLeftCollapse, IconListTree, IconPlus } from '@tabler/icons-react';
 import { NotesProvider, useNotes } from './controller/NotesController';

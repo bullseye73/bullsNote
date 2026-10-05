@@ -6,20 +6,21 @@ import {
   Divider,
   Drawer,
   Group,
+  Menu,
   Stack,
   Text,
   TextInput,
   Tooltip,
   useComputedColorScheme,
 } from '@mantine/core';
-import { IconHistory, IconPin, IconStar } from '@tabler/icons-react';
+import { IconHistory, IconPalette, IconPin, IconStar } from '@tabler/icons-react';
 import { BlockNoteView } from '@blocknote/ariakit';
 import { useCreateBlockNote } from '@blocknote/react';
 import '@blocknote/core/fonts/inter.css';
 import '@blocknote/react/style.css';
 import '@blocknote/ariakit/style.css';
 import { useMemo, useState } from 'react';
-import { Note, getPathTitles } from '../model/Note';
+import { Note, getPathTitles, getPastelConfig, PASTEL_COLORS } from '../model/Note';
 import { isBlocksJson, noteBodyText, parseBlocks } from '../model/HashtagService';
 import { useNotes } from '../controller/NotesController';
 import { ErrorBoundary } from './ErrorBoundary';
@@ -78,6 +79,7 @@ export function NoteEditorView() {
     projects,
     updateTitle,
     updateContent,
+    updateColor,
     togglePin,
     toggleFavorite,
     setActiveTag,
@@ -108,14 +110,38 @@ export function NoteEditorView() {
     ...path,
   ];
 
+  const colorCfg = getPastelConfig(selected.color);
+
   // ready 이후에만 렌더되므로 content는 블록 JSON이 보장됨 (손상 시 문단 폴백)
   const editorKey = `${selected.id}`;
 
   return (
     <Stack gap="xs" p="md" h="100%" style={{ overflow: 'auto' }}>
-      <Text size="xs" c="dimmed">
-        {breadcrumbs.join(' / ')}
-      </Text>
+      <Group justify="space-between" align="center" wrap="nowrap">
+        <Text size="xs" c="dimmed">
+          {breadcrumbs.join(' / ')}
+        </Text>
+        <Badge
+          size="xs"
+          variant="filled"
+          style={{
+            backgroundColor: colorCfg.bg,
+            color: colorCfg.textColor,
+            border: `1px solid ${colorCfg.border}`,
+          }}
+        >
+          {colorCfg.name}
+        </Badge>
+      </Group>
+
+      <div
+        style={{
+          height: 3,
+          borderRadius: 2,
+          background: `linear-gradient(90deg, ${colorCfg.border} 0%, ${colorCfg.bg} 100%)`,
+        }}
+      />
+
       <Group justify="space-between" wrap="nowrap">
         <TextInput
           value={selected.title}
@@ -127,6 +153,50 @@ export function NoteEditorView() {
           style={{ flex: 1 }}
         />
         <Group gap="xs" wrap="nowrap">
+          {/* 파스텔 색상 선택 메뉴 */}
+          <Menu position="bottom-end" withArrow shadow="md" withinPortal>
+            <Menu.Target>
+              <Tooltip label={`노트 색상: ${colorCfg.name}`}>
+                <ActionIcon
+                  size="lg"
+                  variant="subtle"
+                  aria-label="노트 색상 변경"
+                  style={{
+                    backgroundColor: colorCfg.bg,
+                    border: `2px solid ${colorCfg.border}`,
+                    color: colorCfg.iconColor,
+                  }}
+                >
+                  <IconPalette size={17} />
+                </ActionIcon>
+              </Tooltip>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Label>노트 색상 변경</Menu.Label>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6, padding: '4px 8px' }}>
+                {Object.values(PASTEL_COLORS).map((c) => {
+                  const isCurrent = (selected.color || 'blue') === c.id;
+                  return (
+                    <Tooltip key={c.id} label={c.name} position="top" withArrow>
+                      <ActionIcon
+                        size="md"
+                        radius="xl"
+                        onClick={() => updateColor(selected.id, c.id)}
+                        style={{
+                          backgroundColor: c.bg,
+                          border: `2px solid ${c.border}`,
+                          boxShadow: isCurrent ? `0 0 0 2px ${c.textColor}` : undefined,
+                          transform: isCurrent ? 'scale(1.2)' : 'none',
+                          transition: 'all 0.15s ease',
+                        }}
+                      />
+                    </Tooltip>
+                  );
+                })}
+              </div>
+            </Menu.Dropdown>
+          </Menu>
+
           <Button
             size="xs"
             variant="light"

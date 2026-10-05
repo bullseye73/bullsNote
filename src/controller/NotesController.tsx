@@ -88,6 +88,7 @@ export interface NotesActions {
   remove(id: string): void;
   updateTitle(id: string, title: string): void;
   updateContent(id: string, content: string): void;
+  updateColor(id: string, color: string): void;
   togglePin(id: string): void;
   toggleFavorite(id: string): void;
   setParent(id: string, parentId: string | null): void;
@@ -261,6 +262,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
                 id: parsed.id,
                 title: parsed.title,
                 projectId: parsed.projectId,
+                color: parsed.color || 'blue',
                 content,
                 tags: extractHashtags(parsed.title, content),
                 pinned: parsed.pinned,
@@ -408,6 +410,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
                 id: parsed.id,
                 title: parsed.title,
                 projectId: parsed.projectId,
+                color: parsed.color || 'blue',
                 content,
                 tags: extractHashtags(parsed.title, content),
                 pinned: parsed.pinned,
@@ -440,6 +443,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
                       ...n,
                       title: parsed.title,
                       projectId: parsed.projectId,
+                      color: parsed.color || 'blue',
                       content,
                       tags: extractHashtags(parsed.title, content),
                       pinned: parsed.pinned,
@@ -666,6 +670,11 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     [refreshTags],
   );
 
+  const updateColor = useCallback(
+    (id: string, color: string) => mutate(id, (n) => ({ ...n, color })),
+    [mutate],
+  );
+
   const togglePin = useCallback((id: string) => mutate(id, (n) => ({ ...n, pinned: !n.pinned })), [mutate]);
   const toggleFavorite = useCallback(
     (id: string) => mutate(id, (n) => ({ ...n, favorite: !n.favorite })),
@@ -826,6 +835,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       remove,
       updateTitle,
       updateContent,
+      updateColor,
       togglePin,
       toggleFavorite,
       setParent,
@@ -869,6 +879,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       remove,
       updateTitle,
       updateContent,
+      updateColor,
       togglePin,
       toggleFavorite,
       setParent,

@@ -5,6 +5,7 @@ export interface ParsedNoteFile {
   id: string;
   title: string;
   projectId: string;
+  color?: string;
   parentId: string | null;
   pinned: boolean;
   favorite: boolean;
@@ -33,6 +34,7 @@ export function serializeNoteFile(note: Note, body: string): string {
     `id: ${esc(note.id)}`,
     `title: ${esc(note.title)}`,
     `projectId: ${esc(note.projectId || DEFAULT_PROJECT_ID)}`,
+    `color: ${esc(note.color || 'blue')}`,
     `parentId: ${esc(note.parentId)}`,
     `pinned: ${esc(note.pinned)}`,
     `favorite: ${esc(note.favorite)}`,
@@ -65,6 +67,7 @@ export function parseNoteFile(id: string, text: string): ParsedNoteFile | null {
     id,
     title: str(meta.title, '제목 없음'),
     projectId: str(meta.projectId, DEFAULT_PROJECT_ID),
+    color: str(meta.color, 'blue'),
     parentId: typeof meta.parentId === 'string' ? meta.parentId : null,
     pinned: meta.pinned === true,
     favorite: meta.favorite === true,

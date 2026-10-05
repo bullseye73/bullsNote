@@ -1,0 +1,29 @@
+/* BullsNote Pastel Notes and Custom Dark/Light theme styles */
+
+/* Active pastel card styling */
+.active-pastel-card {
+  transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease !important;
+}
+
+/* On an active pastel card, ActionIcons should not inherit dark backgrounds in dark mode */
+.active-pastel-card .mantine-ActionIcon-root[data-variant="subtle"] {
+  background-color: transparent !important;
+}
+.active-pastel-card .mantine-ActionIcon-root[data-variant="subtle"]:hover:not([disabled]) {
+  background-color: rgba(0, 0, 0, 0.08) !important;
+}
+.active-pastel-card .mantine-ActionIcon-root[data-variant="light"] {
+  background-color: rgba(0, 0, 0, 0.06) !important;
+}
+.active-pastel-card .mantine-ActionIcon-root[data-variant="light"]:hover:not([disabled]) {
+  background-color: rgba(0, 0, 0, 0.12) !important;
+}
+
+/* Inactive cards smooth transition and left accent */
+.inactive-note-card {
+  transition: border-color 0.15s ease, background-color 0.15s ease, transform 0.15s ease !important;
+}
+.inactive-note-card:hover {
+  transform: translateX(2px);
+  background-color: var(--mantine-color-default-hover);
+}
