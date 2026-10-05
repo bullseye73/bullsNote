@@ -15,17 +15,25 @@ import {
 } from '@mantine/core';
 import { IconBell, IconHistory, IconPalette, IconPin, IconStar } from '@tabler/icons-react';
 import { BlockNoteView } from '@blocknote/ariakit';
-import { useCreateBlockNote } from '@blocknote/react';
+import {
+  SuggestionMenuController,
+  getDefaultReactSlashMenuItems,
+  useCreateBlockNote,
+} from '@blocknote/react';
+import { filterSuggestionItems } from '@blocknote/core';
 import '@blocknote/core/fonts/inter.css';
 import '@blocknote/react/style.css';
 import '@blocknote/ariakit/style.css';
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Note, getPathTitles, getPastelConfig, PASTEL_COLORS } from '../model/Note';
 import { isBlocksJson, noteBodyText, parseBlocks } from '../model/HashtagService';
 import { useNotes } from '../controller/NotesController';
 import { ErrorBoundary } from './ErrorBoundary';
 import { EditorToolbar } from './EditorToolbar';
 import { ReminderPopover } from './ReminderPopover';
+import { DatePickerModal } from './DatePickerModal';
+import { formatDateIso } from '../model/dateUtils';
+import { getDateAtSuggestions, getDateSlashMenuItems } from '../model/dateSuggestions';
 import { createSyntaxExtension, getAppSchema } from '../model/codeHighlight';
 
 /** 이미지 붙여넣기/드롭 -> dataURL로 인라인 저장 */
@@ -42,6 +50,8 @@ async function uploadFile(file: File): Promise<string> {
 function BlockEditor({ note }: { note: Note }) {
   const { updateContent } = useNotes();
   const scheme = useComputedColorScheme('light', { getInitialValueInEffect: true });
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
+  const [datePickerInitialDate, setDatePickerInitialDate] = useState<Date | undefined>(undefined);
 
   const initialContent = useMemo(() => {
     // 검증된 블록만 전달, 그 외는 플레인 텍스트 문단으로 보존 (크래시 방지)
@@ -58,16 +68,76 @@ function BlockEditor({ note }: { note: Note }) {
     extensions: [createSyntaxExtension()],
   });
 
+  const handleInsertToday = useCallback(() => {
+    editor.focus();
+    editor.insertInlineContent(formatDateIso(new Date()));
+  }, [editor]);
+
+  const handleOpenDatePicker = useCallback((initialDate?: Date) => {
+    setDatePickerInitialDate(initialDate);
+    setDatePickerOpen(true);
+  }, []);
+
+  const handleDatePicked = useCallback(
+    (formattedDate: string) => {
+      editor.focus();
+      editor.insertInlineContent(formattedDate);
+    },
+    [editor]
+  );
+
+  // 단축키: Ctrl + ; (Mac: Cmd + ;) -> 오늘 날짜(YYYY-MM-DD) 즉시 삽입
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === ';') {
+        e.preventDefault();
+        handleInsertToday();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleInsertToday]);
+
   return (
     <Stack gap={4} style={{ flex: 1, minHeight: 0 }}>
-      <EditorToolbar editor={editor} />
+      <EditorToolbar
+        editor={editor}
+        onOpenDatePicker={() => handleOpenDatePicker()}
+        onInsertToday={handleInsertToday}
+      />
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
         <BlockNoteView
           editor={editor}
           theme={scheme === 'dark' ? 'dark' : 'light'}
+          slashMenu={false}
           onChange={() => updateContent(note.id, JSON.stringify(editor.document))}
-        />
+        >
+          {/* 노션 스타일 @ 멘션 날짜 추천 메뉴 (@오늘, @내일, @11/20 등 동적 파싱 + 달력 선택) */}
+          <SuggestionMenuController
+            triggerCharacter="@"
+            getItems={async (query) =>
+              getDateAtSuggestions(query, editor, () => handleOpenDatePicker())
+            }
+          />
+          {/* 날짜 삽입 항목이 포함된 / 슬래시 명령어 메뉴 */}
+          <SuggestionMenuController
+            triggerCharacter="/"
+            shouldOpen={(e) => !e.selection.$from.parent.type.isInGroup('tableContent')}
+            getItems={async (query) => {
+              const defaultSlashItems = getDefaultReactSlashMenuItems(editor);
+              const dateSlashItems = getDateSlashMenuItems(editor, () => handleOpenDatePicker());
+              return filterSuggestionItems([...dateSlashItems, ...defaultSlashItems], query);
+            }}
+          />
+        </BlockNoteView>
       </div>
+
+      <DatePickerModal
+        opened={datePickerOpen}
+        initialDate={datePickerInitialDate}
+        onClose={() => setDatePickerOpen(false)}
+        onInsert={handleDatePicked}
+      />
     </Stack>
   );
 }
