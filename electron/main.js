@@ -1,4 +1,4 @@
-const { app, BrowserWindow, nativeImage, shell } = require('electron');
+const { app, BrowserWindow, nativeImage, shell, ipcMain, Notification } = require('electron');
 const path = require('path');
 const { registerVaultIpc } = require('./vault-ipc');
 const { setupTray } = require('./tray');
@@ -68,6 +68,31 @@ function createWindow() {
 
 app.whenReady().then(() => {
   registerVaultIpc(app);
+
+  ipcMain.handle('notification:show', (event, { title, body, noteId }) => {
+    if (!Notification.isSupported()) return false;
+    try {
+      const notif = new Notification({
+        title: title || 'BullsNote 알람',
+        body: body || '',
+        icon: path.join(__dirname, 'assets', process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
+        silent: false,
+      });
+      notif.on('click', () => {
+        if (mainWindow) {
+          if (mainWindow.isMinimized()) mainWindow.restore();
+          mainWindow.show();
+          mainWindow.focus();
+          mainWindow.webContents.send('alarm:openNote', noteId);
+        }
+      });
+      notif.show();
+      return true;
+    } catch {
+      return false;
+    }
+  });
+
   trayCtl = setupTray({ app }, () => mainWindow);
   createWindow();
   app.on('activate', () => {

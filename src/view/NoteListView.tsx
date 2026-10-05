@@ -7,6 +7,7 @@ import {
   IconDots,
   IconIndentDecrease,
   IconIndentIncrease,
+  IconBellRinging,
   IconPin,
   IconPlus,
   IconStar,
@@ -283,6 +284,24 @@ function TreeRow({
             <Text fw={700} truncate size="sm" style={{ color: active ? cfg.textColor : undefined }}>
               {n.title || '제목 없음'}
             </Text>
+            {n.reminder && !n.reminder.dismissed && (
+              <Tooltip
+                label={`알람: ${new Date(n.reminder.targetAt).toLocaleString('ko-KR', {
+                  month: 'numeric',
+                  day: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })}${n.reminder.repeat !== 'none' ? ' (반복)' : ''}`}
+              >
+                <IconBellRinging
+                  size={13}
+                  style={{
+                    color: active ? cfg.textColor : 'var(--mantine-color-blue-5)',
+                    flexShrink: 0,
+                  }}
+                />
+              </Tooltip>
+            )}
             {node.children.length > 0 && (
               <Badge
                 size="xs"
@@ -406,9 +425,29 @@ export function NoteListView() {
                     {path.slice(0, -1).join(' / ')} /
                   </Text>
                 )}
-                <Text fw={700} truncate size="sm" style={{ color: active ? cfg.textColor : undefined }}>
-                  {n.title || '제목 없음'}
-                </Text>
+                <Group justify="space-between" align="center" wrap="nowrap">
+                  <Text fw={700} truncate size="sm" style={{ color: active ? cfg.textColor : undefined, flex: 1 }}>
+                    {n.title || '제목 없음'}
+                  </Text>
+                  {n.reminder && !n.reminder.dismissed && (
+                    <Tooltip
+                      label={`알람: ${new Date(n.reminder.targetAt).toLocaleString('ko-KR', {
+                        month: 'numeric',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}${n.reminder.repeat !== 'none' ? ' (반복)' : ''}`}
+                    >
+                      <IconBellRinging
+                        size={13}
+                        style={{
+                          color: active ? cfg.textColor : 'var(--mantine-color-blue-5)',
+                          flexShrink: 0,
+                        }}
+                      />
+                    </Tooltip>
+                  )}
+                </Group>
                 <Text
                   size="xs"
                   c={active ? undefined : 'dimmed'}

@@ -6,14 +6,17 @@ import {
   HISTORY_INTERVAL_MS,
   MAX_HISTORY,
   Note,
+  NoteReminder,
   NoteSnapshot,
   Project,
   buildTree,
+  computeNextReminderTime,
   createEmptyNote,
   createProjectId,
   getDescendantIds,
   TreeNode,
 } from '../model/Note';
+import { playChimeSound } from '../model/sound';
 import { NoteRepository, seedNotes } from '../model/NoteRepository';
 import { extractHashtags, extractHashtagsFromText, isBlocksJson, noteBodyText, parseBlocks } from '../model/HashtagService';
 import {
@@ -79,6 +82,7 @@ export interface NotesState {
   vaultMode: boolean;
   vaultPath: string;
   vaultError: string;
+  activeAlarmNote: Note | null;
 }
 
 export interface NotesActions {
@@ -89,6 +93,10 @@ export interface NotesActions {
   updateTitle(id: string, title: string): void;
   updateContent(id: string, content: string): void;
   updateColor(id: string, color: string): void;
+  setReminder(id: string, reminder: NoteReminder | null): void;
+  dismissReminder(id: string): void;
+  snoozeReminder(id: string, minutes?: number): void;
+  closeAlarmModal(): void;
   togglePin(id: string): void;
   toggleFavorite(id: string): void;
   setParent(id: string, parentId: string | null): void;
@@ -151,6 +159,55 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const [search, setSearch] = useState('');
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [showFavoriteOnly, setShowFavoriteOnly] = useState(false);
+  const [activeAlarmNote, setActiveAlarmNote] = useState<Note | null>(null);
+  const triggeredAlarmsRef = useRef<Set<string>>(new Set());
+
+  // 주기적으로 알람 감지 (5초 주기)
+  useEffect(() => {
+    if (!ready) return;
+
+    const checkAlarms = () => {
+      const now = Date.now();
+      for (const n of notes) {
+        if (!n.reminder || n.reminder.dismissed) continue;
+        const triggerTime = n.reminder.snoozedUntil ?? n.reminder.targetAt;
+        if (triggerTime <= now) {
+          const alarmKey = `${n.id}-${triggerTime}`;
+          if (!triggeredAlarmsRef.current.has(alarmKey)) {
+            triggeredAlarmsRef.current.add(alarmKey);
+            playChimeSound();
+            const notifApi = window.bullsNote?.notification;
+            if (notifApi?.show) {
+              const snippet = noteBodyText(n.content).slice(0, 100);
+              notifApi.show({
+                title: `🔔 [BullsNote 알람] ${n.title || '제목 없음'}`,
+                body: snippet || '설정된 알람 시각이 되었습니다.',
+                noteId: n.id,
+              });
+            }
+            setActiveAlarmNote(n);
+            break;
+          }
+        }
+      }
+    };
+
+    checkAlarms();
+    const interval = setInterval(checkAlarms, 5000);
+    return () => clearInterval(interval);
+  }, [notes, ready]);
+
+  // OS 시스템 알림 클릭 시 해당 노트로 이동
+  useEffect(() => {
+    const notifApi = window.bullsNote?.notification;
+    if (notifApi?.onOpenNote) {
+      const cleanup = notifApi.onOpenNote((targetId) => {
+        setSelectedId(targetId);
+        setActiveAlarmNote((cur) => (cur?.id === targetId ? null : cur));
+      });
+      return cleanup;
+    }
+  }, []);
 
   const vaultMode = getVault() !== null;
   // 파일 기준 동기화 추적
@@ -263,6 +320,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
                 title: parsed.title,
                 projectId: parsed.projectId,
                 color: parsed.color || 'blue',
+                reminder: parsed.reminder || null,
                 content,
                 tags: extractHashtags(parsed.title, content),
                 pinned: parsed.pinned,
@@ -411,6 +469,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
                 title: parsed.title,
                 projectId: parsed.projectId,
                 color: parsed.color || 'blue',
+                reminder: parsed.reminder || null,
                 content,
                 tags: extractHashtags(parsed.title, content),
                 pinned: parsed.pinned,
@@ -444,6 +503,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
                       title: parsed.title,
                       projectId: parsed.projectId,
                       color: parsed.color || 'blue',
+                      reminder: parsed.reminder || null,
                       content,
                       tags: extractHashtags(parsed.title, content),
                       pinned: parsed.pinned,
@@ -675,6 +735,66 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     [mutate],
   );
 
+  const setReminder = useCallback((id: string, reminder: NoteReminder | null) => {
+    setNotes((prev) =>
+      prev.map((n) => (n.id === id ? { ...n, reminder, updatedAt: Date.now() } : n)),
+    );
+  }, []);
+
+  const dismissReminder = useCallback((id: string) => {
+    setNotes((prev) =>
+      prev.map((n) => {
+        if (n.id !== id || !n.reminder) return n;
+        if (n.reminder.repeat !== 'none') {
+          const nextTime = computeNextReminderTime(n.reminder.targetAt, n.reminder.repeat);
+          return {
+            ...n,
+            reminder: {
+              targetAt: nextTime,
+              repeat: n.reminder.repeat,
+              dismissed: false,
+              snoozedUntil: null,
+            },
+            updatedAt: Date.now(),
+          };
+        } else {
+          return {
+            ...n,
+            reminder: {
+              ...n.reminder,
+              dismissed: true,
+              snoozedUntil: null,
+            },
+            updatedAt: Date.now(),
+          };
+        }
+      }),
+    );
+    setActiveAlarmNote((cur) => (cur?.id === id ? null : cur));
+  }, []);
+
+  const snoozeReminder = useCallback((id: string, minutes = 5) => {
+    const snoozeMs = Date.now() + minutes * 60 * 1000;
+    setNotes((prev) =>
+      prev.map((n) => {
+        if (n.id !== id || !n.reminder) return n;
+        return {
+          ...n,
+          reminder: {
+            ...n.reminder,
+            snoozedUntil: snoozeMs,
+          },
+          updatedAt: Date.now(),
+        };
+      }),
+    );
+    setActiveAlarmNote((cur) => (cur?.id === id ? null : cur));
+  }, []);
+
+  const closeAlarmModal = useCallback(() => {
+    setActiveAlarmNote(null);
+  }, []);
+
   const togglePin = useCallback((id: string) => mutate(id, (n) => ({ ...n, pinned: !n.pinned })), [mutate]);
   const toggleFavorite = useCallback(
     (id: string) => mutate(id, (n) => ({ ...n, favorite: !n.favorite })),
@@ -829,6 +949,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       vaultMode,
       vaultPath,
       vaultError,
+      activeAlarmNote,
       select,
       create,
       duplicate,
@@ -836,6 +957,10 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       updateTitle,
       updateContent,
       updateColor,
+      setReminder,
+      dismissReminder,
+      snoozeReminder,
+      closeAlarmModal,
       togglePin,
       toggleFavorite,
       setParent,
@@ -873,6 +998,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       vaultMode,
       vaultPath,
       vaultError,
+      activeAlarmNote,
       select,
       create,
       duplicate,
@@ -880,6 +1006,10 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       updateTitle,
       updateContent,
       updateColor,
+      setReminder,
+      dismissReminder,
+      snoozeReminder,
+      closeAlarmModal,
       togglePin,
       toggleFavorite,
       setParent,

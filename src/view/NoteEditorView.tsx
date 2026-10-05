@@ -13,7 +13,7 @@ import {
   Tooltip,
   useComputedColorScheme,
 } from '@mantine/core';
-import { IconHistory, IconPalette, IconPin, IconStar } from '@tabler/icons-react';
+import { IconBell, IconHistory, IconPalette, IconPin, IconStar } from '@tabler/icons-react';
 import { BlockNoteView } from '@blocknote/ariakit';
 import { useCreateBlockNote } from '@blocknote/react';
 import '@blocknote/core/fonts/inter.css';
@@ -25,6 +25,7 @@ import { isBlocksJson, noteBodyText, parseBlocks } from '../model/HashtagService
 import { useNotes } from '../controller/NotesController';
 import { ErrorBoundary } from './ErrorBoundary';
 import { EditorToolbar } from './EditorToolbar';
+import { ReminderPopover } from './ReminderPopover';
 import { createSyntaxExtension, getAppSchema } from '../model/codeHighlight';
 
 /** 이미지 붙여넣기/드롭 -> dataURL로 인라인 저장 */
@@ -121,17 +122,35 @@ export function NoteEditorView() {
         <Text size="xs" c="dimmed">
           {breadcrumbs.join(' / ')}
         </Text>
-        <Badge
-          size="xs"
-          variant="filled"
-          style={{
-            backgroundColor: colorCfg.bg,
-            color: colorCfg.textColor,
-            border: `1px solid ${colorCfg.border}`,
-          }}
-        >
-          {colorCfg.name}
-        </Badge>
+        <Group gap="xs">
+          {selected.reminder && !selected.reminder.dismissed && (
+            <Badge
+              size="xs"
+              variant="light"
+              color="blue"
+              leftSection={<IconBell size={11} />}
+            >
+              {new Date(selected.reminder.targetAt).toLocaleString('ko-KR', {
+                month: 'numeric',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+              })}
+              {selected.reminder.repeat !== 'none' ? ' (반복)' : ''}
+            </Badge>
+          )}
+          <Badge
+            size="xs"
+            variant="filled"
+            style={{
+              backgroundColor: colorCfg.bg,
+              color: colorCfg.textColor,
+              border: `1px solid ${colorCfg.border}`,
+            }}
+          >
+            {colorCfg.name}
+          </Badge>
+        </Group>
       </Group>
 
       <div
@@ -196,6 +215,9 @@ export function NoteEditorView() {
               </div>
             </Menu.Dropdown>
           </Menu>
+
+          {/* 알람 리마인더 설정 팝오버 */}
+          <ReminderPopover note={selected} />
 
           <Button
             size="xs"

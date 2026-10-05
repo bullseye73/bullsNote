@@ -4,6 +4,14 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('bullsNote', {
   platform: process.platform,
   version: '0.1.0',
+  notification: {
+    show: (data) => ipcRenderer.invoke('notification:show', data),
+    onOpenNote: (callback) => {
+      const handler = (_event, noteId) => callback(noteId);
+      ipcRenderer.on('alarm:openNote', handler);
+      return () => ipcRenderer.removeListener('alarm:openNote', handler);
+    },
+  },
   vault: {
     getPath: () => ipcRenderer.invoke('vault:getPath'),
     setPath: (p) => ipcRenderer.invoke('vault:setPath', p),
@@ -18,3 +26,4 @@ contextBridge.exposeInMainWorld('bullsNote', {
     writeSidecar: (data) => ipcRenderer.invoke('vault:writeSidecar', data),
   },
 });
+

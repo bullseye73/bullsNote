@@ -1,5 +1,5 @@
 // MODEL: 영속성 계층 (MVC의 M) - localStorage 기반 + 구버전 마이그레이션
-import { DEFAULT_PROJECT_ID, DEFAULT_PROJECTS, Note, Project } from './Note';
+import { DEFAULT_PROJECT_ID, DEFAULT_PROJECTS, Note, NoteReminder, Project } from './Note';
 
 const STORAGE_KEY = 'bullsnote.notes.v1';
 const PROJECTS_STORAGE_KEY = 'bullsnote.projects.v1';
@@ -57,6 +57,11 @@ function migrate(raw: unknown): Note[] {
         title: typeof n.title === 'string' ? n.title : '제목 없음',
         projectId,
         color: typeof (n as { color?: unknown }).color === 'string' ? (n as { color: string }).color : 'blue',
+        reminder:
+          (n as { reminder?: unknown }).reminder &&
+          typeof ((n as { reminder?: { targetAt?: unknown } }).reminder?.targetAt) === 'number'
+            ? ((n as { reminder: NoteReminder }).reminder as NoteReminder)
+            : null,
         content: looksLikeHtml(content) ? htmlToMarkdown(content) : content,
         tags: Array.isArray(n.tags) ? n.tags.filter((t: unknown) => typeof t === 'string') : [],
         pinned: !!n.pinned,

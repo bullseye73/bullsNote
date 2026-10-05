@@ -12,12 +12,18 @@ export interface VaultApi {
   writeSidecar(data: Record<string, unknown>): Promise<boolean>;
 }
 
+export interface NotificationApi {
+  show(data: { title: string; body?: string; noteId: string }): Promise<boolean>;
+  onOpenNote(callback: (noteId: string) => void): () => void;
+}
+
 declare global {
   interface Window {
     bullsNote?: {
       platform: string;
       version: string;
       vault?: VaultApi;
+      notification?: NotificationApi;
     };
   }
 }

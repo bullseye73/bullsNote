@@ -1,11 +1,12 @@
 // MODEL: 파일 볼트 포맷 (frontmatter + Markdown) - 순수 함수만
-import { DEFAULT_PROJECT_ID, DEFAULT_PROJECTS, Note, NoteSnapshot, Project } from './Note';
+import { DEFAULT_PROJECT_ID, DEFAULT_PROJECTS, Note, NoteReminder, NoteSnapshot, Project } from './Note';
 
 export interface ParsedNoteFile {
   id: string;
   title: string;
   projectId: string;
   color?: string;
+  reminder?: NoteReminder | null;
   parentId: string | null;
   pinned: boolean;
   favorite: boolean;
@@ -35,6 +36,7 @@ export function serializeNoteFile(note: Note, body: string): string {
     `title: ${esc(note.title)}`,
     `projectId: ${esc(note.projectId || DEFAULT_PROJECT_ID)}`,
     `color: ${esc(note.color || 'blue')}`,
+    `reminder: ${esc(note.reminder || null)}`,
     `parentId: ${esc(note.parentId)}`,
     `pinned: ${esc(note.pinned)}`,
     `favorite: ${esc(note.favorite)}`,
@@ -63,11 +65,18 @@ export function parseNoteFile(id: string, text: string): ParsedNoteFile | null {
   const now = Date.now();
   const str = (v: unknown, fb: string) => (typeof v === 'string' && v.trim() ? v.trim() : fb);
   const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : now);
+  const rem =
+    typeof meta.reminder === 'object' &&
+    meta.reminder !== null &&
+    typeof (meta.reminder as Record<string, unknown>).targetAt === 'number'
+      ? (meta.reminder as NoteReminder)
+      : null;
   return {
     id,
     title: str(meta.title, '제목 없음'),
     projectId: str(meta.projectId, DEFAULT_PROJECT_ID),
     color: str(meta.color, 'blue'),
+    reminder: rem,
     parentId: typeof meta.parentId === 'string' ? meta.parentId : null,
     pinned: meta.pinned === true,
     favorite: meta.favorite === true,

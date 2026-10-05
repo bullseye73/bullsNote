@@ -127,6 +127,45 @@ export function getPastelConfig(colorId?: string): PastelColorConfig {
   return PASTEL_COLORS[colorId || 'blue'] || PASTEL_COLORS.blue;
 }
 
+export type NoteReminderRepeat = 'none' | 'daily' | 'weekdays' | 'weekly' | 'monthly';
+
+export interface NoteReminder {
+  /** 알람 목표 시각 (Unix timestamp ms) */
+  targetAt: number;
+  /** 반복 설정 */
+  repeat: NoteReminderRepeat;
+  /** 알람 확인/해제 완료 여부 */
+  dismissed: boolean;
+  /** 스누즈 목표 시각 (스누즈 중일 때 ms, 아니면 null) */
+  snoozedUntil?: number | null;
+}
+
+export function computeNextReminderTime(currentTimestamp: number, repeat: NoteReminderRepeat): number {
+  if (repeat === 'none') return currentTimestamp;
+  const d = new Date(currentTimestamp);
+  const now = Date.now();
+
+  if (repeat === 'daily') {
+    do {
+      d.setDate(d.getDate() + 1);
+    } while (d.getTime() <= now);
+  } else if (repeat === 'weekdays') {
+    do {
+      d.setDate(d.getDate() + 1);
+    } while (d.getDay() === 0 || d.getDay() === 6 || d.getTime() <= now);
+  } else if (repeat === 'weekly') {
+    do {
+      d.setDate(d.getDate() + 7);
+    } while (d.getTime() <= now);
+  } else if (repeat === 'monthly') {
+    do {
+      d.setMonth(d.getMonth() + 1);
+    } while (d.getTime() <= now);
+  }
+
+  return d.getTime();
+}
+
 export interface NoteSnapshot {
   title: string;
   /** 마크다운 콘텐츠 */
@@ -142,6 +181,8 @@ export interface Note {
   projectId: string;
   /** 노트별 파스텔 색상 키 (blue, mint, yellow, peach, pink, purple, gray) */
   color?: string;
+  /** 알람 리마인더 설정 (없거나 해제 시 null/undefined) */
+  reminder?: NoteReminder | null;
   /** 마크다운 콘텐츠 */
   content: string;
   /** 소문자 정규화된 태그 (# 제외, 예: "회의록") */
@@ -171,6 +212,7 @@ export function createEmptyNote(partial?: Partial<Note>): Note {
     title: '제목 없음',
     projectId: DEFAULT_PROJECT_ID,
     color: 'blue',
+    reminder: null,
     content: '',
     tags: [],
     pinned: false,

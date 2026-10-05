@@ -19,6 +19,7 @@ import { ErrorBoundary } from './view/ErrorBoundary';
 import { NoteEditorView } from './view/NoteEditorView';
 import { NoteListView } from './view/NoteListView';
 import { SidebarView } from './view/SidebarView';
+import { AlarmModal } from './view/AlarmModal';
 
 const theme = createTheme({ primaryColor: 'blue', fontFamily: 'Pretendard, system-ui, sans-serif' });
 
@@ -127,6 +128,7 @@ export default function App() {
       <MantineProvider theme={theme} defaultColorScheme="auto">
         <NotesProvider>
           <Shell />
+          <AlarmModal />
         </NotesProvider>
       </MantineProvider>
     </>
