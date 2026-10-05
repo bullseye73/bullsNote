@@ -1,0 +1,60 @@
+{
+  "name": "bullsnote",
+  "version": "0.1.0",
+  "description": "BullsNote - 크로스플랫폼 지식관리 메모장 (Notion-like, hashtag 지원)",
+  "author": "BullsNote",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "electron:dev": "concurrently -k \"vite\" \"wait-on http://localhost:5190 && electron .\"",
+    "electron:prod": "npm run build && electron .",
+    "dist": "npm run build && electron-builder",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:linux": "npm run build && electron-builder --linux",
+    "dist:mac": "npm run build && electron-builder --mac"
+  },
+  "dependencies": {
+    "@blocknote/ariakit": "0.55.0",
+    "@blocknote/core": "0.55.0",
+    "@blocknote/react": "0.55.0",
+    "@mantine/core": "^7.13.0",
+    "@mantine/hooks": "^7.13.0",
+    "@rollup/rollup-win32-x64-msvc": "^4.64.0",
+    "@tabler/icons-react": "^3.19.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "shiki": "^4.5.0",
+    "tslib": "^2.8.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.5",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.3",
+    "concurrently": "^9.0.1",
+    "electron": "^32.1.2",
+    "electron-builder": "^25.1.8",
+    "typescript": "^5.6.2",
+    "vite": "^5.4.8",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.bullsnote.app",
+    "productName": "BullsNote",
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": ["nsis", "portable"]
+    },
+    "linux": {
+      "target": ["AppImage", "deb"]
+    },
+    "mac": {
+      "target": ["dmg", "zip"]
+    }
+  }
+}
