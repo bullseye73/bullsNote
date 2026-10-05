@@ -1,4 +1,29 @@
-// MODEL: 도메인 엔티티 (MVC의 M) - 트리(parentId) + 히스토리 지원
+// MODEL: 도메인 엔티티 (MVC의 M) - 프로젝트 + 트리(parentId) + 히스토리 지원
+export interface Project {
+  id: string;
+  name: string;
+  /** 프로젝트 아이콘 (이모지 또는 심볼, 예: 📁, 🚀, 💡, 📝, 🎯 등) */
+  icon: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export const DEFAULT_PROJECT_ID = 'default';
+
+export const DEFAULT_PROJECTS: Project[] = [
+  {
+    id: DEFAULT_PROJECT_ID,
+    name: '기본 프로젝트',
+    icon: '📁',
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  },
+];
+
+export function createProjectId(): string {
+  return `proj-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
 export interface NoteSnapshot {
   title: string;
   /** 마크다운 콘텐츠 */
@@ -10,6 +35,8 @@ export interface NoteSnapshot {
 export interface Note {
   id: string;
   title: string;
+  /** 소속 프로젝트 id */
+  projectId: string;
   /** 마크다운 콘텐츠 */
   content: string;
   /** 소문자 정규화된 태그 (# 제외, 예: "회의록") */
@@ -37,6 +64,7 @@ export function createEmptyNote(partial?: Partial<Note>): Note {
   return {
     id: createNoteId(),
     title: '제목 없음',
+    projectId: DEFAULT_PROJECT_ID,
     content: '',
     tags: [],
     pinned: false,

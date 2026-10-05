@@ -22,15 +22,18 @@ import { SidebarView } from './view/SidebarView';
 const theme = createTheme({ primaryColor: 'blue', fontFamily: 'Pretendard, system-ui, sans-serif' });
 
 function ListPanel() {
-  const { notes, create } = useNotes();
+  const { notes, create, selectedProject } = useNotes();
+  const projectNotes = notes.filter((n) => (n.projectId || 'default') === selectedProject?.id);
   return (
     <>
       <Group justify="space-between" px="sm" pt="sm" pb="xs" wrap="nowrap">
-        <Group gap={6}>
-          <IconListTree size={16} />
-          <span style={{ fontWeight: 700, fontSize: 14 }}>노트 목록</span>
+        <Group gap={6} style={{ minWidth: 0, flex: 1 }}>
+          <span style={{ fontSize: 16 }}>{selectedProject?.icon || '📁'}</span>
+          <span style={{ fontWeight: 700, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {selectedProject?.name || '노트 목록'}
+          </span>
           <Badge size="xs" variant="light">
-            {notes.length}
+            {projectNotes.length}
           </Badge>
         </Group>
         <Tooltip label="최상위 새 노트 (Ctrl+N)">

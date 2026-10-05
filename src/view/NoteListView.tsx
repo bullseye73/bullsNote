@@ -24,7 +24,7 @@ function excerpt(content: string): string {
 }
 
 function RowActions({ id, hasChildren, hasPrevSibling, hasParent }: { id: string; hasChildren: boolean; hasPrevSibling: boolean; hasParent: boolean }) {
-  const { create, duplicate, remove, togglePin, toggleFavorite, indent, outdent, notes } = useNotes();
+  const { create, duplicate, remove, togglePin, toggleFavorite, indent, outdent, notes, projects, moveNoteToProject } = useNotes();
   const note = notes.find((n) => n.id === id)!;
   const descendantCount = (() => {
     let c = 0;
@@ -85,7 +85,7 @@ function RowActions({ id, hasChildren, hasPrevSibling, hasParent }: { id: string
           <IconStar size={14} />
         </ActionIcon>
       </Tooltip>
-      {/* 관리 메뉴: 복제/삭제로 그룹화 */}
+      {/* 관리 메뉴: 복제/이동/삭제로 그룹화 */}
       <Menu position="bottom-end" withArrow shadow="md" withinPortal>
         <Menu.Target>
           <ActionIcon size="sm" variant="subtle" color="gray" aria-label="노트 관리 메뉴">
@@ -97,6 +97,23 @@ function RowActions({ id, hasChildren, hasPrevSibling, hasParent }: { id: string
           <Menu.Item leftSection={<IconCopy size={14} />} onClick={() => duplicate(id)}>
             복제
           </Menu.Item>
+          {projects.length > 1 && (
+            <>
+              <Menu.Divider />
+              <Menu.Label>프로젝트 이동</Menu.Label>
+              {projects
+                .filter((p) => p.id !== (note.projectId || 'default'))
+                .map((p) => (
+                  <Menu.Item
+                    key={p.id}
+                    leftSection={<span style={{ fontSize: 14 }}>{p.icon}</span>}
+                    onClick={() => moveNoteToProject(id, p.id)}
+                  >
+                    {p.name}
+                  </Menu.Item>
+                ))}
+            </>
+          )}
           <Menu.Divider />
           <Menu.Item
             color="red"

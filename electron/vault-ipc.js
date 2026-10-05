@@ -30,6 +30,21 @@ function defaultVaultPath(app) {
   return path.join(app.getPath('documents'), 'BullsNote');
 }
 
+function validateVaultPath(p) {
+  if (typeof p !== 'string' || !p.trim()) {
+    throw new Error('올바른 경로를 입력해야 합니다.');
+  }
+  const resolved = path.resolve(p);
+  if (!path.isAbsolute(resolved)) {
+    throw new Error('절대 경로를 지정해야 합니다.');
+  }
+  const parsed = path.parse(resolved);
+  if (resolved === parsed.root) {
+    throw new Error('시스템 최상위 루트 디렉토리는 볼트로 지정할 수 없습니다.');
+  }
+  return resolved;
+}
+
 async function resolveVault(app) {
   const s = await readSettings(app);
   return s.vaultPath || defaultVaultPath(app);
@@ -53,14 +68,15 @@ function assetFile(root, name) {
 function registerVaultIpc(app) {
   ipcMain.handle('vault:getPath', async () => resolveVault(app));
   ipcMain.handle('vault:setPath', async (_e, p) => {
-    await writeSettings(app, { vaultPath: p });
-    await ensureVault(p);
-    return p;
+    const validPath = validateVaultPath(p);
+    await writeSettings(app, { vaultPath: validPath });
+    await ensureVault(validPath);
+    return validPath;
   });
   ipcMain.handle('vault:pickDir', async () => {
     const r = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] });
     if (r.canceled || r.filePaths.length === 0) return null;
-    const p = r.filePaths[0];
+    const p = validateVaultPath(r.filePaths[0]);
     await writeSettings(app, { vaultPath: p });
     await ensureVault(p);
     return p;
@@ -104,6 +120,9 @@ function registerVaultIpc(app) {
     return true;
   });
   ipcMain.handle('vault:writeAsset', async (_e, name, base64) => {
+    if (typeof base64 !== 'string' || base64.length > 50 * 1024 * 1024) {
+      throw new Error('에셋 크기가 제한(50MB)을 초과했습니다.');
+    }
     const root = await resolveVault(app);
     await ensureVault(root);
     await fs.writeFile(assetFile(root, name), Buffer.from(base64, 'base64'));
@@ -137,9 +156,16 @@ function registerVaultIpc(app) {
     }
   });
   ipcMain.handle('vault:writeSidecar', async (_e, data) => {
+    if (!data || typeof data !== 'object') {
+      throw new Error('사이드카 데이터 형식이 올바르지 않습니다.');
+    }
+    const serialized = JSON.stringify(data, null, 2);
+    if (serialized.length > 10 * 1024 * 1024) {
+      throw new Error('사이드카 데이터 크기가 제한(10MB)을 초과했습니다.');
+    }
     const root = await resolveVault(app);
     await ensureVault(root);
-    await fs.writeFile(path.join(root, '.bullsnote.json'), JSON.stringify(data, null, 2), 'utf8');
+    await fs.writeFile(path.join(root, '.bullsnote.json'), serialized, 'utf8');
     return true;
   });
 }

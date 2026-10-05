@@ -1,12 +1,16 @@
 // CONTROLLER: 상태 + 유스케이스 (MVC의 C). View는 이 컨텍스트만 호출.
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  DEFAULT_PROJECT_ID,
+  DEFAULT_PROJECTS,
   HISTORY_INTERVAL_MS,
   MAX_HISTORY,
   Note,
   NoteSnapshot,
+  Project,
   buildTree,
   createEmptyNote,
+  createProjectId,
   getDescendantIds,
   TreeNode,
 } from '../model/Note';
@@ -16,6 +20,7 @@ import {
   parseNoteFile,
   serializeNoteFile,
   sidecarHistories,
+  sidecarProjects,
   swapAssetsToDataUrls,
   swapDataUrlsToAssets,
 } from '../model/FileVault';
@@ -55,6 +60,9 @@ async function getHeadless(): Promise<Headless> {
 }
 
 export interface NotesState {
+  projects: Project[];
+  selectedProjectId: string;
+  selectedProject: Project | null;
   notes: Note[];
   /** 레거시 -> 블록 마이그레이션 완료 여부 (완료 전 에디터 렌더 금지) */
   ready: boolean;
@@ -73,7 +81,7 @@ export interface NotesState {
   vaultError: string;
 }
 
-interface NotesActions {
+export interface NotesActions {
   select(id: string | null): void;
   create(parentId?: string | null): void;
   duplicate(id: string): void;
@@ -93,6 +101,11 @@ interface NotesActions {
   importFromFile(file: File): Promise<void>;
   chooseVault(): Promise<void>;
   resync(): Promise<void>;
+  selectProject(id: string): void;
+  createProject(name: string, icon?: string): string;
+  updateProject(id: string, patch: Partial<Pick<Project, 'name' | 'icon'>>): void;
+  deleteProject(id: string): void;
+  moveNoteToProject(noteId: string, targetProjectId: string): void;
 }
 
 const Ctx = createContext<(NotesState & NotesActions) | null>(null);
@@ -112,6 +125,14 @@ function withHistory(note: Note, force = false): Note {
 }
 
 export function NotesProvider({ children }: { children: React.ReactNode }) {
+  const [projects, setProjects] = useState<Project[]>(() => {
+    return NoteRepository.loadProjects();
+  });
+  const [selectedProjectId, setSelectedProjectId] = useState<string>(() => {
+    const list = NoteRepository.loadProjects();
+    return list[0]?.id ?? DEFAULT_PROJECT_ID;
+  });
+
   const [notes, setNotes] = useState<Note[]>(() => {
     const loaded = NoteRepository.load();
     if (loaded.length > 0) return loaded.sort(sortNotes);
@@ -119,6 +140,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     NoteRepository.save(seed);
     return seed;
   });
+
   const [selectedId, setSelectedId] = useState<string | null>(notes[0]?.id ?? null);
   const [ready, setReady] = useState(false);
   const [vaultPath, setVaultPath] = useState('');
@@ -134,12 +156,19 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const lastSavedRef = useRef(new Map<string, string>());
   const lastWrittenRef = useRef(new Map<string, number>());
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isSavePendingRef = useRef(false);
+  const flushSaveRef = useRef<(() => Promise<void>) | null>(null);
 
   // localStorage 모드: 기존 동작 유지
   useEffect(() => {
     if (vaultMode) return;
     NoteRepository.save(notes);
   }, [notes, vaultMode]);
+
+  useEffect(() => {
+    if (vaultMode) return;
+    NoteRepository.saveProjects(projects);
+  }, [projects, vaultMode]);
 
   // localStorage 모드: 레거시 마이그레이션
   const migratedRef = useRef(false);
@@ -183,6 +212,11 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         const { files } = await vault.list();
         const sidecar = await vault.readSidecar();
         const histories = sidecarHistories(sidecar);
+        const loadedProjects = sidecarProjects(sidecar);
+        setProjects(loadedProjects);
+        setSelectedProjectId((prev) =>
+          loadedProjects.some((p) => p.id === prev) ? prev : loadedProjects[0]?.id ?? DEFAULT_PROJECT_ID,
+        );
 
         if (files.length === 0 && !sidecar.migratedLs) {
           let current = NoteRepository.load();
@@ -207,6 +241,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
           }
           await vault.writeSidecar({
             migratedLs: true,
+            projects: loadedProjects,
             histories: Object.fromEntries(migrated.map((n) => [n.id, n.history])),
           });
           setNotes(migrated.sort(sortNotes));
@@ -225,6 +260,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
               loaded.push({
                 id: parsed.id,
                 title: parsed.title,
+                projectId: parsed.projectId,
                 content,
                 tags: extractHashtags(parsed.title, content),
                 pinned: parsed.pinned,
@@ -241,7 +277,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
             }
           }
           setNotes(loaded.sort(sortNotes));
-          setSelectedId((prev) => (loaded.some((n) => n.id === prev) ? prev : (loaded[0]?.id ?? null)));
+          setSelectedId((prev) => (loaded.some((n) => n.id === prev) ? prev : loaded[0]?.id ?? null));
         }
       } catch (e) {
         setVaultError(`볼트를 열 수 없습니다: ${e instanceof Error ? e.message : e}`);
@@ -255,54 +291,74 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     })();
   }, [vaultMode, vaultGen]);
 
-  // 파일 볼트 모드: 변경분 디바운스 저장 + 삭제 반영 + 히스토리 sidecar
+  // 파일 볼트 모드: 변경분 디바운스 저장 + 삭제 반영 + 프로젝트 & 히스토리 sidecar
   useEffect(() => {
     if (!vaultMode || !ready) return;
+    isSavePendingRef.current = true;
+
+    const doSave = async () => {
+      const vault = getVault()!;
+      try {
+        const headless = await getHeadless();
+        const seen = new Set<string>();
+        for (const n of notes) {
+          seen.add(n.id);
+          const body = await swapDataUrlsToAssets(
+            headless.toMarkdown(n.content),
+            n.id,
+            (name, b64) => vault.writeAsset(name, b64),
+          );
+          const text = serializeNoteFile(n, body);
+          if (lastSavedRef.current.get(n.id) !== text) {
+            await vault.write(n.id, text);
+            lastSavedRef.current.set(n.id, text);
+            const { files } = await vault.list();
+            const f = files.find((x) => x.id === n.id);
+            if (f) lastWrittenRef.current.set(n.id, f.mtimeMs);
+          }
+        }
+        for (const id of [...lastSavedRef.current.keys()]) {
+          if (!seen.has(id)) {
+            await vault.delete(id);
+            lastSavedRef.current.delete(id);
+            lastWrittenRef.current.delete(id);
+          }
+        }
+        const prev = (await vault.readSidecar()) as Record<string, unknown>;
+        await vault.writeSidecar({
+          ...prev,
+          projects,
+          histories: Object.fromEntries(notes.map((n) => [n.id, n.history])),
+        });
+        setVaultError('');
+      } catch (e) {
+        setVaultError(`저장 실패: ${e instanceof Error ? e.message : e}`);
+      } finally {
+        isSavePendingRef.current = false;
+      }
+    };
+
+    flushSaveRef.current = doSave;
+
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
-      void (async () => {
-        const vault = getVault()!;
-        try {
-          const headless = await getHeadless();
-          const seen = new Set<string>();
-          for (const n of notes) {
-            seen.add(n.id);
-            const body = await swapDataUrlsToAssets(
-              headless.toMarkdown(n.content),
-              n.id,
-              (name, b64) => vault.writeAsset(name, b64),
-            );
-            const text = serializeNoteFile(n, body);
-            if (lastSavedRef.current.get(n.id) !== text) {
-              await vault.write(n.id, text);
-              lastSavedRef.current.set(n.id, text);
-              const { files } = await vault.list();
-              const f = files.find((x) => x.id === n.id);
-              if (f) lastWrittenRef.current.set(n.id, f.mtimeMs);
-            }
-          }
-          for (const id of [...lastSavedRef.current.keys()]) {
-            if (!seen.has(id)) {
-              await vault.delete(id);
-              lastSavedRef.current.delete(id);
-              lastWrittenRef.current.delete(id);
-            }
-          }
-          const prev = (await vault.readSidecar()) as Record<string, unknown>;
-          await vault.writeSidecar({
-            ...prev,
-            histories: Object.fromEntries(notes.map((n) => [n.id, n.history])),
-          });
-          setVaultError('');
-        } catch (e) {
-          setVaultError(`저장 실패: ${e instanceof Error ? e.message : e}`);
-        }
-      })();
+      void doSave();
     }, 1200);
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
-  }, [notes, vaultMode, ready]);
+  }, [notes, projects, vaultMode, ready]);
+
+  // 창 닫기/새로고침 시 미저장 데이터 강제 플러시
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (isSavePendingRef.current && flushSaveRef.current) {
+        void flushSaveRef.current();
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, []);
 
   // 파일 볼트 모드: 외부 변경 감지 (폴링 + 포커스)
   const selectedIdRef = useRef<string | null>(null);
@@ -313,6 +369,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const pollExternal = useCallback(async () => {
     const vault = getVault();
     if (!vault) return;
+    if (isSavePendingRef.current) return;
     try {
       const headless = await getHeadless();
       const { files } = await vault.list();
@@ -341,6 +398,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
           const content = JSON.stringify(blocks);
           const sidecar = (await vault.readSidecar()) as Record<string, unknown>;
           const histories = sidecarHistories(sidecar);
+          const extProjects = sidecarProjects(sidecar);
+          setProjects(extProjects);
           setNotes((prev) => {
             if (prev.some((n) => n.id === f.id)) return prev;
             return [
@@ -348,6 +407,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
               {
                 id: parsed.id,
                 title: parsed.title,
+                projectId: parsed.projectId,
                 content,
                 tags: extractHashtags(parsed.title, content),
                 pinned: parsed.pinned,
@@ -379,6 +439,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
                   ? {
                       ...n,
                       title: parsed.title,
+                      projectId: parsed.projectId,
                       content,
                       tags: extractHashtags(parsed.title, content),
                       pinned: parsed.pinned,
@@ -443,27 +504,122 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   const select = useCallback((id: string | null) => setSelectedId(id), []);
 
-  const create = useCallback((parentId: string | null = null) => {
-    const n = createEmptyNote({ title: '새 노트', parentId });
-    setNotes((prev) => [n, ...prev]);
-    setSelectedId(n.id);
+  const selectedProject = useMemo(
+    () => projects.find((p) => p.id === selectedProjectId) ?? projects[0] ?? null,
+    [projects, selectedProjectId],
+  );
+
+  const selectProject = useCallback(
+    (id: string) => {
+      setSelectedProjectId(id);
+      setActiveTag(null);
+      const pNotes = notes.filter((n) => (n.projectId || DEFAULT_PROJECT_ID) === id);
+      setSelectedId(pNotes[0]?.id ?? null);
+    },
+    [notes],
+  );
+
+  const createProject = useCallback((name: string, icon = '📁'): string => {
+    const id = createProjectId();
+    const newProj: Project = {
+      id,
+      name: name.trim() || '새 프로젝트',
+      icon: icon.trim() || '📁',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    setProjects((prev) => [...prev, newProj]);
+    setSelectedProjectId(id);
+    setSelectedId(null);
+    return id;
   }, []);
 
-  const duplicate = useCallback((id: string) => {
+  const updateProject = useCallback((id: string, patch: Partial<Pick<Project, 'name' | 'icon'>>) => {
+    setProjects((prev) =>
+      prev.map((p) =>
+        p.id === id
+          ? {
+              ...p,
+              name: patch.name !== undefined ? patch.name.trim() || p.name : p.name,
+              icon: patch.icon !== undefined ? patch.icon.trim() || p.icon : p.icon,
+              updatedAt: Date.now(),
+            }
+          : p,
+      ),
+    );
+  }, []);
+
+  const deleteProject = useCallback(
+    (id: string) => {
+      setProjects((prev) => {
+        if (prev.length <= 1) {
+          alert('최소 1개의 프로젝트는 유지되어야 합니다.');
+          return prev;
+        }
+        const remaining = prev.filter((p) => p.id !== id);
+        setNotes((prevNotes) => prevNotes.filter((n) => (n.projectId || DEFAULT_PROJECT_ID) !== id));
+        if (selectedProjectId === id) {
+          const nextProj = remaining[0];
+          setSelectedProjectId(nextProj.id);
+          const nextNotes = notes.filter((n) => (n.projectId || DEFAULT_PROJECT_ID) === nextProj.id);
+          setSelectedId(nextNotes[0]?.id ?? null);
+        }
+        return remaining;
+      });
+    },
+    [selectedProjectId, notes],
+  );
+
+  const moveNoteToProject = useCallback((noteId: string, targetProjectId: string) => {
     setNotes((prev) => {
-      const src = prev.find((n) => n.id === id);
-      if (!src) return prev;
-      const copy: Note = {
-        ...src,
-        id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`,
-        title: `${src.title} (복사본)`,
-        history: [],
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      };
-      return [copy, ...prev];
+      const targetIds = getDescendantIds(prev, noteId);
+      return prev.map((n) => {
+        if (targetIds.has(n.id)) {
+          const isRoot = n.id === noteId;
+          return {
+            ...n,
+            projectId: targetProjectId,
+            parentId: isRoot ? null : n.parentId,
+            updatedAt: Date.now(),
+          };
+        }
+        return n;
+      });
     });
   }, []);
+
+  const create = useCallback(
+    (parentId: string | null = null) => {
+      const n = createEmptyNote({
+        title: '새 노트',
+        projectId: selectedProjectId,
+        parentId,
+      });
+      setNotes((prev) => [n, ...prev]);
+      setSelectedId(n.id);
+    },
+    [selectedProjectId],
+  );
+
+  const duplicate = useCallback(
+    (id: string) => {
+      setNotes((prev) => {
+        const src = prev.find((n) => n.id === id);
+        if (!src) return prev;
+        const copy: Note = {
+          ...src,
+          id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`,
+          projectId: src.projectId || selectedProjectId,
+          title: `${src.title} (복사본)`,
+          history: [],
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        };
+        return [copy, ...prev];
+      });
+    },
+    [selectedProjectId],
+  );
 
   const remove = useCallback(
     (id: string) => {
@@ -475,13 +631,17 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
           n.parentId && doomed.has(n.parentId) ? { ...n, parentId: null } : n,
         );
         if (selectedId && doomed.has(selectedId)) {
-          const siblings = fixed.filter((n) => n.parentId === prev.find((x) => x.id === id)?.parentId);
+          const siblings = fixed.filter(
+            (n) =>
+              (n.projectId || DEFAULT_PROJECT_ID) === selectedProjectId &&
+              n.parentId === prev.find((x) => x.id === id)?.parentId,
+          );
           setSelectedId(siblings[0]?.id ?? fixed[0]?.id ?? null);
         }
         return fixed;
       });
     },
-    [selectedId],
+    [selectedId, selectedProjectId],
   );
 
   const updateTitle = useCallback(
@@ -530,7 +690,13 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     setNotes((prev) => {
       const target = prev.find((n) => n.id === id);
       if (!target) return prev;
-      const siblings = prev.filter((n) => (n.parentId ?? null) === (target.parentId ?? null)).sort(sortNotes);
+      const siblings = prev
+        .filter(
+          (n) =>
+            (n.projectId || DEFAULT_PROJECT_ID) === (target.projectId || DEFAULT_PROJECT_ID) &&
+            (n.parentId ?? null) === (target.parentId ?? null),
+        )
+        .sort(sortNotes);
       const idx = siblings.findIndex((n) => n.id === id);
       if (idx <= 0) return prev;
       const newParent = siblings[idx - 1];
@@ -568,35 +734,56 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   }, [refreshTags]);
 
   const exportAll = useCallback(() => {
-    const blob = new Blob([NoteRepository.exportJson(notes)], { type: 'application/json' });
+    const blob = new Blob([NoteRepository.exportJson(notes, projects)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = `bullsnote-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(a.href);
-  }, [notes]);
+  }, [notes, projects]);
 
   const importFromFile = useCallback(async (file: File) => {
     const text = await file.text();
     const imported = NoteRepository.importJson(text);
+    if (imported.projects && imported.projects.length > 0) {
+      setProjects((prev) => {
+        const ids = new Set(prev.map((p) => p.id));
+        const fresh = imported.projects!.filter((p) => !ids.has(p.id));
+        return [...prev, ...fresh];
+      });
+    }
     setNotes((prev) => {
       const ids = new Set(prev.map((n) => n.id));
-      const fresh = imported.filter((n) => !ids.has(n.id));
+      const fresh = imported.notes.filter((n) => !ids.has(n.id));
       return [...fresh, ...prev].sort(sortNotes);
     });
   }, []);
 
+  // 현재 선택된 프로젝트의 노트들
+  const currentProjectNotes = useMemo(
+    () => notes.filter((n) => (n.projectId || DEFAULT_PROJECT_ID) === selectedProjectId),
+    [notes, selectedProjectId],
+  );
+
+  // 선택된 노트가 현재 프로젝트에 없으면 첫 번째 노트로 동기화
+  useEffect(() => {
+    if (!ready) return;
+    if (selectedId && !currentProjectNotes.some((n) => n.id === selectedId)) {
+      setSelectedId(currentProjectNotes[0]?.id ?? null);
+    }
+  }, [selectedProjectId, ready, selectedId, currentProjectNotes]);
+
   const tagCounts = useMemo(() => {
     const map = new Map<string, number>();
-    for (const n of notes) for (const t of n.tags) map.set(t, (map.get(t) ?? 0) + 1);
+    for (const n of currentProjectNotes) for (const t of n.tags) map.set(t, (map.get(t) ?? 0) + 1);
     return [...map.entries()].map(([tag, count]) => ({ tag, count })).sort((a, b) => b.count - a.count);
-  }, [notes]);
+  }, [currentProjectNotes]);
 
   const isFiltering = search.trim() !== '' || activeTag !== null || showFavoriteOnly;
 
   const flat = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return notes
+    return currentProjectNotes
       .filter((n) => (showFavoriteOnly ? n.favorite : true))
       .filter((n) => (activeTag ? n.tags.includes(activeTag) : true))
       .filter((n) => {
@@ -608,14 +795,17 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         );
       })
       .sort(sortNotes);
-  }, [notes, search, activeTag, showFavoriteOnly]);
+  }, [currentProjectNotes, search, activeTag, showFavoriteOnly]);
 
-  const tree = useMemo(() => buildTree(isFiltering ? flat : notes), [isFiltering, flat, notes]);
+  const tree = useMemo(() => buildTree(isFiltering ? flat : currentProjectNotes), [isFiltering, flat, currentProjectNotes]);
 
   const selected = useMemo(() => notes.find((n) => n.id === selectedId) ?? null, [notes, selectedId]);
 
   const value = useMemo(
     () => ({
+      projects,
+      selectedProjectId,
+      selectedProject,
       notes,
       ready,
       selectedId,
@@ -649,8 +839,16 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       importFromFile,
       chooseVault,
       resync,
+      selectProject,
+      createProject,
+      updateProject,
+      deleteProject,
+      moveNoteToProject,
     }),
     [
+      projects,
+      selectedProjectId,
+      selectedProject,
       notes,
       ready,
       selectedId,
@@ -681,6 +879,11 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       importFromFile,
       chooseVault,
       resync,
+      selectProject,
+      createProject,
+      updateProject,
+      deleteProject,
+      moveNoteToProject,
     ],
   );
 

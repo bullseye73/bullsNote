@@ -1,7 +1,8 @@
 // MODEL: 영속성 계층 (MVC의 M) - localStorage 기반 + 구버전 마이그레이션
-import { Note } from './Note';
+import { DEFAULT_PROJECT_ID, DEFAULT_PROJECTS, Note, Project } from './Note';
 
 const STORAGE_KEY = 'bullsnote.notes.v1';
+const PROJECTS_STORAGE_KEY = 'bullsnote.projects.v1';
 
 function decodeEntities(s: string): string {
   return s
@@ -50,9 +51,11 @@ function migrate(raw: unknown): Note[] {
     .filter((n) => n && typeof n.id === 'string')
     .map((n) => {
       const content = typeof n.content === 'string' ? n.content : '';
+      const projectId = typeof n.projectId === 'string' && n.projectId.trim() ? n.projectId.trim() : DEFAULT_PROJECT_ID;
       return {
         id: n.id as string,
         title: typeof n.title === 'string' ? n.title : '제목 없음',
+        projectId,
         content: looksLikeHtml(content) ? htmlToMarkdown(content) : content,
         tags: Array.isArray(n.tags) ? n.tags.filter((t: unknown) => typeof t === 'string') : [],
         pinned: !!n.pinned,
@@ -79,6 +82,18 @@ function safeParse(raw: string | null): Note[] {
   }
 }
 
+function safeParseProjects(raw: string | null): Project[] {
+  if (!raw) return DEFAULT_PROJECTS;
+  try {
+    const data = JSON.parse(raw);
+    if (!Array.isArray(data)) return DEFAULT_PROJECTS;
+    const valid = data.filter((p) => p && typeof p.id === 'string' && typeof p.name === 'string');
+    return valid.length > 0 ? valid : DEFAULT_PROJECTS;
+  } catch {
+    return DEFAULT_PROJECTS;
+  }
+}
+
 export const NoteRepository = {
   load(): Note[] {
     return safeParse(localStorage.getItem(STORAGE_KEY));
@@ -86,15 +101,25 @@ export const NoteRepository = {
   save(notes: Note[]): void {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(notes));
   },
-  exportJson(notes: Note[]): string {
-    return JSON.stringify({ app: 'BullsNote', version: 2, notes }, null, 2);
+  loadProjects(): Project[] {
+    return safeParseProjects(localStorage.getItem(PROJECTS_STORAGE_KEY));
   },
-  importJson(json: string): Note[] {
+  saveProjects(projects: Project[]): void {
+    localStorage.setItem(PROJECTS_STORAGE_KEY, JSON.stringify(projects));
+  },
+  exportJson(notes: Note[], projects: Project[] = DEFAULT_PROJECTS): string {
+    return JSON.stringify({ app: 'BullsNote', version: 3, projects, notes }, null, 2);
+  },
+  importJson(json: string): { notes: Note[]; projects?: Project[] } {
     const data = JSON.parse(json);
-    const notes: unknown = Array.isArray(data) ? data : data.notes;
-    const migrated = migrate(notes);
+    const notesRaw: unknown = Array.isArray(data) ? data : data.notes;
+    const migrated = migrate(notesRaw);
     if (migrated.length === 0) throw new Error('가져올 노트가 없습니다.');
-    return migrated;
+    const projectsRaw: unknown = data.projects;
+    const projects = Array.isArray(projectsRaw)
+      ? projectsRaw.filter((p) => p && typeof p.id === 'string' && typeof p.name === 'string')
+      : undefined;
+    return { notes: migrated, projects };
   },
 };
 
@@ -104,6 +129,7 @@ export function seedNotes(): Note[] {
     {
       id: 'seed-1',
       title: 'BullsNote 시작하기 #환영',
+      projectId: DEFAULT_PROJECT_ID,
       content: [
         '## 노션처럼 메모하세요',
         '',
@@ -126,6 +152,7 @@ export function seedNotes(): Note[] {
     {
       id: 'seed-1-1',
       title: '마크다운 치트시트',
+      projectId: DEFAULT_PROJECT_ID,
       content: [
         '# 제목 1',
         '## 제목 2',
@@ -155,6 +182,7 @@ export function seedNotes(): Note[] {
     {
       id: 'seed-2',
       title: '주간 회의록 #회의록',
+      projectId: DEFAULT_PROJECT_ID,
       content: ['참석: 팀 전원', '', '- 안건 1: 릴리즈 일정 #프로젝트', '- 안건 2: 버그 트리아지 #버그'].join('\n'),
       tags: ['회의록', '프로젝트', '버그'],
       pinned: false,

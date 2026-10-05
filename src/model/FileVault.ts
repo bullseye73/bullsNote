@@ -1,9 +1,10 @@
 // MODEL: 파일 볼트 포맷 (frontmatter + Markdown) - 순수 함수만
-import { Note, NoteSnapshot } from './Note';
+import { DEFAULT_PROJECT_ID, DEFAULT_PROJECTS, Note, NoteSnapshot, Project } from './Note';
 
 export interface ParsedNoteFile {
   id: string;
   title: string;
+  projectId: string;
   parentId: string | null;
   pinned: boolean;
   favorite: boolean;
@@ -31,6 +32,7 @@ export function serializeNoteFile(note: Note, body: string): string {
     '---',
     `id: ${esc(note.id)}`,
     `title: ${esc(note.title)}`,
+    `projectId: ${esc(note.projectId || DEFAULT_PROJECT_ID)}`,
     `parentId: ${esc(note.parentId)}`,
     `pinned: ${esc(note.pinned)}`,
     `favorite: ${esc(note.favorite)}`,
@@ -57,11 +59,12 @@ export function parseNoteFile(id: string, text: string): ParsedNoteFile | null {
   }
   if (meta.id !== id) return null;
   const now = Date.now();
-  const str = (v: unknown, fb: string) => (typeof v === 'string' ? v : fb);
+  const str = (v: unknown, fb: string) => (typeof v === 'string' && v.trim() ? v.trim() : fb);
   const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : now);
   return {
     id,
     title: str(meta.title, '제목 없음'),
+    projectId: str(meta.projectId, DEFAULT_PROJECT_ID),
     parentId: typeof meta.parentId === 'string' ? meta.parentId : null,
     pinned: meta.pinned === true,
     favorite: meta.favorite === true,
@@ -140,4 +143,17 @@ export function sidecarHistories(sidecar: Record<string, unknown>): Record<strin
     }
   }
   return out;
+}
+
+export function sidecarProjects(sidecar: Record<string, unknown>): Project[] {
+  const p = sidecar.projects;
+  if (!Array.isArray(p)) return DEFAULT_PROJECTS;
+  const list = p.filter(
+    (x): x is Project =>
+      !!x &&
+      typeof x === 'object' &&
+      typeof (x as Project).id === 'string' &&
+      typeof (x as Project).name === 'string',
+  );
+  return list.length > 0 ? list : DEFAULT_PROJECTS;
 }

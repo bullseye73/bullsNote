@@ -1,4 +1,4 @@
-const { app, BrowserWindow, nativeImage } = require('electron');
+const { app, BrowserWindow, nativeImage, shell } = require('electron');
 const path = require('path');
 const { registerVaultIpc } = require('./vault-ipc');
 const { setupTray } = require('./tray');
@@ -25,6 +25,26 @@ function createWindow() {
     autoHideMenuBar: true,
   });
   mainWindow = win;
+
+  // 외부 링크 클릭 시 새 Electron 창 대신 시스템 기본 브라우저로 오픈
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('http:') || url.startsWith('https:')) {
+      shell.openExternal(url);
+    }
+    return { action: 'deny' };
+  });
+
+  // 본문 내 외부 URL 탐색 방지 (개발 서버 또는 로컬 빌드 파일 외 외부 URL 이동 차단)
+  win.webContents.on('will-navigate', (event, url) => {
+    const isDevUrl = isDev && url.startsWith('http://localhost:5190');
+    const isProdUrl = !isDev && url.startsWith('file://');
+    if (!isDevUrl && !isProdUrl) {
+      event.preventDefault();
+      if (url.startsWith('http:') || url.startsWith('https:')) {
+        shell.openExternal(url);
+      }
+    }
+  });
 
   // 닫기 버튼 -> 종료 대신 트레이로 숨김
   win.on('close', (e) => {

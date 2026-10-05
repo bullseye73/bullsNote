@@ -71,7 +71,18 @@ function BlockEditor({ note }: { note: Note }) {
 }
 
 export function NoteEditorView() {
-  const { ready, selected, notes, updateTitle, updateContent, togglePin, toggleFavorite, setActiveTag, restoreHistory } = useNotes();
+  const {
+    ready,
+    selected,
+    notes,
+    projects,
+    updateTitle,
+    updateContent,
+    togglePin,
+    toggleFavorite,
+    setActiveTag,
+    restoreHistory,
+  } = useNotes();
   const [historyOpen, setHistoryOpen] = useState(false);
 
   if (!ready) {
@@ -90,17 +101,21 @@ export function NoteEditorView() {
     );
   }
 
+  const currentProject = projects.find((p) => p.id === (selected.projectId || 'default'));
   const path = getPathTitles(notes, selected.id);
+  const breadcrumbs = [
+    ...(currentProject ? [`${currentProject.icon} ${currentProject.name}`] : []),
+    ...path,
+  ];
+
   // ready 이후에만 렌더되므로 content는 블록 JSON이 보장됨 (손상 시 문단 폴백)
   const editorKey = `${selected.id}`;
 
   return (
     <Stack gap="xs" p="md" h="100%" style={{ overflow: 'auto' }}>
-      {path.length > 1 && (
-        <Text size="xs" c="dimmed">
-          {path.join(' / ')}
-        </Text>
-      )}
+      <Text size="xs" c="dimmed">
+        {breadcrumbs.join(' / ')}
+      </Text>
       <Group justify="space-between" wrap="nowrap">
         <TextInput
           value={selected.title}
