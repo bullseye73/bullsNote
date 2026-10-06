@@ -574,9 +574,49 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     await pollExternal();
   }, [pollExternal]);
 
-  const mutate = useCallback((id: string, fn: (n: Note) => Note) => {
-    setNotes((prev) => prev.map((n) => (n.id === id ? { ...fn(n), updatedAt: Date.now() } : n)));
-  }, []);
+  // --- Supabase 변경 감지 증분 동기화 큐 (Idle 시 네트워크 0건) ---
+  const pendingNotesRef = useRef<Map<string, Note>>(new Map());
+  const noteSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const queueNoteSync = useCallback(
+    (note: Note) => {
+      if (!supabaseConnected || !supabaseConfig.autoSync) return;
+      pendingNotesRef.current.set(note.id, note);
+      if (noteSyncTimerRef.current) clearTimeout(noteSyncTimerRef.current);
+      noteSyncTimerRef.current = setTimeout(async () => {
+        const notesToSync = Array.from(pendingNotesRef.current.values());
+        pendingNotesRef.current.clear();
+        if (notesToSync.length > 0) {
+          await SupabaseService.upsertNotes(notesToSync);
+        }
+      }, 1500);
+    },
+    [supabaseConnected, supabaseConfig.autoSync],
+  );
+
+  const queueProjectSync = useCallback(
+    (project: Project) => {
+      if (!supabaseConnected || !supabaseConfig.autoSync) return;
+      void SupabaseService.upsertProject(project);
+    },
+    [supabaseConnected, supabaseConfig.autoSync],
+  );
+
+  const mutate = useCallback(
+    (id: string, fn: (n: Note) => Note) => {
+      setNotes((prev) =>
+        prev.map((n) => {
+          if (n.id === id) {
+            const updated = { ...fn(n), updatedAt: Date.now() };
+            queueNoteSync(updated);
+            return updated;
+          }
+          return n;
+        }),
+      );
+    },
+    [queueNoteSync],
+  );
 
   const refreshTags = useCallback((note: Note, title: string, content: string): Note => {
     return { ...note, title, content, tags: extractHashtags(title, content) };
@@ -599,35 +639,45 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     [notes],
   );
 
-  const createProject = useCallback((name: string, icon = '📁'): string => {
-    const id = createProjectId();
-    const newProj: Project = {
-      id,
-      name: name.trim() || '새 프로젝트',
-      icon: icon.trim() || '📁',
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    };
-    setProjects((prev) => [...prev, newProj]);
-    setSelectedProjectId(id);
-    setSelectedId(null);
-    return id;
-  }, []);
+  const createProject = useCallback(
+    (name: string, icon = '📁'): string => {
+      const id = createProjectId();
+      const newProj: Project = {
+        id,
+        name: name.trim() || '새 프로젝트',
+        icon: icon.trim() || '📁',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      setProjects((prev) => [...prev, newProj]);
+      setSelectedProjectId(id);
+      setSelectedId(null);
+      queueProjectSync(newProj);
+      return id;
+    },
+    [queueProjectSync],
+  );
 
-  const updateProject = useCallback((id: string, patch: Partial<Pick<Project, 'name' | 'icon'>>) => {
-    setProjects((prev) =>
-      prev.map((p) =>
-        p.id === id
-          ? {
+  const updateProject = useCallback(
+    (id: string, patch: Partial<Pick<Project, 'name' | 'icon'>>) => {
+      setProjects((prev) =>
+        prev.map((p) => {
+          if (p.id === id) {
+            const updated = {
               ...p,
               name: patch.name !== undefined ? patch.name.trim() || p.name : p.name,
               icon: patch.icon !== undefined ? patch.icon.trim() || p.icon : p.icon,
               updatedAt: Date.now(),
-            }
-          : p,
-      ),
-    );
-  }, []);
+            };
+            queueProjectSync(updated);
+            return updated;
+          }
+          return p;
+        }),
+      );
+    },
+    [queueProjectSync],
+  );
 
   const deleteProject = useCallback(
     (id: string) => {
@@ -653,23 +703,28 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     [selectedProjectId, notes, supabaseConnected, supabaseConfig.autoSync],
   );
 
-  const moveNoteToProject = useCallback((noteId: string, targetProjectId: string) => {
-    setNotes((prev) => {
-      const targetIds = getDescendantIds(prev, noteId);
-      return prev.map((n) => {
-        if (targetIds.has(n.id)) {
-          const isRoot = n.id === noteId;
-          return {
-            ...n,
-            projectId: targetProjectId,
-            parentId: isRoot ? null : n.parentId,
-            updatedAt: Date.now(),
-          };
-        }
-        return n;
+  const moveNoteToProject = useCallback(
+    (noteId: string, targetProjectId: string) => {
+      setNotes((prev) => {
+        const targetIds = getDescendantIds(prev, noteId);
+        return prev.map((n) => {
+          if (targetIds.has(n.id)) {
+            const isRoot = n.id === noteId;
+            const updated = {
+              ...n,
+              projectId: targetProjectId,
+              parentId: isRoot ? null : n.parentId,
+              updatedAt: Date.now(),
+            };
+            queueNoteSync(updated);
+            return updated;
+          }
+          return n;
+        });
       });
-    });
-  }, []);
+    },
+    [queueNoteSync],
+  );
 
   const create = useCallback(
     (parentId: string | null = null) => {
@@ -680,8 +735,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       });
       setNotes((prev) => [n, ...prev]);
       setSelectedId(n.id);
+      queueNoteSync(n);
     },
-    [selectedProjectId],
+    [selectedProjectId, queueNoteSync],
   );
 
   const duplicate = useCallback(
@@ -698,10 +754,11 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
           createdAt: Date.now(),
           updatedAt: Date.now(),
         };
+        queueNoteSync(copy);
         return [copy, ...prev];
       });
     },
-    [selectedProjectId],
+    [selectedProjectId, queueNoteSync],
   );
 
   const remove = useCallback(
@@ -735,23 +792,33 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const updateTitle = useCallback(
     (id: string, title: string) => {
       setNotes((prev) =>
-        prev.map((n) =>
-          n.id === id ? { ...refreshTags(withHistory(n), title, n.content), updatedAt: Date.now() } : n,
-        ),
+        prev.map((n) => {
+          if (n.id === id) {
+            const updated = { ...refreshTags(withHistory(n), title, n.content), updatedAt: Date.now() };
+            queueNoteSync(updated);
+            return updated;
+          }
+          return n;
+        }),
       );
     },
-    [refreshTags],
+    [refreshTags, queueNoteSync],
   );
 
   const updateContent = useCallback(
     (id: string, content: string) => {
       setNotes((prev) =>
-        prev.map((n) =>
-          n.id === id ? { ...refreshTags(withHistory(n), n.title, content), updatedAt: Date.now() } : n,
-        ),
+        prev.map((n) => {
+          if (n.id === id) {
+            const updated = { ...refreshTags(withHistory(n), n.title, content), updatedAt: Date.now() };
+            queueNoteSync(updated);
+            return updated;
+          }
+          return n;
+        }),
       );
     },
-    [refreshTags],
+    [refreshTags, queueNoteSync],
   );
 
   const updateColor = useCallback(
@@ -759,61 +826,82 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     [mutate],
   );
 
-  const setReminder = useCallback((id: string, reminder: NoteReminder | null) => {
-    setNotes((prev) =>
-      prev.map((n) => (n.id === id ? { ...n, reminder, updatedAt: Date.now() } : n)),
-    );
-  }, []);
+  const setReminder = useCallback(
+    (id: string, reminder: NoteReminder | null) => {
+      setNotes((prev) =>
+        prev.map((n) => {
+          if (n.id === id) {
+            const updated = { ...n, reminder, updatedAt: Date.now() };
+            queueNoteSync(updated);
+            return updated;
+          }
+          return n;
+        }),
+      );
+    },
+    [queueNoteSync],
+  );
 
-  const dismissReminder = useCallback((id: string) => {
-    setNotes((prev) =>
-      prev.map((n) => {
-        if (n.id !== id || !n.reminder) return n;
-        if (n.reminder.repeat !== 'none') {
-          const nextTime = computeNextReminderTime(n.reminder.targetAt, n.reminder.repeat);
-          return {
-            ...n,
-            reminder: {
-              targetAt: nextTime,
-              repeat: n.reminder.repeat,
-              dismissed: false,
-              snoozedUntil: null,
-            },
-            updatedAt: Date.now(),
-          };
-        } else {
-          return {
+  const dismissReminder = useCallback(
+    (id: string) => {
+      setNotes((prev) =>
+        prev.map((n) => {
+          if (n.id !== id || !n.reminder) return n;
+          let updated: Note;
+          if (n.reminder.repeat !== 'none') {
+            const nextTime = computeNextReminderTime(n.reminder.targetAt, n.reminder.repeat);
+            updated = {
+              ...n,
+              reminder: {
+                targetAt: nextTime,
+                repeat: n.reminder.repeat,
+                dismissed: false,
+                snoozedUntil: null,
+              },
+              updatedAt: Date.now(),
+            };
+          } else {
+            updated = {
+              ...n,
+              reminder: {
+                ...n.reminder,
+                dismissed: true,
+                snoozedUntil: null,
+              },
+              updatedAt: Date.now(),
+            };
+          }
+          queueNoteSync(updated);
+          return updated;
+        }),
+      );
+      setActiveAlarmNote((cur) => (cur?.id === id ? null : cur));
+    },
+    [queueNoteSync],
+  );
+
+  const snoozeReminder = useCallback(
+    (id: string, minutes = 5) => {
+      const snoozeMs = Date.now() + minutes * 60 * 1000;
+      setNotes((prev) =>
+        prev.map((n) => {
+          if (n.id !== id || !n.reminder) return n;
+          const updated = {
             ...n,
             reminder: {
               ...n.reminder,
-              dismissed: true,
-              snoozedUntil: null,
+              snoozedUntil: snoozeMs,
             },
             updatedAt: Date.now(),
           };
-        }
-      }),
-    );
-    setActiveAlarmNote((cur) => (cur?.id === id ? null : cur));
-  }, []);
-
-  const snoozeReminder = useCallback((id: string, minutes = 5) => {
-    const snoozeMs = Date.now() + minutes * 60 * 1000;
-    setNotes((prev) =>
-      prev.map((n) => {
-        if (n.id !== id || !n.reminder) return n;
-        return {
-          ...n,
-          reminder: {
-            ...n.reminder,
-            snoozedUntil: snoozeMs,
-          },
-          updatedAt: Date.now(),
-        };
-      }),
-    );
-    setActiveAlarmNote((cur) => (cur?.id === id ? null : cur));
-  }, []);
+          queueNoteSync(updated);
+          return updated;
+        }),
+      );
+      setActiveAlarmNote((cur) => (cur?.id === id ? null : cur));
+    },
+    [queueNoteSync],
+  );
 
   const closeAlarmModal = useCallback(() => {
     setActiveAlarmNote(null);
@@ -832,59 +920,91 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         // 사이클 방지: 자손을 부모로 지정 불가
         if (parentId && getDescendantIds(prev, id).has(parentId)) return prev;
         if (parentId && !prev.some((n) => n.id === parentId)) return prev;
-        return prev.map((n) => (n.id === id ? { ...n, parentId, updatedAt: Date.now() } : n));
+        return prev.map((n) => {
+          if (n.id === id) {
+            const updated = { ...n, parentId, updatedAt: Date.now() };
+            queueNoteSync(updated);
+            return updated;
+          }
+          return n;
+        });
       });
     },
-    [],
+    [queueNoteSync],
   );
 
   /** 이전 형제를 부모로 (들여쓰기) */
-  const indent = useCallback((id: string) => {
-    setNotes((prev) => {
-      const target = prev.find((n) => n.id === id);
-      if (!target) return prev;
-      const siblings = prev
-        .filter(
-          (n) =>
-            (n.projectId || DEFAULT_PROJECT_ID) === (target.projectId || DEFAULT_PROJECT_ID) &&
-            (n.parentId ?? null) === (target.parentId ?? null),
-        )
-        .sort(sortNotes);
-      const idx = siblings.findIndex((n) => n.id === id);
-      if (idx <= 0) return prev;
-      const newParent = siblings[idx - 1];
-      if (getDescendantIds(prev, id).has(newParent.id)) return prev;
-      return prev.map((n) => (n.id === id ? { ...n, parentId: newParent.id, updatedAt: Date.now() } : n));
-    });
-  }, []);
+  const indent = useCallback(
+    (id: string) => {
+      setNotes((prev) => {
+        const target = prev.find((n) => n.id === id);
+        if (!target) return prev;
+        const siblings = prev
+          .filter(
+            (n) =>
+              (n.projectId || DEFAULT_PROJECT_ID) === (target.projectId || DEFAULT_PROJECT_ID) &&
+              (n.parentId ?? null) === (target.parentId ?? null),
+          )
+          .sort(sortNotes);
+        const idx = siblings.findIndex((n) => n.id === id);
+        if (idx <= 0) return prev;
+        const newParent = siblings[idx - 1];
+        if (getDescendantIds(prev, id).has(newParent.id)) return prev;
+        return prev.map((n) => {
+          if (n.id === id) {
+            const updated = { ...n, parentId: newParent.id, updatedAt: Date.now() };
+            queueNoteSync(updated);
+            return updated;
+          }
+          return n;
+        });
+      });
+    },
+    [queueNoteSync],
+  );
 
   /** 부모의 형제로 (내어쓰기) */
-  const outdent = useCallback((id: string) => {
-    setNotes((prev) => {
-      const target = prev.find((n) => n.id === id);
-      if (!target || !target.parentId) return prev;
-      const parent = prev.find((n) => n.id === target.parentId);
-      const grandParent = parent?.parentId ?? null;
-      return prev.map((n) => (n.id === id ? { ...n, parentId: grandParent, updatedAt: Date.now() } : n));
-    });
-  }, []);
+  const outdent = useCallback(
+    (id: string) => {
+      setNotes((prev) => {
+        const target = prev.find((n) => n.id === id);
+        if (!target || !target.parentId) return prev;
+        const parent = prev.find((n) => n.id === target.parentId);
+        const grandParent = parent?.parentId ?? null;
+        return prev.map((n) => {
+          if (n.id === id) {
+            const updated = { ...n, parentId: grandParent, updatedAt: Date.now() };
+            queueNoteSync(updated);
+            return updated;
+          }
+          return n;
+        });
+      });
+    },
+    [queueNoteSync],
+  );
 
   /** 히스토리 스냅샷으로 복원 (현재 상태는 강제 저장) */
-  const restoreHistory = useCallback((id: string, savedAt: number) => {
-    setNotes((prev) =>
-      prev.map((n) => {
-        if (n.id !== id) return n;
-        const snap = n.history.find((h) => h.savedAt === savedAt);
-        if (!snap) return n;
-        const cur: Note = withHistory(n, true);
-        return {
-          ...refreshTags(cur, snap.title, snap.content),
-          tags: snap.tags.length > 0 ? snap.tags : extractHashtags(snap.title, snap.content),
-          updatedAt: Date.now(),
-        };
-      }),
-    );
-  }, [refreshTags]);
+  const restoreHistory = useCallback(
+    (id: string, savedAt: number) => {
+      setNotes((prev) =>
+        prev.map((n) => {
+          if (n.id !== id) return n;
+          const snap = n.history.find((h) => h.savedAt === savedAt);
+          if (!snap) return n;
+          const cur: Note = withHistory(n, true);
+          const updated = {
+            ...refreshTags(cur, snap.title, snap.content),
+            tags: snap.tags.length > 0 ? snap.tags : extractHashtags(snap.title, snap.content),
+            updatedAt: Date.now(),
+          };
+          queueNoteSync(updated);
+          return updated;
+        }),
+      );
+    },
+    [refreshTags, queueNoteSync],
+  );
 
   const exportAll = useCallback(() => {
     const blob = new Blob([NoteRepository.exportJson(notes, projects)], { type: 'application/json' });
@@ -990,7 +1110,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     setSyncError(null);
   }, [supabaseConfig]);
 
-  // Supabase 최초 기동 시 자동 동기화
+  // Supabase 최초 기동 시 1회만 클라우드 데이터와 양방향 동기화
   const initialSupabaseSyncedRef = useRef(false);
   useEffect(() => {
     if (!ready || initialSupabaseSyncedRef.current) return;
@@ -999,19 +1119,6 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       void syncWithSupabase();
     }
   }, [ready, supabaseConfig.enabled, syncWithSupabase]);
-
-  // 노트 또는 프로젝트 변경 시 Supabase 백그라운드 자동 동기화 (5초 디바운스)
-  const autoSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    if (!ready || !supabaseConnected || !supabaseConfig.autoSync || isSyncing) return;
-    if (autoSyncTimerRef.current) clearTimeout(autoSyncTimerRef.current);
-    autoSyncTimerRef.current = setTimeout(() => {
-      void syncWithSupabase();
-    }, 4000);
-    return () => {
-      if (autoSyncTimerRef.current) clearTimeout(autoSyncTimerRef.current);
-    };
-  }, [notes, projects, ready, supabaseConnected, supabaseConfig.autoSync, isSyncing, syncWithSupabase]);
 
   const selected = useMemo(() => notes.find((n) => n.id === selectedId) ?? null, [notes, selectedId]);
 

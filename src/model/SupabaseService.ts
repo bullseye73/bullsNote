@@ -300,12 +300,15 @@ class SupabaseSyncManager {
     };
   }
 
-  // --- 단일 작업 동기화 (비동기 Fire-and-forget or await) ---
   public async upsertNote(note: Note): Promise<boolean> {
-    if (!this.isConnected() || !this.client) return false;
+    return this.upsertNotes([note]);
+  }
+
+  public async upsertNotes(notes: Note[]): Promise<boolean> {
+    if (!this.isConnected() || !this.client || notes.length === 0) return false;
     try {
-      const row = this.noteToRow(note);
-      const { error } = await this.client.from('bullsnote_notes').upsert(row, { onConflict: 'id' });
+      const rows = notes.map((n) => this.noteToRow(n));
+      const { error } = await this.client.from('bullsnote_notes').upsert(rows, { onConflict: 'id' });
       if (error) {
         console.warn('[Supabase] 노트 동기화 실패:', error);
         return false;
@@ -333,10 +336,14 @@ class SupabaseSyncManager {
   }
 
   public async upsertProject(project: Project): Promise<boolean> {
-    if (!this.isConnected() || !this.client) return false;
+    return this.upsertProjects([project]);
+  }
+
+  public async upsertProjects(projects: Project[]): Promise<boolean> {
+    if (!this.isConnected() || !this.client || projects.length === 0) return false;
     try {
-      const row = this.projectToRow(project);
-      const { error } = await this.client.from('bullsnote_projects').upsert(row, { onConflict: 'id' });
+      const rows = projects.map((p) => this.projectToRow(p));
+      const { error } = await this.client.from('bullsnote_projects').upsert(rows, { onConflict: 'id' });
       if (error) {
         console.warn('[Supabase] 프로젝트 동기화 실패:', error);
         return false;
