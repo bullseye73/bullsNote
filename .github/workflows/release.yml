@@ -36,13 +36,14 @@ jobs:
           if [ "${{ runner.os }}" = "macOS" ]; then
             ARCH=$(uname -m)
             if [ "$ARCH" = "arm64" ]; then
-              npm install @rollup/rollup-darwin-arm64@4.64.0 --no-save --force
+              npm install @rollup/rollup-darwin-arm64@4.64.0 dmg-license --no-save --force
             else
-              npm install @rollup/rollup-darwin-x64@4.64.0 --no-save --force
+              npm install @rollup/rollup-darwin-x64@4.64.0 dmg-license --no-save --force
             fi
-            npm install dmg-license --no-save
+            ls -d node_modules/@rollup/*
           elif [ "${{ runner.os }}" = "Linux" ]; then
             npm install @rollup/rollup-linux-x64-gnu@4.64.0 --no-save --force
+            ls -d node_modules/@rollup/*
           fi
 
       - name: Install Linux build tools
