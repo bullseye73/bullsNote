@@ -1,50 +1,105 @@
 # BullsNote — PC 지식관리 메모장 (Notion-like + 해시태그)
 
-Windows / Linux / macOS 빌드 지원. MVC 패턴 + 무료 UX 프레임워크 적용.
+Windows / Linux / macOS 멀티 플랫폼 지원. MVC 패턴 + 로컬 파일 볼트 + Supabase 클라우드 동기화 지원.
 
-## 기술 스택 (선정 이유)
-- **Electron 32 + Vite 5 + React 18 + TypeScript**: Win/Linux/Mac 네이티브 패키징(`electron-builder`)이 가장 성숙. 웹 기술로 한 번 작성해 3 OS 빌드.
-- **Mantine 7 (MIT, 무료)**: 깔끔하고 동적 UI에 최적화. AppShell/레이아웃, 다크모드 제공.
-- **BlockNote 0.55 + ariakit 스킨 (MIT, 노션식 블록 에디터)**: `/` 블록 메뉴(표·코드·이미지·파일), 언어별 코드블록(json/shell 등), 이미지 붙여넣기, 드래그 정렬, 다크모드 지원.
-- **Shiki 4 (MIT)**: 코드 블록 문법강조. 라이트/다크 테마 동시 지원.
-- **Tabler Icons (MIT)**: 무료 아이콘.
+---
 
-## MVC 매핑
+## 🛠️ 기술 스택
+- **Electron 32 + Vite 5 + React 18 + TypeScript**: Win/Linux/Mac 크로스플랫폼 네이티브 패키징 (`electron-builder`).
+- **Mantine 7 (MIT, 무료)**: 반응형 UI 컴포넌트, AppShell 레이아웃, 다크/라이트 모드 테마.
+- **BlockNote 0.55 + ariakit 스킨**: 노션식 블록 에디터, `/` 슬래시 메뉴(표·코드·이미지·파일), 드래그 앤 드롭 정렬.
+- **Shiki 4 (MIT)**: 19개 언어 코드 블록 문법 강조 (라이트/다크 테마 동시 지원).
+- **Supabase Cloud Sync**: 로컬-클라우드 양방향 증분 동기화, 오프라인 퍼스트, 유휴 시 0-트래픽 최적화.
+- **Tabler Icons (MIT)**: 직관적인 아이콘 세트.
+
+---
+
+## 📁 MVC 아키텍처 매핑
 ```
-src/model/      → M: Note.ts, HashtagService.ts, NoteRepository.ts (도메인+영속성)
-src/view/       → V: SidebarView, NoteListView, NoteEditorView, ErrorBoundary (표현만, 로직 없음)
-src/controller/ → C: NotesController.tsx (useNotes 컨텍스트, CRUD/검색/필터/가져오기)
-electron/       → 데스크톱 셸 (main.js, preload.js)
+src/model/      → M: Note.ts, HashtagService.ts, NoteRepository.ts, SupabaseService.ts (도메인+영속성+동기화)
+src/view/       → V: SidebarView, NoteListView, NoteEditorView, SupabaseSettingsModal, ErrorBoundary (표현 계층)
+src/controller/ → C: NotesController.tsx (useNotes 컨텍스트, 상태 관리 및 액션)
+electron/       → 데스크톱 셸 (main.js, preload.js, vault-ipc.js, tray.js)
 ```
 
-## 기능
-- 노트 CRUD, 복제, 핀/즐겨찾기, 자동 updatedAt 정렬
-- **트리 구조**: 하위 노트 추가, 펼치기/접기, 들여쓰기/내어쓰기로 계층 관리 (노션식 페이지 트리)
-- **블록 편집**: `/` 입력으로 표·코드(json/shell 등 언어 선택)·이미지 붙여넣기·파일 삽입, 코드 블록 문법강조(Shiki, 라이트/다크 대응 19개 언어), 드래그 순서 변경, 상단 빠른편집 툴바(실행취소/서식/색상/제목/목록/표·이미지 삽입/Markdown 복사), 글자 수 표시
-- **히스토리**: 노트별 자동 스냅샷(최대 30개), 시점 복원 (복원 시 현재 상태도 저장됨)
-- 해시태그: 제목+본문에서 `#태그` 자동 추출 (한글 지원), 태그별 카운트, 클릭 필터, 뱃지 표시
-- 검색: 제목/본문/태그 통합, 즐겨찾기만 보기
-- 영속성: **파일 볼트**(문서/BullsNote, Markdown+frontmatter, 이미지 assets/ 분리, 히스토리 .bullsnote.json). 저장 폴더를 OneDrive/Dropbox 안으로 지정하면 기기 간 동기화. 외부 변경은 포커스/8초 폴링으로 감지·병합
-- 단축키: `Ctrl+N` 새 노트
+---
 
-## 실행
+## ✨ 주요 기능
+- **노트 & 프로젝트 관리**: 프로젝트별 폴더링, 트리 계층 구조(들여쓰기/내어쓰기), 핀/즐겨찾기, 7가지 파스텔 컬러 라벨.
+- **블록 에디터 & 서식**:
+  - `/` 명령어로 표, 코드, 이미지, 날짜 삽입
+  - `@오늘`, `@내일` 동적 날짜 멘션 및 캘린더 피커
+  - 마우스 우클릭 컨텍스트 메뉴(잘라내기/복사/붙여넣기/서식 없이 붙여넣기) 전면 지원
+- **해시태그 자동 추출**: 제목과 본문에서 `#태그`를 실시간 수집 및 사이드바 필터링.
+- **스냅샷 히스토리**: 편집 이력 자동 스냅샷(최대 30개) 보관 및 원클릭 복원.
+- **알람 & 리마인더**: 특정 날짜/시간 알림, 반복 알람(매일/평일/매주/매월), OS 시스템 알림창 및 트레이 연동.
+- **이중 저장소 지원**:
+  1. **로컬 파일 볼트(Local File Vault)**: `내 문서/BullsNote` 폴더에 `.md` 마크다운 + frontmatter 형태로 파일 저장 (OneDrive/Dropbox 연동 가능).
+  2. **Supabase 클라우드 동기화**: 프로젝트 URL과 Anon Key 입력만으로 클라우드 양방향 동기화. 변경 시에만 가볍게 증분 전송되며 평상시 통신이 전혀 없는 초경량 아키텍처.
+
+---
+
+## 🚀 Git 기반 플랫폼별 릴리즈 (GitHub Actions 자동화)
+
+GitHub Actions를 통해 태그를 푸시하면 **Windows(`.exe`), macOS(`.dmg`), Linux(`.AppImage`/`.deb`)** 설치 파일이 GitHub Release에 자동 빌드되어 게시됩니다.
+
+### 1단계: 버전 확인 및 커밋
+`package.json`의 `"version"`을 업데이트하고 커밋을 완료합니다.
+```bash
+git add .
+git commit -m "릴리즈 준비: v0.1.0"
+git push origin main
+```
+
+### 2단계: Git 태그 생성 및 푸시
+```bash
+# 태그 생성 (v로 시작하는 버전 형식)
+git tag v0.1.0
+
+# 태그를 원격 저장소로 푸시
+git push origin v0.1.0
+```
+
+### 3단계: GitHub Release 확인
+1. GitHub 저장소의 **Actions** 탭으로 이동하면 `Release BullsNote` 워크플로가 실행됩니다.
+2. 약 3~5분 후 **Releases** 탭에 다음 배포 파일들이 자동으로 업로드됩니다:
+   - **Windows**: `BullsNote Setup 0.1.0.exe` (설치형), `BullsNote 0.1.0.exe` (포터블 무설치)
+   - **macOS**: `BullsNote-0.1.0.dmg`, `BullsNote-0.1.0-mac.zip`
+   - **Linux**: `BullsNote-0.1.0.AppImage`, `bullsnote_0.1.0_amd64.deb`
+
+> **참고**: GitHub 저장소 설정(`Settings -> Actions -> General -> Workflow permissions`)에서 **Read and write permissions**가 활성화되어 있어야 릴리즈 산출물이 정상 등록됩니다.
+
+---
+
+## 💻 로컬 실행 및 수동 빌드
+
+### 개발 서버 실행
 ```powershell
 npm install
-npm run dev            # 웹 미리보기 (http://localhost:5190)
-npm run electron:dev   # Electron으로 실행
-npm run dist           # 현재 OS용 패키지
-npm run dist:win       # Windows nsis/portable
-npm run dist:linux     # AppImage/deb (리눅스 또는 CI)
-npm run dist:mac       # dmg/zip (macOS에서 실행)
+npm run dev            # 웹 브라우저 미리보기 (http://localhost:5190)
+npm run electron:dev   # Electron 데스크톱 앱 개발 모드 실행
 ```
 
-> Linux/Mac 빌드는 각 OS 또는 CI(GitHub Actions)에서 실행 권장. `electron-builder --win --linux --mac` 멀티타깃 가능.
->
-> 검증됨: Windows 무설치 폴더(`--dir`, `dist/win-unpacked/BullsNote.exe`) 패키징 성공.
-> NSIS 인스톨러 생성 시 makensis 플러그인 오류가 나면 electron-builder 캐시
-> (`%LOCALAPPDATA%\electron-builder\Cache\nsis`)를 지우고 재시도.
+### 로컬 패키징
+```powershell
+# 현재 OS용 자동 빌드
+npm run dist
 
-## 문제 해결
-- `npm install` 중 Electron postinstall이 실패하면: `npm install --ignore-scripts` 후
-  `node node_modules/electron/install.js` 로 바이너리만 별도 다운로드.
-- 프로덕션 번들 확인: `npx vite preview` 후 http://localhost:4173 접속.
+# Windows 전용 (NSIS 인스톨러 + Portable 단일 실행파일)
+npm run dist:win
+
+# Linux 전용 (WSL2 또는 Linux 환경 권장)
+npm run dist:linux
+
+# macOS 전용 (macOS 환경 필요)
+npm run dist:mac
+```
+
+- 빌드 산출물은 프로젝트 루트의 `release/` 폴더에 생성됩니다.
+
+---
+
+## 🔧 문제 해결 및 팁
+- **NSIS 캐시 오류**: Windows에서 NSIS 생성 시 오류가 발생하면 `%LOCALAPPDATA%\electron-builder\Cache\nsis` 폴더를 삭제 후 재시도하세요.
+- **Electron 바이너리 다운로드 실패**: `npm install --ignore-scripts` 후 `node node_modules/electron/install.js`를 별도로 실행하세요.
+- **Supabase CSP 오류 해결**: Supabase 통신은 `index.html`의 CSP 정책(`connect-src https: wss:`)에 허용되어 있습니다.

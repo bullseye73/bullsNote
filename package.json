@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "description": "BullsNote - 크로스플랫폼 지식관리 메모장 (Notion-like, hashtag 지원)",
   "author": "BullsNote",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bullseye73/bullsNote.git"
+  },
   "main": "electron/main.js",
   "scripts": {
     "dev": "vite",
@@ -43,6 +47,11 @@
   "build": {
     "appId": "com.bullsnote.app",
     "productName": "BullsNote",
+    "publish": {
+      "provider": "github",
+      "owner": "bullseye73",
+      "repo": "bullsNote"
+    },
     "directories": {
       "output": "release"
     },
