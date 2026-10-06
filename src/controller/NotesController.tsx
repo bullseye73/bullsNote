@@ -28,6 +28,7 @@ import {
   swapDataUrlsToAssets,
 } from '../model/FileVault';
 import type { VaultApi } from '../electron';
+import { SupabaseConfig, SupabaseService } from '../model/SupabaseService';
 
 function getVault(): VaultApi | null {
   return window.bullsNote?.vault ?? null;
@@ -83,6 +84,12 @@ export interface NotesState {
   vaultPath: string;
   vaultError: string;
   activeAlarmNote: Note | null;
+  /** Supabase 클라우드 연동 상태 */
+  supabaseConnected: boolean;
+  supabaseConfig: SupabaseConfig;
+  isSyncing: boolean;
+  syncError: string | null;
+  lastSyncedAt: number | null;
 }
 
 export interface NotesActions {
@@ -115,6 +122,9 @@ export interface NotesActions {
   updateProject(id: string, patch: Partial<Pick<Project, 'name' | 'icon'>>): void;
   deleteProject(id: string): void;
   moveNoteToProject(noteId: string, targetProjectId: string): void;
+  saveSupabaseConfig(config: SupabaseConfig): Promise<void>;
+  syncWithSupabase(): Promise<void>;
+  disconnectSupabase(): void;
 }
 
 const Ctx = createContext<(NotesState & NotesActions) | null>(null);
@@ -161,6 +171,12 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const [showFavoriteOnly, setShowFavoriteOnly] = useState(false);
   const [activeAlarmNote, setActiveAlarmNote] = useState<Note | null>(null);
   const triggeredAlarmsRef = useRef<Set<string>>(new Set());
+
+  // Supabase 클라우드 연동 상태
+  const [supabaseConfig, setSupabaseConfigState] = useState<SupabaseConfig>(() => SupabaseService.getConfig());
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const supabaseConnected = supabaseConfig.enabled && Boolean(supabaseConfig.url && supabaseConfig.anonKey);
 
   // 주기적으로 알람 감지 (5초 주기)
   useEffect(() => {
@@ -628,10 +644,13 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
           const nextNotes = notes.filter((n) => (n.projectId || DEFAULT_PROJECT_ID) === nextProj.id);
           setSelectedId(nextNotes[0]?.id ?? null);
         }
+        if (supabaseConnected && supabaseConfig.autoSync) {
+          void SupabaseService.deleteProject(id);
+        }
         return remaining;
       });
     },
-    [selectedProjectId, notes],
+    [selectedProjectId, notes, supabaseConnected, supabaseConfig.autoSync],
   );
 
   const moveNoteToProject = useCallback((noteId: string, targetProjectId: string) => {
@@ -702,10 +721,15 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
           );
           setSelectedId(siblings[0]?.id ?? fixed[0]?.id ?? null);
         }
+        if (supabaseConnected && supabaseConfig.autoSync) {
+          for (const doomedId of doomed) {
+            void SupabaseService.deleteNote(doomedId);
+          }
+        }
         return fixed;
       });
     },
-    [selectedId, selectedProjectId],
+    [selectedId, selectedProjectId, supabaseConnected, supabaseConfig.autoSync],
   );
 
   const updateTitle = useCallback(
@@ -928,6 +952,67 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   const tree = useMemo(() => buildTree(isFiltering ? flat : currentProjectNotes), [isFiltering, flat, currentProjectNotes]);
 
+  // --- Supabase 동기화 액션 ---
+  const syncWithSupabase = useCallback(async () => {
+    if (!SupabaseService.isConnected()) return;
+    setIsSyncing(true);
+    setSyncError(null);
+    try {
+      const res = await SupabaseService.syncAll(notes, projects);
+      if (res.success) {
+        setNotes(res.notes.sort(sortNotes));
+        setProjects(res.projects);
+        NoteRepository.save(res.notes);
+        NoteRepository.saveProjects(res.projects);
+        setSupabaseConfigState(SupabaseService.getConfig());
+      } else {
+        setSyncError(res.error || '동기화 중 오류가 발생했습니다.');
+      }
+    } catch (err: unknown) {
+      setSyncError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [notes, projects]);
+
+  const saveSupabaseConfig = useCallback(async (newConfig: SupabaseConfig) => {
+    SupabaseService.saveConfig(newConfig);
+    setSupabaseConfigState(newConfig);
+  }, []);
+
+  const disconnectSupabase = useCallback(() => {
+    const disabledConfig: SupabaseConfig = {
+      ...supabaseConfig,
+      enabled: false,
+    };
+    SupabaseService.saveConfig(disabledConfig);
+    setSupabaseConfigState(disabledConfig);
+    setSyncError(null);
+  }, [supabaseConfig]);
+
+  // Supabase 최초 기동 시 자동 동기화
+  const initialSupabaseSyncedRef = useRef(false);
+  useEffect(() => {
+    if (!ready || initialSupabaseSyncedRef.current) return;
+    if (supabaseConfig.enabled && SupabaseService.isConnected()) {
+      initialSupabaseSyncedRef.current = true;
+      void syncWithSupabase();
+    }
+  }, [ready, supabaseConfig.enabled, syncWithSupabase]);
+
+  // 노트 또는 프로젝트 변경 시 Supabase 백그라운드 자동 동기화 (5초 디바운스)
+  const autoSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!ready || !supabaseConnected || !supabaseConfig.autoSync || isSyncing) return;
+    if (autoSyncTimerRef.current) clearTimeout(autoSyncTimerRef.current);
+    autoSyncTimerRef.current = setTimeout(() => {
+      void syncWithSupabase();
+    }, 4000);
+    return () => {
+      if (autoSyncTimerRef.current) clearTimeout(autoSyncTimerRef.current);
+    };
+  }, [notes, projects, ready, supabaseConnected, supabaseConfig.autoSync, isSyncing, syncWithSupabase]);
+
   const selected = useMemo(() => notes.find((n) => n.id === selectedId) ?? null, [notes, selectedId]);
 
   const value = useMemo(
@@ -950,6 +1035,11 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       vaultPath,
       vaultError,
       activeAlarmNote,
+      supabaseConnected,
+      supabaseConfig,
+      isSyncing,
+      syncError,
+      lastSyncedAt: supabaseConfig.lastSyncedAt,
       select,
       create,
       duplicate,
@@ -979,6 +1069,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       updateProject,
       deleteProject,
       moveNoteToProject,
+      saveSupabaseConfig,
+      syncWithSupabase,
+      disconnectSupabase,
     }),
     [
       projects,
@@ -999,6 +1092,10 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       vaultPath,
       vaultError,
       activeAlarmNote,
+      supabaseConnected,
+      supabaseConfig,
+      isSyncing,
+      syncError,
       select,
       create,
       duplicate,
@@ -1025,6 +1122,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       updateProject,
       deleteProject,
       moveNoteToProject,
+      saveSupabaseConfig,
+      syncWithSupabase,
+      disconnectSupabase,
     ],
   );
 

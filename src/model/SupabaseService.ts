@@ -1,0 +1,510 @@
+// MODEL: Supabase 연동 및 동기화 서비스
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { Note, Project } from './Note';
+
+const SUPABASE_CONFIG_STORAGE_KEY = 'bullsnote.supabase.config.v1';
+
+export interface SupabaseConfig {
+  url: string;
+  anonKey: string;
+  enabled: boolean;
+  autoSync: boolean;
+  lastSyncedAt: number | null;
+}
+
+export const DEFAULT_SUPABASE_CONFIG: SupabaseConfig = {
+  url: '',
+  anonKey: '',
+  enabled: false,
+  autoSync: true,
+  lastSyncedAt: null,
+};
+
+export const SUPABASE_SETUP_SQL = `-- BullsNote용 Supabase 테이블 생성 스크립트
+-- Supabase 대시보드 -> SQL Editor -> New Query에 붙여넣고 Run을 클릭하세요.
+
+-- 1. 프로젝트 테이블 생성
+CREATE TABLE IF NOT EXISTS bullsnote_projects (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  icon TEXT DEFAULT '📁',
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL
+);
+
+-- 2. 노트 테이블 생성
+CREATE TABLE IF NOT EXISTS bullsnote_notes (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL DEFAULT '제목 없음',
+  project_id TEXT,
+  color TEXT DEFAULT 'blue',
+  reminder JSONB,
+  content TEXT DEFAULT '',
+  tags JSONB DEFAULT '[]'::jsonb,
+  pinned BOOLEAN DEFAULT false,
+  favorite BOOLEAN DEFAULT false,
+  parent_id TEXT,
+  history JSONB DEFAULT '[]'::jsonb,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL
+);
+
+-- 3. RLS(Row Level Security) 설정 및 공개 접근 정책
+-- (단일 사용자 로컬-클라우드 동기화를 위한 anon 전체 접근 허용)
+ALTER TABLE bullsnote_projects ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bullsnote_notes ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Allow all for bullsnote_projects" ON bullsnote_projects;
+CREATE POLICY "Allow all for bullsnote_projects" ON bullsnote_projects
+  FOR ALL TO anon, authenticated
+  USING (true)
+  WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow all for bullsnote_notes" ON bullsnote_notes;
+CREATE POLICY "Allow all for bullsnote_notes" ON bullsnote_notes
+  FOR ALL TO anon, authenticated
+  USING (true)
+  WITH CHECK (true);
+`;
+
+interface DbProjectRow {
+  id: string;
+  name: string;
+  icon: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+interface DbNoteRow {
+  id: string;
+  title: string;
+  project_id: string | null;
+  color: string | null;
+  reminder: unknown;
+  content: string;
+  tags: unknown;
+  pinned: boolean;
+  favorite: boolean;
+  parent_id: string | null;
+  history: unknown;
+  created_at: number;
+  updated_at: number;
+}
+
+class SupabaseSyncManager {
+  private client: SupabaseClient | null = null;
+  private currentConfig: SupabaseConfig = { ...DEFAULT_SUPABASE_CONFIG };
+
+  constructor() {
+    this.currentConfig = this.loadConfig();
+    this.initClient();
+  }
+
+  public loadConfig(): SupabaseConfig {
+    try {
+      const raw = localStorage.getItem(SUPABASE_CONFIG_STORAGE_KEY);
+      if (!raw) return { ...DEFAULT_SUPABASE_CONFIG };
+      const parsed = JSON.parse(raw);
+      return {
+        url: typeof parsed.url === 'string' ? parsed.url.trim() : '',
+        anonKey: typeof parsed.anonKey === 'string' ? parsed.anonKey.trim() : '',
+        enabled: Boolean(parsed.enabled),
+        autoSync: parsed.autoSync !== false,
+        lastSyncedAt: typeof parsed.lastSyncedAt === 'number' ? parsed.lastSyncedAt : null,
+      };
+    } catch {
+      return { ...DEFAULT_SUPABASE_CONFIG };
+    }
+  }
+
+  public saveConfig(config: SupabaseConfig): void {
+    const cleanConfig: SupabaseConfig = {
+      ...config,
+      url: (config.url || '').trim().replace(/\/+$/, ''),
+      anonKey: (config.anonKey || '').trim(),
+    };
+    this.currentConfig = cleanConfig;
+    localStorage.setItem(SUPABASE_CONFIG_STORAGE_KEY, JSON.stringify(cleanConfig));
+    this.initClient();
+  }
+
+  public getConfig(): SupabaseConfig {
+    return { ...this.currentConfig };
+  }
+
+  public isConnected(): boolean {
+    return Boolean(this.client && this.currentConfig.enabled && this.currentConfig.url && this.currentConfig.anonKey);
+  }
+
+  private initClient(): void {
+    const cleanUrl = (this.currentConfig.url || '').trim().replace(/\/+$/, '');
+    const cleanKey = (this.currentConfig.anonKey || '').trim();
+    if (this.currentConfig.enabled && cleanUrl && cleanKey) {
+      try {
+        this.client = createClient(cleanUrl, cleanKey, {
+          auth: { persistSession: false, autoRefreshToken: false },
+        });
+      } catch (err) {
+        console.error('Supabase 클라이언트 초기화 실패:', err);
+        this.client = null;
+      }
+    } else {
+      this.client = null;
+    }
+  }
+
+  public async testConnection(rawUrl: string, rawAnonKey: string): Promise<{
+    success: boolean;
+    error?: string;
+    tablesExist?: boolean;
+  }> {
+    try {
+      const url = rawUrl.trim().replace(/\/+$/, '');
+      const anonKey = rawAnonKey.trim();
+
+      if (!url || !anonKey) {
+        return { success: false, error: 'URL과 Anon API Key를 모두 입력해주세요.' };
+      }
+
+      // 간단한 URL 포맷 검증
+      if (!url.startsWith('https://') && !url.startsWith('http://')) {
+        return { success: false, error: 'Supabase URL은 https:// 로 시작해야 합니다. (예: https://xxxx.supabase.co)' };
+      }
+
+      const tempClient = createClient(url, anonKey, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+
+      // bullsnote_projects 테이블에 쿼리 테스트
+      const { error: projError } = await tempClient
+        .from('bullsnote_projects')
+        .select('id')
+        .limit(1);
+
+      if (projError) {
+        const errMsg = projError.message || '';
+        if (
+          projError.code === 'PGRST205' ||
+          errMsg.includes('relation "bullsnote_projects" does not exist') ||
+          projError.code === '42P01' ||
+          errMsg.includes('does not exist')
+        ) {
+          return {
+            success: true,
+            tablesExist: false,
+            error: 'Supabase 서버 연결은 성공했으나, BullsNote 전용 테이블이 아직 생성되지 않았습니다. [초기 설정 가이드 & SQL] 탭의 스크립트를 실행해주세요.',
+          };
+        }
+
+        if (errMsg.includes('Failed to fetch') || projError.code === 'ERR') {
+          return {
+            success: false,
+            error: '서버에 연결할 수 없습니다. (Failed to fetch)\n1. Project URL이 정확한지 확인해주세요.\n2. Supabase 프로젝트가 Paused(일시 정지) 상태가 아닌지 확인해주세요.\n3. 인터넷 연결을 확인해주세요.',
+          };
+        }
+
+        if (projError.code === 'PGRST301' || projError.code === '401' || errMsg.includes('JWT') || errMsg.includes('Invalid API key')) {
+          return {
+            success: false,
+            error: 'Anon API Key가 올바르지 않습니다. Supabase 대시보드 -> Project Settings -> API에서 anon public 키를 다시 복사해주세요.',
+          };
+        }
+
+        return {
+          success: false,
+          error: `Supabase 오류 (${projError.code || 'ERR'}): ${projError.message}`,
+        };
+      }
+
+      // bullsnote_notes 테이블도 검증
+      const { error: noteError } = await tempClient
+        .from('bullsnote_notes')
+        .select('id')
+        .limit(1);
+
+      if (noteError) {
+        return {
+          success: true,
+          tablesExist: false,
+          error: 'bullsnote_notes 테이블이 없습니다. [초기 설정 가이드 & SQL] 탭의 스크립트를 실행해주세요.',
+        };
+      }
+
+      return { success: true, tablesExist: true };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('Failed to fetch')) {
+        return {
+          success: false,
+          error: '서버에 연결할 수 없습니다. (Failed to fetch)\n1. Supabase Project URL에 오타가 없는지 확인해주세요.\n2. Supabase 프로젝트가 일시 정지(Paused) 상태인지 확인해주세요.',
+        };
+      }
+      return { success: false, error: `연결 실패: ${msg}` };
+    }
+  }
+
+  // --- 데이터 변환 헬퍼 ---
+  private projectToRow(p: Project): DbProjectRow {
+    return {
+      id: p.id,
+      name: p.name,
+      icon: p.icon || '📁',
+      created_at: p.createdAt,
+      updated_at: p.updatedAt,
+    };
+  }
+
+  private rowToProject(row: DbProjectRow): Project {
+    return {
+      id: row.id,
+      name: row.name,
+      icon: row.icon || '📁',
+      createdAt: Number(row.created_at) || Date.now(),
+      updatedAt: Number(row.updated_at) || Date.now(),
+    };
+  }
+
+  private noteToRow(n: Note): DbNoteRow {
+    return {
+      id: n.id,
+      title: n.title,
+      project_id: n.projectId || 'default',
+      color: n.color || 'blue',
+      reminder: n.reminder || null,
+      content: n.content || '',
+      tags: n.tags || [],
+      pinned: Boolean(n.pinned),
+      favorite: Boolean(n.favorite),
+      parent_id: n.parentId,
+      history: n.history || [],
+      created_at: n.createdAt,
+      updated_at: n.updatedAt,
+    };
+  }
+
+  private rowToNote(row: DbNoteRow): Note {
+    return {
+      id: row.id,
+      title: row.title || '제목 없음',
+      projectId: row.project_id || 'default',
+      color: row.color || 'blue',
+      reminder: (row.reminder as Note['reminder']) || null,
+      content: row.content || '',
+      tags: Array.isArray(row.tags) ? (row.tags as string[]) : [],
+      pinned: Boolean(row.pinned),
+      favorite: Boolean(row.favorite),
+      parentId: row.parent_id || null,
+      history: Array.isArray(row.history) ? (row.history as Note['history']) : [],
+      createdAt: Number(row.created_at) || Date.now(),
+      updatedAt: Number(row.updated_at) || Date.now(),
+    };
+  }
+
+  // --- 단일 작업 동기화 (비동기 Fire-and-forget or await) ---
+  public async upsertNote(note: Note): Promise<boolean> {
+    if (!this.isConnected() || !this.client) return false;
+    try {
+      const row = this.noteToRow(note);
+      const { error } = await this.client.from('bullsnote_notes').upsert(row, { onConflict: 'id' });
+      if (error) {
+        console.warn('[Supabase] 노트 동기화 실패:', error);
+        return false;
+      }
+      return true;
+    } catch (e) {
+      console.warn('[Supabase] 노트 upsert 예외:', e);
+      return false;
+    }
+  }
+
+  public async deleteNote(id: string): Promise<boolean> {
+    if (!this.isConnected() || !this.client) return false;
+    try {
+      const { error } = await this.client.from('bullsnote_notes').delete().eq('id', id);
+      if (error) {
+        console.warn('[Supabase] 노트 삭제 동기화 실패:', error);
+        return false;
+      }
+      return true;
+    } catch (e) {
+      console.warn('[Supabase] 노트 delete 예외:', e);
+      return false;
+    }
+  }
+
+  public async upsertProject(project: Project): Promise<boolean> {
+    if (!this.isConnected() || !this.client) return false;
+    try {
+      const row = this.projectToRow(project);
+      const { error } = await this.client.from('bullsnote_projects').upsert(row, { onConflict: 'id' });
+      if (error) {
+        console.warn('[Supabase] 프로젝트 동기화 실패:', error);
+        return false;
+      }
+      return true;
+    } catch (e) {
+      console.warn('[Supabase] 프로젝트 upsert 예외:', e);
+      return false;
+    }
+  }
+
+  public async deleteProject(id: string): Promise<boolean> {
+    if (!this.isConnected() || !this.client) return false;
+    try {
+      const { error } = await this.client.from('bullsnote_projects').delete().eq('id', id);
+      if (error) {
+        console.warn('[Supabase] 프로젝트 삭제 동기화 실패:', error);
+        return false;
+      }
+      return true;
+    } catch (e) {
+      console.warn('[Supabase] 프로젝트 delete 예외:', e);
+      return false;
+    }
+  }
+
+  // --- 전체 양방향 동기화 (Full Bidirectional Sync) ---
+  public async syncAll(
+    localNotes: Note[],
+    localProjects: Project[],
+  ): Promise<{
+    success: boolean;
+    notes: Note[];
+    projects: Project[];
+    uploadedCount: number;
+    downloadedCount: number;
+    error?: string;
+  }> {
+    if (!this.isConnected() || !this.client) {
+      return {
+        success: false,
+        notes: localNotes,
+        projects: localProjects,
+        uploadedCount: 0,
+        downloadedCount: 0,
+        error: 'Supabase가 연동되지 않았거나 비활성화되어 있습니다.',
+      };
+    }
+
+    try {
+      // 1. Supabase에서 모든 원격 프로젝트와 노트 조회
+      const { data: remoteProjectsRaw, error: projError } = await this.client
+        .from('bullsnote_projects')
+        .select('*');
+
+      if (projError) {
+        throw new Error(`원격 프로젝트 조회 실패: ${projError.message}`);
+      }
+
+      const { data: remoteNotesRaw, error: noteError } = await this.client
+        .from('bullsnote_notes')
+        .select('*');
+
+      if (noteError) {
+        throw new Error(`원격 노트 조회 실패: ${noteError.message}`);
+      }
+
+      const remoteProjects: Project[] = (remoteProjectsRaw as DbProjectRow[] || []).map((r) => this.rowToProject(r));
+      const remoteNotes: Note[] = (remoteNotesRaw as DbNoteRow[] || []).map((r) => this.rowToNote(r));
+
+      let uploadedCount = 0;
+      let downloadedCount = 0;
+
+      // 2. 프로젝트 병합 (updatedAt 기준)
+      const projectMap = new Map<string, Project>();
+      for (const p of remoteProjects) {
+        projectMap.set(p.id, p);
+      }
+
+      const projectsToUpload: Project[] = [];
+
+      for (const lp of localProjects) {
+        const rp = projectMap.get(lp.id);
+        if (!rp) {
+          // 원격에 없으므로 업로드 대상
+          projectMap.set(lp.id, lp);
+          projectsToUpload.push(lp);
+        } else {
+          // 둘 다 존재 -> 타임스탬프 비교
+          if (lp.updatedAt > rp.updatedAt) {
+            projectMap.set(lp.id, lp);
+            projectsToUpload.push(lp);
+          } else if (rp.updatedAt > lp.updatedAt) {
+            downloadedCount++;
+            // rp 유지
+          }
+        }
+      }
+
+      // 3. 노트 병합 (updatedAt 기준)
+      const noteMap = new Map<string, Note>();
+      for (const n of remoteNotes) {
+        noteMap.set(n.id, n);
+      }
+
+      const notesToUpload: Note[] = [];
+
+      for (const ln of localNotes) {
+        const rn = noteMap.get(ln.id);
+        if (!rn) {
+          // 원격에 없으므로 업로드 대상
+          noteMap.set(ln.id, ln);
+          notesToUpload.push(ln);
+        } else {
+          // 둘 다 존재 -> 타임스탬프 비교
+          if (ln.updatedAt > rn.updatedAt) {
+            noteMap.set(ln.id, ln);
+            notesToUpload.push(ln);
+          } else if (rn.updatedAt > ln.updatedAt) {
+            downloadedCount++;
+            // rn 유지
+          }
+        }
+      }
+
+      // 4. 업로드 실행
+      if (projectsToUpload.length > 0) {
+        const rows = projectsToUpload.map((p) => this.projectToRow(p));
+        const { error: upProjErr } = await this.client.from('bullsnote_projects').upsert(rows, { onConflict: 'id' });
+        if (upProjErr) throw new Error(`프로젝트 업로드 실패: ${upProjErr.message}`);
+        uploadedCount += projectsToUpload.length;
+      }
+
+      if (notesToUpload.length > 0) {
+        const rows = notesToUpload.map((n) => this.noteToRow(n));
+        const { error: upNoteErr } = await this.client.from('bullsnote_notes').upsert(rows, { onConflict: 'id' });
+        if (upNoteErr) throw new Error(`노트 업로드 실패: ${upNoteErr.message}`);
+        uploadedCount += notesToUpload.length;
+      }
+
+      // 5. 최종 병합 리스트 생성
+      const mergedProjects = Array.from(projectMap.values());
+      const mergedNotes = Array.from(noteMap.values());
+
+      // 6. 동기화 성공 타임스탬프 기록
+      const now = Date.now();
+      const updatedConfig = { ...this.currentConfig, lastSyncedAt: now };
+      this.saveConfig(updatedConfig);
+
+      return {
+        success: true,
+        notes: mergedNotes,
+        projects: mergedProjects,
+        uploadedCount,
+        downloadedCount,
+      };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return {
+        success: false,
+        notes: localNotes,
+        projects: localProjects,
+        uploadedCount: 0,
+        downloadedCount: 0,
+        error: msg,
+      };
+    }
+  }
+}
+
+export const SupabaseService = new SupabaseSyncManager();

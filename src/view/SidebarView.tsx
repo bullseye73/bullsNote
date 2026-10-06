@@ -17,6 +17,10 @@ import {
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import {
+  IconAlertCircle,
+  IconCloud,
+  IconCloudCheck,
+  IconCloudOff,
   IconDots,
   IconDownload,
   IconFolder,
@@ -24,6 +28,7 @@ import {
   IconPlus,
   IconRefresh,
   IconSearch,
+  IconSettings,
   IconStar,
   IconTrash,
   IconUpload,
@@ -55,7 +60,11 @@ const POPULAR_ICONS = [
   '🔒',
 ];
 
-export function SidebarView() {
+interface SidebarViewProps {
+  onOpenSupabaseModal?: () => void;
+}
+
+export function SidebarView({ onOpenSupabaseModal }: SidebarViewProps) {
   const {
     projects,
     selectedProjectId,
@@ -79,6 +88,10 @@ export function SidebarView() {
     vaultError,
     chooseVault,
     resync,
+    supabaseConnected,
+    isSyncing,
+    syncWithSupabase,
+    lastSyncedAt,
   } = useNotes();
 
   const fileRef = useRef<HTMLInputElement>(null);
@@ -271,6 +284,57 @@ export function SidebarView() {
           브라우저 모드: localStorage 저장 (Electron 앱에서 파일 저장 지원)
         </Text>
       )}
+
+      {/* Supabase 클라우드 동기화 섹션 */}
+      <Divider />
+      <Stack gap={4}>
+        <Group justify="space-between" wrap="nowrap">
+          <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
+            {supabaseConnected ? (
+              <IconCloudCheck size={16} color="#2f9e44" style={{ flexShrink: 0 }} />
+            ) : (
+              <IconCloudOff size={16} color="#868e96" style={{ flexShrink: 0 }} />
+            )}
+            <Text size="xs" fw={600} truncate c={supabaseConnected ? 'teal' : 'dimmed'}>
+              {supabaseConnected ? 'Supabase 클라우드' : '로컬 저장 전용'}
+            </Text>
+          </Group>
+          <Group gap={4}>
+            {supabaseConnected && (
+              <Tooltip label="지금 동기화">
+                <ActionIcon
+                  size="xs"
+                  variant="light"
+                  color="teal"
+                  loading={isSyncing}
+                  onClick={() => void syncWithSupabase()}
+                  aria-label="지금 동기화"
+                >
+                  <IconRefresh size={12} />
+                </ActionIcon>
+              </Tooltip>
+            )}
+            <Tooltip label="Supabase 연동 설정">
+              <ActionIcon
+                size="xs"
+                variant="light"
+                color="blue"
+                onClick={onOpenSupabaseModal}
+                aria-label="Supabase 설정"
+              >
+                <IconSettings size={12} />
+              </ActionIcon>
+            </Tooltip>
+          </Group>
+        </Group>
+        {supabaseConnected && lastSyncedAt && (
+          <Text size="10px" c="dimmed">
+            동기화: {new Date(lastSyncedAt).toLocaleTimeString()}
+          </Text>
+        )}
+      </Stack>
+
+      <Divider />
       <Group justify="space-between">
         <Tooltip label="JSON 내보내기">
           <ActionIcon variant="light" onClick={exportAll} aria-label="내보내기">
