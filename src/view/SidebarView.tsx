@@ -1,4 +1,4 @@
-// VIEW: 좌측 사이드바 (프로젝트 CRUD + 검색/태그/볼트/가져오기내보내기)
+// VIEW: 좌측 사이드바 (프로젝트 CRUD + 검색/태그/볼트)
 import {
   ActionIcon,
   Badge,
@@ -22,7 +22,6 @@ import {
   IconCloudCheck,
   IconCloudOff,
   IconDots,
-  IconDownload,
   IconFolder,
   IconPencil,
   IconPlus,
@@ -31,9 +30,8 @@ import {
   IconSettings,
   IconStar,
   IconTrash,
-  IconUpload,
 } from '@tabler/icons-react';
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { useNotes } from '../controller/NotesController';
 import { Project } from '../model/Note';
 import { SortMenu } from './SortMenu';
@@ -86,8 +84,6 @@ export function SidebarView({ onOpenSupabaseModal }: SidebarViewProps) {
     create,
     showFavoriteOnly,
     setShowFavoriteOnly,
-    exportAll,
-    importFromFile,
     vaultMode,
     vaultPath,
     vaultError,
@@ -98,8 +94,6 @@ export function SidebarView({ onOpenSupabaseModal }: SidebarViewProps) {
     syncWithSupabase,
     lastSyncedAt,
   } = useNotes();
-
-  const fileRef = useRef<HTMLInputElement>(null);
 
   // 프로젝트 생성/수정 모달 상태
   const [modalOpened, { open: openModal, close: closeModal }] = useDisclosure(false);
@@ -347,30 +341,7 @@ export function SidebarView({ onOpenSupabaseModal }: SidebarViewProps) {
         )}
       </Stack>
 
-      <Divider />
-      <Group justify="space-between">
-        <Tooltip label="JSON 내보내기">
-          <ActionIcon variant="light" onClick={exportAll} aria-label="내보내기">
-            <IconDownload size={16} />
-          </ActionIcon>
-        </Tooltip>
-        <Tooltip label="JSON 가져오기">
-          <ActionIcon variant="light" onClick={() => fileRef.current?.click()} aria-label="가져오기">
-            <IconUpload size={16} />
-          </ActionIcon>
-        </Tooltip>
-        <input
-          ref={fileRef}
-          type="file"
-          accept="application/json"
-          hidden
-          onChange={(e) => {
-            const f = e.currentTarget.files?.[0];
-            if (f) importFromFile(f).catch((err) => alert(`가져오기 실패: ${err}`));
-            e.currentTarget.value = '';
-          }}
-        />
-      </Group>
+
 
       {/* 프로젝트 생성/수정 모달 */}
       <Modal
