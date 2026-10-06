@@ -40,6 +40,7 @@ jobs:
             else
               npm install @rollup/rollup-darwin-x64@4.64.0 --no-save --force
             fi
+            npm install dmg-license --no-save
           elif [ "${{ runner.os }}" = "Linux" ]; then
             npm install @rollup/rollup-linux-x64-gnu@4.64.0 --no-save --force
           fi

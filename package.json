@@ -2,7 +2,10 @@
   "name": "bullsnote",
   "version": "0.1.0",
   "description": "BullsNote - 크로스플랫폼 지식관리 메모장 (Notion-like, hashtag 지원)",
-  "author": "BullsNote",
+  "author": {
+    "name": "BullsNote",
+    "email": "bullseye73@gmail.com"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/bullseye73/bullsNote.git"
@@ -70,7 +73,9 @@
       "target": [
         "AppImage",
         "deb"
-      ]
+      ],
+      "category": "Utility",
+      "maintainer": "BullsNote <bullseye73@gmail.com>"
     },
     "mac": {
       "target": [
