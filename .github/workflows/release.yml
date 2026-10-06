@@ -24,7 +24,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'npm'
 
       - name: Install dependencies
@@ -34,9 +34,14 @@ jobs:
         shell: bash
         run: |
           if [ "${{ runner.os }}" = "macOS" ]; then
-            npm install @rollup/rollup-darwin-arm64@4.64.0 @rollup/rollup-darwin-x64@4.64.0 --no-save
+            ARCH=$(uname -m)
+            if [ "$ARCH" = "arm64" ]; then
+              npm install @rollup/rollup-darwin-arm64@4.64.0 --no-save --force
+            else
+              npm install @rollup/rollup-darwin-x64@4.64.0 --no-save --force
+            fi
           elif [ "${{ runner.os }}" = "Linux" ]; then
-            npm install @rollup/rollup-linux-x64-gnu@4.64.0 --no-save
+            npm install @rollup/rollup-linux-x64-gnu@4.64.0 --no-save --force
           fi
 
       - name: Install Linux build tools
