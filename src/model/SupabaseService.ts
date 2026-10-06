@@ -370,7 +370,7 @@ class SupabaseSyncManager {
     }
   }
 
-  // --- 전체 양방향 동기화 (Full Bidirectional Sync) ---
+  // --- 전체 서버 우선 양방향 동기화 (Server-First Bidirectional Sync) ---
   public async syncAll(
     localNotes: Note[],
     localProjects: Project[],
@@ -394,7 +394,7 @@ class SupabaseSyncManager {
     }
 
     try {
-      // 1. Supabase에서 모든 원격 프로젝트와 노트 조회
+      // 1. Supabase에서 모든 원격 프로젝트와 노트 조회 (서버가 최우선 원천)
       const { data: remoteProjectsRaw, error: projError } = await this.client
         .from('bullsnote_projects')
         .select('*');
@@ -415,61 +415,68 @@ class SupabaseSyncManager {
       const remoteNotes: Note[] = (remoteNotesRaw as DbNoteRow[] || []).map((r) => this.rowToNote(r));
 
       let uploadedCount = 0;
-      let downloadedCount = 0;
+      const downloadedCount = remoteNotes.length;
+      const serverHasData = remoteProjects.length > 0 || remoteNotes.length > 0;
 
-      // 2. 프로젝트 병합 (updatedAt 기준)
+      // 2. 프로젝트 동기화 (서버 우선 정책)
       const projectMap = new Map<string, Project>();
+      const projectsToUpload: Project[] = [];
+
+      // [서버 최우선] 원격에 있는 프로젝트를 먼저 맵에 등록 (동일 ID 충돌 시 서버 버전 우선)
       for (const p of remoteProjects) {
         projectMap.set(p.id, p);
       }
 
-      const projectsToUpload: Project[] = [];
-
-      for (const lp of localProjects) {
-        const rp = projectMap.get(lp.id);
-        if (!rp) {
-          // 원격에 없으므로 업로드 대상
-          projectMap.set(lp.id, lp);
-          projectsToUpload.push(lp);
-        } else {
-          // 둘 다 존재 -> 타임스탬프 비교
-          if (lp.updatedAt > rp.updatedAt) {
+      if (serverHasData) {
+        // 서버에 이미 프로젝트가 있는 경우: 서버에 존재하지 않는 로컬 고유 프로젝트만 업로드 대상에 추가
+        for (const lp of localProjects) {
+          if (!projectMap.has(lp.id)) {
             projectMap.set(lp.id, lp);
             projectsToUpload.push(lp);
-          } else if (rp.updatedAt > lp.updatedAt) {
-            downloadedCount++;
-            // rp 유지
           }
+        }
+      } else {
+        // 서버가 완전히 비어있는 최초 연동: 로컬의 모든 프로젝트를 서버로 업로드
+        for (const lp of localProjects) {
+          projectMap.set(lp.id, lp);
+          projectsToUpload.push(lp);
         }
       }
 
-      // 3. 노트 병합 (updatedAt 기준)
+      // 3. 노트 동기화 (서버 우선 정책 & 서버에 없는 로컬 노트만 업로드)
       const noteMap = new Map<string, Note>();
+      const notesToUpload: Note[] = [];
+
+      // [서버 최우선] 원격에 있는 노트를 먼저 맵에 등록 (동일 ID 충돌 시 서버 버전 우선 채택)
       for (const n of remoteNotes) {
         noteMap.set(n.id, n);
       }
 
-      const notesToUpload: Note[] = [];
-
-      for (const ln of localNotes) {
-        const rn = noteMap.get(ln.id);
-        if (!rn) {
-          // 원격에 없으므로 업로드 대상
+      if (remoteNotes.length > 0) {
+        // 서버에 기존 노트가 이미 존재하는 경우:
+        for (const ln of localNotes) {
+          if (!noteMap.has(ln.id)) {
+            // 서버에 없는 로컬 전용 노트
+            // [더미 시드 노트 방지] 서버에 이미 사용자 데이터가 있으므로,
+            // 로컬에 기본 생성되었던 가이드 시드 노트('seed-*')는 서버로 업로드하지 않고 제외
+            const isSeed = ln.id.startsWith('seed-');
+            if (!isSeed) {
+              noteMap.set(ln.id, ln);
+              notesToUpload.push(ln);
+            }
+          }
+          // noteMap.has(ln.id)인 경우: 서버의 노트가 이미 등록되어 있어 로컬 내용을 서버 내용으로 덮어씀 (서버 우선)
+        }
+      } else {
+        // 서버에 노트가 전혀 없는 경우 (새 DB 최초 연동):
+        // 로컬에 있는 모든 노트를 서버로 최초 업로드
+        for (const ln of localNotes) {
           noteMap.set(ln.id, ln);
           notesToUpload.push(ln);
-        } else {
-          // 둘 다 존재 -> 타임스탬프 비교
-          if (ln.updatedAt > rn.updatedAt) {
-            noteMap.set(ln.id, ln);
-            notesToUpload.push(ln);
-          } else if (rn.updatedAt > ln.updatedAt) {
-            downloadedCount++;
-            // rn 유지
-          }
         }
       }
 
-      // 4. 업로드 실행
+      // 4. 서버에 없는 항목들만 업로드 실행
       if (projectsToUpload.length > 0) {
         const rows = projectsToUpload.map((p) => this.projectToRow(p));
         const { error: upProjErr } = await this.client.from('bullsnote_projects').upsert(rows, { onConflict: 'id' });
@@ -484,8 +491,20 @@ class SupabaseSyncManager {
         uploadedCount += notesToUpload.length;
       }
 
-      // 5. 최종 병합 리스트 생성
-      const mergedProjects = Array.from(projectMap.values());
+      // 5. 최종 병합 리스트 생성 (프로젝트가 비어있을 경우 기본 프로젝트 보장)
+      let mergedProjects = Array.from(projectMap.values());
+      if (mergedProjects.length === 0) {
+        const defaultProj: Project = {
+          id: 'default',
+          name: '개인 메모',
+          icon: '📁',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        };
+        mergedProjects = [defaultProj];
+        await this.client.from('bullsnote_projects').upsert([this.projectToRow(defaultProj)], { onConflict: 'id' });
+      }
+
       const mergedNotes = Array.from(noteMap.values());
 
       // 6. 동기화 성공 타임스탬프 기록

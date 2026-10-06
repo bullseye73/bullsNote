@@ -175,6 +175,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   // Supabase 클라우드 연동 상태
   const [supabaseConfig, setSupabaseConfigState] = useState<SupabaseConfig>(() => SupabaseService.getConfig());
   const [isSyncing, setIsSyncing] = useState(false);
+  const isSyncingRef = useRef(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const supabaseConnected = supabaseConfig.enabled && Boolean(supabaseConfig.url && supabaseConfig.anonKey);
 
@@ -580,7 +581,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   const queueNoteSync = useCallback(
     (note: Note) => {
-      if (!supabaseConnected || !supabaseConfig.autoSync) return;
+      if (!supabaseConnected || !supabaseConfig.autoSync || isSyncingRef.current) return;
       pendingNotesRef.current.set(note.id, note);
       if (noteSyncTimerRef.current) clearTimeout(noteSyncTimerRef.current);
       noteSyncTimerRef.current = setTimeout(async () => {
@@ -596,7 +597,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   const queueProjectSync = useCallback(
     (project: Project) => {
-      if (!supabaseConnected || !supabaseConfig.autoSync) return;
+      if (!supabaseConnected || !supabaseConfig.autoSync || isSyncingRef.current) return;
       void SupabaseService.upsertProject(project);
     },
     [supabaseConnected, supabaseConfig.autoSync],
@@ -1076,15 +1077,34 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const syncWithSupabase = useCallback(async () => {
     if (!SupabaseService.isConnected()) return;
     setIsSyncing(true);
+    isSyncingRef.current = true;
     setSyncError(null);
     try {
       const res = await SupabaseService.syncAll(notes, projects);
       if (res.success) {
-        setNotes(res.notes.sort(sortNotes));
+        const sortedNotes = res.notes.sort(sortNotes);
+        setNotes(sortedNotes);
         setProjects(res.projects);
-        NoteRepository.save(res.notes);
+        NoteRepository.save(sortedNotes);
         NoteRepository.saveProjects(res.projects);
         setSupabaseConfigState(SupabaseService.getConfig());
+
+        // 선택 상태 보정: 동기화 후 현재 선택된 프로젝트와 노트가 유효하지 않으면 서버 데이터 기준으로 안전하게 재선택
+        setSelectedProjectId((prevProjId) => {
+          const hasProj = res.projects.some((p) => p.id === prevProjId);
+          const nextProjId = hasProj ? prevProjId : res.projects[0]?.id ?? DEFAULT_PROJECT_ID;
+
+          setSelectedId((prevNoteId) => {
+            const hasNote = sortedNotes.some((n) => n.id === prevNoteId);
+            if (hasNote) return prevNoteId;
+            const projectNotes = sortedNotes.filter(
+              (n) => (n.projectId || DEFAULT_PROJECT_ID) === nextProjId,
+            );
+            return projectNotes[0]?.id ?? sortedNotes[0]?.id ?? null;
+          });
+
+          return nextProjId;
+        });
       } else {
         setSyncError(res.error || '동기화 중 오류가 발생했습니다.');
       }
@@ -1092,6 +1112,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       setSyncError(err instanceof Error ? err.message : String(err));
     } finally {
       setIsSyncing(false);
+      isSyncingRef.current = false;
     }
   }, [notes, projects]);
 

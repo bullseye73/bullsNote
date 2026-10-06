@@ -232,6 +232,12 @@ export function SupabaseSettingsModal({ opened, onClose }: SupabaseSettingsModal
               onChange={(e) => setAutoSync(e.currentTarget.checked)}
             />
 
+            <Alert icon={<IconInfoCircle size={16} />} color="blue" variant="light">
+              <Text size="xs">
+                <strong>동기화 우선순위 안내:</strong> Supabase 연동 시 서버의 프로젝트와 노트가 최우선으로 로컬에 동기화(다운로드)되며, 서버에 없는 로컬 노트만 클라우드로 안전하게 업로드됩니다. (로컬 기본 시드 예제는 서버로 오염되지 않음)
+              </Text>
+            </Alert>
+
             {/* 연결 테스트 결과 */}
             {testResult && (
               <Alert
