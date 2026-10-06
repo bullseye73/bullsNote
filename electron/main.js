@@ -1,4 +1,4 @@
-const { app, BrowserWindow, nativeImage, shell, ipcMain, Notification } = require('electron');
+const { app, BrowserWindow, nativeImage, shell, ipcMain, Notification, Menu, MenuItem } = require('electron');
 const path = require('path');
 const { registerVaultIpc } = require('./vault-ipc');
 const { setupTray } = require('./tray');
@@ -7,6 +7,61 @@ const isDev = !app.isPackaged;
 
 let mainWindow = null;
 let trayCtl = { tray: null, requestQuit: () => app.quit(), isQuitting: () => true };
+
+function setupAppMenu() {
+  const isMac = process.platform === 'darwin';
+  const template = [
+    ...(isMac
+      ? [
+          {
+            label: app.name,
+            submenu: [
+              { role: 'about', label: 'BullsNote 정보' },
+              { type: 'separator' },
+              { role: 'services', label: '서비스' },
+              { type: 'separator' },
+              { role: 'hide', label: 'BullsNote 숨기기' },
+              { role: 'hideOthers', label: '기타 숨기기' },
+              { role: 'unhide', label: '모두 보기' },
+              { type: 'separator' },
+              { role: 'quit', label: 'BullsNote 종료' },
+            ],
+          },
+        ]
+      : []),
+    {
+      label: '편집',
+      submenu: [
+        { role: 'undo', label: '실행 취소', accelerator: 'CmdOrCtrl+Z' },
+        { role: 'redo', label: '다시 실행', accelerator: isMac ? 'Shift+CmdOrCtrl+Z' : 'Ctrl+Y' },
+        { type: 'separator' },
+        { role: 'cut', label: '잘라내기', accelerator: 'CmdOrCtrl+X' },
+        { role: 'copy', label: '복사', accelerator: 'CmdOrCtrl+C' },
+        { role: 'paste', label: '붙여넣기', accelerator: 'CmdOrCtrl+V' },
+        { role: 'pasteAndMatchStyle', label: '서식 없이 붙여넣기', accelerator: 'Shift+CmdOrCtrl+V' },
+        { role: 'delete', label: '삭제' },
+        { role: 'selectAll', label: '모두 선택', accelerator: 'CmdOrCtrl+A' },
+      ],
+    },
+    {
+      label: '보기',
+      submenu: [
+        { role: 'reload', label: '새로고침', accelerator: 'CmdOrCtrl+R' },
+        { role: 'forceReload', label: '강제 새로고침', accelerator: 'Shift+CmdOrCtrl+R' },
+        { role: 'toggleDevTools', label: '개발자 도구', accelerator: 'F12' },
+        { type: 'separator' },
+        { role: 'resetZoom', label: '실제 크기', accelerator: 'CmdOrCtrl+0' },
+        { role: 'zoomIn', label: '확대', accelerator: 'CmdOrCtrl+=' },
+        { role: 'zoomOut', label: '축소', accelerator: 'CmdOrCtrl+-' },
+        { type: 'separator' },
+        { role: 'togglefullscreen', label: '전체 화면', accelerator: 'F11' },
+      ],
+    },
+  ];
+
+  const menu = Menu.buildFromTemplate(template);
+  Menu.setApplicationMenu(menu);
+}
 
 function createWindow() {
   const iconPath = path.join(__dirname, 'assets', 'icon.png');
@@ -21,10 +76,40 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      spellcheck: true,
     },
     autoHideMenuBar: true,
   });
   mainWindow = win;
+
+  // 마우스 우클릭 컨텍스트 메뉴 등록 (잘라내기, 복사, 붙여넣기, 모두 선택 등)
+  win.webContents.on('context-menu', (_event, params) => {
+    const contextMenu = new Menu();
+
+    const hasSelection = params.selectionText && params.selectionText.trim().length > 0;
+
+    // 편집 가능한 영역 (BlockNote 에디터, input, textarea 등)
+    if (params.isEditable) {
+      contextMenu.append(new MenuItem({ role: 'undo', label: '실행 취소 (Undo)', accelerator: 'CmdOrCtrl+Z' }));
+      contextMenu.append(new MenuItem({ role: 'redo', label: '다시 실행 (Redo)', accelerator: 'CmdOrCtrl+Y' }));
+      contextMenu.append(new MenuItem({ type: 'separator' }));
+      contextMenu.append(new MenuItem({ role: 'cut', label: '잘라내기 (Cut)', accelerator: 'CmdOrCtrl+X', enabled: hasSelection }));
+      contextMenu.append(new MenuItem({ role: 'copy', label: '복사 (Copy)', accelerator: 'CmdOrCtrl+C', enabled: hasSelection }));
+      contextMenu.append(new MenuItem({ role: 'paste', label: '붙여넣기 (Paste)', accelerator: 'CmdOrCtrl+V' }));
+      contextMenu.append(new MenuItem({ role: 'pasteAndMatchStyle', label: '텍스트만 붙여넣기', accelerator: 'Shift+CmdOrCtrl+V' }));
+      contextMenu.append(new MenuItem({ role: 'delete', label: '삭제 (Delete)' }));
+      contextMenu.append(new MenuItem({ type: 'separator' }));
+      contextMenu.append(new MenuItem({ role: 'selectAll', label: '모두 선택 (Select All)', accelerator: 'CmdOrCtrl+A' }));
+    } else {
+      if (hasSelection) {
+        contextMenu.append(new MenuItem({ role: 'copy', label: '복사 (Copy)', accelerator: 'CmdOrCtrl+C' }));
+        contextMenu.append(new MenuItem({ type: 'separator' }));
+      }
+      contextMenu.append(new MenuItem({ role: 'selectAll', label: '모두 선택 (Select All)', accelerator: 'CmdOrCtrl+A' }));
+    }
+
+    contextMenu.popup({ window: win });
+  });
 
   // 외부 링크 클릭 시 새 Electron 창 대신 시스템 기본 브라우저로 오픈
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -67,6 +152,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  setupAppMenu();
   registerVaultIpc(app);
 
   ipcMain.handle('notification:show', (event, { title, body, noteId }) => {

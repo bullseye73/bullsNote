@@ -105,7 +105,14 @@ function BlockEditor({ note }: { note: Note }) {
         onOpenDatePicker={() => handleOpenDatePicker()}
         onInsertToday={handleInsertToday}
       />
-      <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+      <div
+        style={{ flex: 1, minHeight: 0, overflow: 'auto' }}
+        onClick={(e) => {
+          if (e.target === e.currentTarget) {
+            editor.focus();
+          }
+        }}
+      >
         <BlockNoteView
           editor={editor}
           theme={scheme === 'dark' ? 'dark' : 'light'}
