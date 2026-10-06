@@ -25,7 +25,6 @@
     "@blocknote/react": "0.55.0",
     "@mantine/core": "^7.13.0",
     "@mantine/hooks": "^7.13.0",
-    "@rollup/rollup-win32-x64-msvc": "^4.64.0",
     "@supabase/supabase-js": "^2.117.2",
     "@tabler/icons-react": "^3.19.0",
     "react": "^18.3.1",
