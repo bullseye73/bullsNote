@@ -230,13 +230,72 @@ export interface TreeNode {
   children: TreeNode[];
 }
 
+export type SortField = 'none' | 'name' | 'createdAt' | 'updatedAt';
+export type SortOrder = 'asc' | 'desc';
+
+export interface SortOption {
+  field: SortField;
+  order: SortOrder;
+}
+
+export const DEFAULT_SORT_OPTION: SortOption = {
+  field: 'none',
+  order: 'desc',
+};
+
+export function compareProjects(a: Project, b: Project, opt?: SortOption): number {
+  if (!a || !b) return 0;
+  if (!opt || opt.field === 'none') return 0;
+  if (opt.field === 'name') {
+    const nameA = a.name || '';
+    const nameB = b.name || '';
+    const diff = nameA.localeCompare(nameB, 'ko', { sensitivity: 'base' });
+    return opt.order === 'asc' ? diff : -diff;
+  }
+  if (opt.field === 'createdAt') {
+    const diff = (a.createdAt || 0) - (b.createdAt || 0);
+    return opt.order === 'asc' ? diff : -diff;
+  }
+  if (opt.field === 'updatedAt') {
+    const diff = (a.updatedAt || 0) - (b.updatedAt || 0);
+    return opt.order === 'asc' ? diff : -diff;
+  }
+  return 0;
+}
+
+export function compareNotesWithOption(a: Note, b: Note, opt?: SortOption): number {
+  if (!a || !b) return 0;
+  // 핀 고정 노트는 항상 최우선 정렬 유지
+  if (Boolean(a.pinned) !== Boolean(b.pinned)) return a.pinned ? -1 : 1;
+
+  if (!opt || opt.field === 'none') {
+    // 기본 순서: 수정일 내림차순
+    return (b.updatedAt || 0) - (a.updatedAt || 0);
+  }
+  if (opt.field === 'name') {
+    const titleA = a.title || '제목 없음';
+    const titleB = b.title || '제목 없음';
+    const diff = titleA.localeCompare(titleB, 'ko', { sensitivity: 'base' });
+    return opt.order === 'asc' ? diff : -diff;
+  }
+  if (opt.field === 'createdAt') {
+    const diff = (a.createdAt || 0) - (b.createdAt || 0);
+    return opt.order === 'asc' ? diff : -diff;
+  }
+  if (opt.field === 'updatedAt') {
+    const diff = (a.updatedAt || 0) - (b.updatedAt || 0);
+    return opt.order === 'asc' ? diff : -diff;
+  }
+  return (b.updatedAt || 0) - (a.updatedAt || 0);
+}
+
 function sortNotes(a: Note, b: Note): number {
   if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
   return b.updatedAt - a.updatedAt;
 }
 
-/** 평탄 리스트 -> 트리 (형제 정렬: 핀 우선, 수정일 내림차순) */
-export function buildTree(notes: Note[]): TreeNode[] {
+/** 평탄 리스트 -> 트리 (형제 정렬: sortFn 기준, 기본값은 핀 우선+수정일 내림차순) */
+export function buildTree(notes: Note[], sortFn: (a: Note, b: Note) => number = sortNotes): TreeNode[] {
   const byId = new Map<string, TreeNode>();
   for (const n of notes) byId.set(n.id, { note: n, children: [] });
   const roots: TreeNode[] = [];
@@ -248,7 +307,7 @@ export function buildTree(notes: Note[]): TreeNode[] {
     else roots.push(node);
   }
   const sortRec = (list: TreeNode[]) => {
-    list.sort((a, b) => sortNotes(a.note, b.note));
+    list.sort((a, b) => sortFn(a.note, b.note));
     for (const c of list) sortRec(c.children);
   };
   sortRec(roots);

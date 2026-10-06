@@ -36,6 +36,7 @@ import {
 import { useRef, useState } from 'react';
 import { useNotes } from '../controller/NotesController';
 import { Project } from '../model/Note';
+import { SortMenu } from './SortMenu';
 
 const POPULAR_ICONS = [
   '📁',
@@ -60,6 +61,7 @@ const POPULAR_ICONS = [
   '🔒',
 ];
 
+
 interface SidebarViewProps {
   onOpenSupabaseModal?: () => void;
 }
@@ -67,6 +69,9 @@ interface SidebarViewProps {
 export function SidebarView({ onOpenSupabaseModal }: SidebarViewProps) {
   const {
     projects,
+    sortedProjects,
+    projectSortOption,
+    setProjectSortOption,
     selectedProjectId,
     selectProject,
     createProject,
@@ -152,16 +157,24 @@ export function SidebarView({ onOpenSupabaseModal }: SidebarViewProps) {
         <Text size="xs" fw={700} c="dimmed">
           프로젝트 ({projects.length})
         </Text>
-        <Tooltip label="새 프로젝트 만들기">
-          <ActionIcon size="xs" variant="light" color="blue" onClick={startCreateProject} aria-label="새 프로젝트">
-            <IconPlus size={13} />
-          </ActionIcon>
-        </Tooltip>
+        <Group gap={4}>
+          <SortMenu
+            sortOption={projectSortOption}
+            onChange={setProjectSortOption}
+            targetName="프로젝트"
+            size="xs"
+          />
+          <Tooltip label="새 프로젝트 만들기">
+            <ActionIcon size="xs" variant="light" color="blue" onClick={startCreateProject} aria-label="새 프로젝트">
+              <IconPlus size={13} />
+            </ActionIcon>
+          </Tooltip>
+        </Group>
       </Group>
 
       <ScrollArea.Autosize mah={180} type="auto">
         <Stack gap={2}>
-          {projects.map((proj) => {
+          {sortedProjects.map((proj) => {
             const count = notes.filter((n) => (n.projectId || 'default') === proj.id).length;
             const isSelected = proj.id === selectedProjectId;
             return (

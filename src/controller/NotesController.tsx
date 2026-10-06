@@ -15,6 +15,9 @@ import {
   createProjectId,
   getDescendantIds,
   TreeNode,
+  SortOption,
+  compareProjects,
+  compareNotesWithOption,
 } from '../model/Note';
 import { playChimeSound } from '../model/sound';
 import { NoteRepository, seedNotes } from '../model/NoteRepository';
@@ -90,6 +93,10 @@ export interface NotesState {
   isSyncing: boolean;
   syncError: string | null;
   lastSyncedAt: number | null;
+  /** 프로젝트 및 노트 정렬 옵션 */
+  projectSortOption: SortOption;
+  noteSortOption: SortOption;
+  sortedProjects: Project[];
 }
 
 export interface NotesActions {
@@ -125,6 +132,8 @@ export interface NotesActions {
   saveSupabaseConfig(config: SupabaseConfig): Promise<void>;
   syncWithSupabase(): Promise<void>;
   disconnectSupabase(): void;
+  setProjectSortOption(opt: SortOption): void;
+  setNoteSortOption(opt: SortOption): void;
 }
 
 const Ctx = createContext<(NotesState & NotesActions) | null>(null);
@@ -178,6 +187,53 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const isSyncingRef = useRef(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const supabaseConnected = supabaseConfig.enabled && Boolean(supabaseConfig.url && supabaseConfig.anonKey);
+
+  // 프로젝트 및 노트 정렬 상태 (localStorage 영구 보존)
+  const [projectSortOption, setProjectSortOptionState] = useState<SortOption>(() => {
+    try {
+      const saved = localStorage.getItem('bullsnote.sort.projects');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed.field === 'string') return parsed;
+      }
+    } catch {}
+    return { field: 'none', order: 'asc' };
+  });
+
+  const [noteSortOption, setNoteSortOptionState] = useState<SortOption>(() => {
+    try {
+      const saved = localStorage.getItem('bullsnote.sort.notes');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed.field === 'string') return parsed;
+      }
+    } catch {}
+    return { field: 'none', order: 'desc' };
+  });
+
+  const setProjectSortOption = useCallback((opt: SortOption) => {
+    setProjectSortOptionState(opt);
+    try {
+      localStorage.setItem('bullsnote.sort.projects', JSON.stringify(opt));
+    } catch {}
+  }, []);
+
+  const setNoteSortOption = useCallback((opt: SortOption) => {
+    setNoteSortOptionState(opt);
+    try {
+      localStorage.setItem('bullsnote.sort.notes', JSON.stringify(opt));
+    } catch {}
+  }, []);
+
+  const sortedProjects = useMemo(() => {
+    if (projectSortOption.field === 'none') return projects;
+    return [...projects].sort((a, b) => compareProjects(a, b, projectSortOption));
+  }, [projects, projectSortOption]);
+
+  const noteComparator = useCallback(
+    (a: Note, b: Note) => compareNotesWithOption(a, b, noteSortOption),
+    [noteSortOption],
+  );
 
   // 주기적으로 알람 감지 (5초 주기)
   useEffect(() => {
@@ -1068,10 +1124,13 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
           n.tags.some((t) => t.includes(q))
         );
       })
-      .sort(sortNotes);
-  }, [currentProjectNotes, search, activeTag, showFavoriteOnly]);
+      .sort(noteComparator);
+  }, [currentProjectNotes, search, activeTag, showFavoriteOnly, noteComparator]);
 
-  const tree = useMemo(() => buildTree(isFiltering ? flat : currentProjectNotes), [isFiltering, flat, currentProjectNotes]);
+  const tree = useMemo(
+    () => buildTree(isFiltering ? flat : currentProjectNotes, noteComparator),
+    [isFiltering, flat, currentProjectNotes, noteComparator],
+  );
 
   // --- Supabase 동기화 액션 ---
   const syncWithSupabase = useCallback(async () => {
@@ -1090,21 +1149,19 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         setSupabaseConfigState(SupabaseService.getConfig());
 
         // 선택 상태 보정: 동기화 후 현재 선택된 프로젝트와 노트가 유효하지 않으면 서버 데이터 기준으로 안전하게 재선택
-        setSelectedProjectId((prevProjId) => {
-          const hasProj = res.projects.some((p) => p.id === prevProjId);
-          const nextProjId = hasProj ? prevProjId : res.projects[0]?.id ?? DEFAULT_PROJECT_ID;
+        const hasProj = res.projects.some((p) => p.id === selectedProjectId);
+        const nextProjId = hasProj ? selectedProjectId : res.projects[0]?.id ?? DEFAULT_PROJECT_ID;
+        if (nextProjId !== selectedProjectId) {
+          setSelectedProjectId(nextProjId);
+        }
 
-          setSelectedId((prevNoteId) => {
-            const hasNote = sortedNotes.some((n) => n.id === prevNoteId);
-            if (hasNote) return prevNoteId;
-            const projectNotes = sortedNotes.filter(
-              (n) => (n.projectId || DEFAULT_PROJECT_ID) === nextProjId,
-            );
-            return projectNotes[0]?.id ?? sortedNotes[0]?.id ?? null;
-          });
-
-          return nextProjId;
-        });
+        const projectNotes = sortedNotes.filter(
+          (n) => (n.projectId || DEFAULT_PROJECT_ID) === nextProjId,
+        );
+        const hasNote = projectNotes.some((n) => n.id === selectedId);
+        if (!hasNote) {
+          setSelectedId(projectNotes[0]?.id ?? sortedNotes[0]?.id ?? null);
+        }
       } else {
         setSyncError(res.error || '동기화 중 오류가 발생했습니다.');
       }
@@ -1168,6 +1225,11 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       isSyncing,
       syncError,
       lastSyncedAt: supabaseConfig.lastSyncedAt,
+      projectSortOption,
+      noteSortOption,
+      sortedProjects,
+      setProjectSortOption,
+      setNoteSortOption,
       select,
       create,
       duplicate,
@@ -1253,6 +1315,11 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       saveSupabaseConfig,
       syncWithSupabase,
       disconnectSupabase,
+      projectSortOption,
+      noteSortOption,
+      sortedProjects,
+      setProjectSortOption,
+      setNoteSortOption,
     ],
   );
 

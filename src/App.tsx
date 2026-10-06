@@ -29,11 +29,13 @@ import { NoteListView } from './view/NoteListView';
 import { SidebarView } from './view/SidebarView';
 import { AlarmModal } from './view/AlarmModal';
 import { SupabaseSettingsModal } from './view/SupabaseSettingsModal';
+import { SortMenu } from './view/SortMenu';
+import { ResizeSplitter, useResizable } from './view/ResizeSplitter';
 
 const theme = createTheme({ primaryColor: 'blue', fontFamily: 'Pretendard, system-ui, sans-serif' });
 
 function ListPanel() {
-  const { notes, create, selectedProject } = useNotes();
+  const { notes, create, selectedProject, noteSortOption, setNoteSortOption } = useNotes();
   const projectNotes = notes.filter((n) => (n.projectId || 'default') === selectedProject?.id);
   return (
     <>
@@ -47,11 +49,19 @@ function ListPanel() {
             {projectNotes.length}
           </Badge>
         </Group>
-        <Tooltip label="최상위 새 노트 (Ctrl+N)">
-          <ActionIcon size="sm" color="green" variant="light" onClick={() => create(null)} aria-label="새 노트">
-            <IconPlus size={14} />
-          </ActionIcon>
-        </Tooltip>
+        <Group gap={4} wrap="nowrap">
+          <SortMenu
+            sortOption={noteSortOption}
+            onChange={setNoteSortOption}
+            targetName="노트"
+            size="xs"
+          />
+          <Tooltip label="최상위 새 노트 (Ctrl+N)">
+            <ActionIcon size="sm" color="green" variant="light" onClick={() => create(null)} aria-label="새 노트">
+              <IconPlus size={14} />
+            </ActionIcon>
+          </Tooltip>
+        </Group>
       </Group>
       <Divider />
       <div style={{ flex: 1, minHeight: 0 }}>
@@ -67,6 +77,21 @@ function Shell() {
   const [supabaseModalOpened, { open: openSupabaseModal, close: closeSupabaseModal }] = useDisclosure(false);
   const { create, supabaseConnected, isSyncing, lastSyncedAt } = useNotes();
 
+  // 사이드바(프로젝트) 및 노트 목록 동적 너비 리사이징 (localStorage 영구 보존)
+  const sidebar = useResizable({
+    initialWidth: 248,
+    minWidth: 180,
+    maxWidth: 480,
+    storageKey: 'bullsnote.sidebar.width',
+  });
+
+  const list = useResizable({
+    initialWidth: 344,
+    minWidth: 220,
+    maxWidth: 640,
+    storageKey: 'bullsnote.list.width',
+  });
+
   useHotkeys([['ctrl+N', (e) => { e.preventDefault(); create(null); }]]);
 
   const lastSyncText = lastSyncedAt
@@ -76,7 +101,11 @@ function Shell() {
   return (
     <AppShell
       header={{ height: 44 }}
-      navbar={{ width: 248, breakpoint: 'sm', collapsed: { mobile: !menuOpened, desktop: !menuOpened } }}
+      navbar={{
+        width: sidebar.width,
+        breakpoint: 'sm',
+        collapsed: { mobile: !menuOpened, desktop: !menuOpened },
+      }}
       padding={0}
     >
       <AppShell.Header px="sm" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -141,23 +170,38 @@ function Shell() {
       </AppShell.Header>
       <AppShell.Navbar>
         <SidebarView onOpenSupabaseModal={openSupabaseModal} />
+        {menuOpened && (
+          <div style={{ position: 'absolute', top: 0, right: -3, bottom: 0, zIndex: 100 }}>
+            <ResizeSplitter
+              onMouseDown={sidebar.startResize}
+              onDoubleClick={sidebar.resetWidth}
+              title="마우스 드래그로 사이드바 너비 조절 (더블클릭 시 기본값)"
+            />
+          </div>
+        )}
       </AppShell.Navbar>
       <AppShell.Main h="calc(100vh - 44px)">
         <ErrorBoundary title="화면을 표시하지 못했습니다">
           <div style={{ display: 'flex', height: '100%' }}>
             {listOpened && (
-              <div
-                style={{
-                  width: 344,
-                  flexShrink: 0,
-                  borderRight: '1px solid var(--mantine-color-gray-3)',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  minHeight: 0,
-                }}
-              >
-                <ListPanel />
-              </div>
+              <>
+                <div
+                  style={{
+                    width: list.width,
+                    flexShrink: 0,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    minHeight: 0,
+                  }}
+                >
+                  <ListPanel />
+                </div>
+                <ResizeSplitter
+                  onMouseDown={list.startResize}
+                  onDoubleClick={list.resetWidth}
+                  title="마우스 드래그로 노트 목록 너비 조절 (더블클릭 시 기본값)"
+                />
+              </>
             )}
             <div style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'auto' }}>
               <NoteEditorView />

@@ -457,10 +457,12 @@ class SupabaseSyncManager {
         for (const ln of localNotes) {
           if (!noteMap.has(ln.id)) {
             // 서버에 없는 로컬 전용 노트
-            // [더미 시드 노트 방지] 서버에 이미 사용자 데이터가 있으므로,
-            // 로컬에 기본 생성되었던 가이드 시드 노트('seed-*')는 서버로 업로드하지 않고 제외
-            const isSeed = ln.id.startsWith('seed-');
-            if (!isSeed) {
+            // 사용자가 수정하지 않은 기본 안내 시드 노트만 제외하고, 그 외 사용자가 작성/수정한 노트는 보존 및 업로드
+            const isUnmodifiedSeed =
+              (ln.id === 'seed-1' && ln.title.includes('환영')) ||
+              (ln.id === 'seed-1-1' && ln.title.includes('치트시트')) ||
+              (ln.id.startsWith('seed-') && (ln.title.includes('환영') || ln.title.includes('치트시트')));
+            if (!isUnmodifiedSeed) {
               noteMap.set(ln.id, ln);
               notesToUpload.push(ln);
             }
@@ -470,6 +472,14 @@ class SupabaseSyncManager {
       } else {
         // 서버에 노트가 전혀 없는 경우 (새 DB 최초 연동):
         // 로컬에 있는 모든 노트를 서버로 최초 업로드
+        for (const ln of localNotes) {
+          noteMap.set(ln.id, ln);
+          notesToUpload.push(ln);
+        }
+      }
+
+      // 만약 결과적으로 노트가 하나도 없는데 로컬에 노트가 있었다면 로컬 노트 보존
+      if (noteMap.size === 0 && localNotes.length > 0) {
         for (const ln of localNotes) {
           noteMap.set(ln.id, ln);
           notesToUpload.push(ln);
