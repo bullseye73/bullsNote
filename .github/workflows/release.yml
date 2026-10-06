@@ -30,6 +30,15 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Fix platform-specific Rollup native binary (npm issue #4828)
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            npm install @rollup/rollup-darwin-arm64@4.64.0 @rollup/rollup-darwin-x64@4.64.0 --no-save
+          elif [ "${{ runner.os }}" = "Linux" ]; then
+            npm install @rollup/rollup-linux-x64-gnu@4.64.0 --no-save
+          fi
+
       - name: Install Linux build tools
         if: runner.os == 'Linux'
         run: |
