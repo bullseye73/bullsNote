@@ -1,6 +1,6 @@
-// MODEL: Supabase 연동 및 동기화 서비스
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { Note, Project } from './Note';
+import { CryptoService } from './CryptoService';
 
 const SUPABASE_CONFIG_STORAGE_KEY = 'bullsnote.supabase.config.v1';
 
@@ -264,14 +264,15 @@ class SupabaseSyncManager {
     };
   }
 
-  private noteToRow(n: Note): DbNoteRow {
+  private async noteToRow(n: Note): Promise<DbNoteRow> {
+    const encryptedContent = await CryptoService.encrypt(n.content || '');
     return {
       id: n.id,
       title: n.title,
       project_id: n.projectId || 'default',
       color: n.color || 'blue',
       reminder: n.reminder || null,
-      content: n.content || '',
+      content: encryptedContent,
       tags: n.tags || [],
       pinned: Boolean(n.pinned),
       favorite: Boolean(n.favorite),
@@ -282,14 +283,14 @@ class SupabaseSyncManager {
     };
   }
 
-  private rowToNote(row: DbNoteRow): Note {
+  private async rowToNote(row: DbNoteRow): Promise<Note> {
     return {
       id: row.id,
       title: row.title || '제목 없음',
       projectId: row.project_id || 'default',
       color: row.color || 'blue',
       reminder: (row.reminder as Note['reminder']) || null,
-      content: row.content || '',
+      content: await CryptoService.decrypt(row.content || ''),
       tags: Array.isArray(row.tags) ? (row.tags as string[]) : [],
       pinned: Boolean(row.pinned),
       favorite: Boolean(row.favorite),
@@ -307,7 +308,7 @@ class SupabaseSyncManager {
   public async upsertNotes(notes: Note[]): Promise<boolean> {
     if (!this.isConnected() || !this.client || notes.length === 0) return false;
     try {
-      const rows = notes.map((n) => this.noteToRow(n));
+      const rows = await Promise.all(notes.map((n) => this.noteToRow(n)));
       const { error } = await this.client.from('bullsnote_notes').upsert(rows, { onConflict: 'id' });
       if (error) {
         console.warn('[Supabase] 노트 동기화 실패:', error);
@@ -412,7 +413,7 @@ class SupabaseSyncManager {
       }
 
       const remoteProjects: Project[] = (remoteProjectsRaw as DbProjectRow[] || []).map((r) => this.rowToProject(r));
-      const remoteNotes: Note[] = (remoteNotesRaw as DbNoteRow[] || []).map((r) => this.rowToNote(r));
+      const remoteNotes: Note[] = await Promise.all((remoteNotesRaw as DbNoteRow[] || []).map((r) => this.rowToNote(r)));
 
       let uploadedCount = 0;
       const downloadedCount = remoteNotes.length;
@@ -495,7 +496,7 @@ class SupabaseSyncManager {
       }
 
       if (notesToUpload.length > 0) {
-        const rows = notesToUpload.map((n) => this.noteToRow(n));
+        const rows = await Promise.all(notesToUpload.map((n) => this.noteToRow(n)));
         const { error: upNoteErr } = await this.client.from('bullsnote_notes').upsert(rows, { onConflict: 'id' });
         if (upNoteErr) throw new Error(`노트 업로드 실패: ${upNoteErr.message}`);
         uploadedCount += notesToUpload.length;

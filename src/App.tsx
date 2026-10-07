@@ -19,8 +19,11 @@ import {
   IconCloudOff,
   IconLayoutSidebarLeftCollapse,
   IconListTree,
+  IconLock,
+  IconLockOpen,
   IconPlus,
   IconRefresh,
+  IconShieldLock,
 } from '@tabler/icons-react';
 import { NotesProvider, useNotes } from './controller/NotesController';
 import { ErrorBoundary } from './view/ErrorBoundary';
@@ -29,6 +32,7 @@ import { NoteListView } from './view/NoteListView';
 import { SidebarView } from './view/SidebarView';
 import { AlarmModal } from './view/AlarmModal';
 import { SupabaseSettingsModal } from './view/SupabaseSettingsModal';
+import { SecurityModal } from './view/SecurityModal';
 import { SortMenu } from './view/SortMenu';
 import { ResizeSplitter, useResizable } from './view/ResizeSplitter';
 
@@ -75,7 +79,17 @@ function Shell() {
   const [menuOpened, { toggle: toggleMenu }] = useDisclosure(true);
   const [listOpened, { toggle: toggleList }] = useDisclosure(true);
   const [supabaseModalOpened, { open: openSupabaseModal, close: closeSupabaseModal }] = useDisclosure(false);
-  const { create, supabaseConnected, isSyncing, lastSyncedAt } = useNotes();
+  const {
+    create,
+    supabaseConnected,
+    isSyncing,
+    lastSyncedAt,
+    isMasterSet,
+    isUnlocked,
+    securityModalOpened,
+    openSecurityModal,
+    closeSecurityModal,
+  } = useNotes();
 
   // 사이드바(프로젝트) 및 노트 목록 동적 너비 리사이징 (localStorage 영구 보존)
   const sidebar = useResizable({
@@ -166,6 +180,35 @@ function Shell() {
                 : '로컬 모드 (Supabase 연동)'}
             </Button>
           </Tooltip>
+
+          {/* 종단간 암호화(E2EE) 보안 자물쇠 버튼 */}
+          <Tooltip
+            label={
+              !isMasterSet
+                ? '종단간 암호화(E2EE) 미설정 - 마스터 비밀번호로 로컬 및 DB 본문 보호'
+                : isUnlocked
+                ? '종단간 암호화 보호 중 (잠금 해제됨) - 클릭하여 지금 잠그기 또는 관리'
+                : '노트가 암호화되어 안전하게 잠겨 있습니다 - 클릭하여 잠금 해제'
+            }
+          >
+            <Button
+              size="xs"
+              variant={isUnlocked ? 'light' : isMasterSet ? 'filled' : 'subtle'}
+              color={isUnlocked ? 'teal' : isMasterSet ? 'orange' : 'gray'}
+              leftSection={
+                isUnlocked ? (
+                  <IconLockOpen size={14} />
+                ) : isMasterSet ? (
+                  <IconLock size={14} />
+                ) : (
+                  <IconShieldLock size={14} />
+                )
+              }
+              onClick={openSecurityModal}
+            >
+              {!isMasterSet ? '암호화 설정' : isUnlocked ? '보안 보호 중' : '잠김 (해제 필요)'}
+            </Button>
+          </Tooltip>
         </Group>
       </AppShell.Header>
       <AppShell.Navbar>
@@ -213,6 +256,7 @@ function Shell() {
         </ErrorBoundary>
       </AppShell.Main>
       <SupabaseSettingsModal opened={supabaseModalOpened} onClose={closeSupabaseModal} />
+      <SecurityModal opened={securityModalOpened} onClose={closeSecurityModal} />
     </AppShell>
   );
 }

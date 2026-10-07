@@ -10,6 +10,7 @@ import {
   Stack,
   Text,
   TextInput,
+  ThemeIcon,
   Tooltip,
   useComputedColorScheme,
 } from '@mantine/core';
@@ -22,6 +23,8 @@ import {
   IconEye,
   IconFileTypePdf,
   IconHistory,
+  IconLock,
+  IconLockOpen,
   IconMarkdown,
   IconPalette,
   IconPin,
@@ -220,6 +223,9 @@ export function NoteEditorView() {
     toggleFavorite,
     setActiveTag,
     restoreHistory,
+    isMasterSet,
+    isUnlocked,
+    openSecurityModal,
   } = useNotes();
   const [historyOpen, setHistoryOpen] = useState(false);
   const [printPreviewOpen, setPrintPreviewOpen] = useState(false);
@@ -619,16 +625,54 @@ export function NoteEditorView() {
         </Text>
       </div>
 
-      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-        <ErrorBoundary
-          title="에디터를 표시하지 못했습니다"
-          onResetNote={() =>
-            updateContent(selected.id, JSON.stringify([{ type: 'paragraph', content: '' }]))
-          }
+      {isMasterSet && !isUnlocked ? (
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 32,
+            backgroundColor: 'var(--mantine-color-gray-0)',
+            borderRadius: 8,
+          }}
         >
-          <BlockEditor key={editorKey} note={selected} onEditorInit={setCurrentEditor} />
-        </ErrorBoundary>
-      </div>
+          <Stack align="center" gap="md" style={{ maxWidth: 440, textAlign: 'center' }}>
+            <ThemeIcon size={64} radius="xl" color="orange" variant="light">
+              <IconLock size={36} />
+            </ThemeIcon>
+            <div>
+              <Text fw={700} size="lg">
+                노트 본문이 암호화되어 있습니다
+              </Text>
+              <Text size="sm" c="dimmed" mt={6}>
+                안전한 보안을 위해 본문이 AES-GCM 256비트로 암호화되어 보호 중입니다.
+                내용을 확인하고 편집하려면 마스터 비밀번호로 잠금을 해제하세요.
+              </Text>
+            </div>
+            <Button
+              color="orange"
+              size="md"
+              leftSection={<IconLockOpen size={18} />}
+              onClick={openSecurityModal}
+            >
+              마스터 비밀번호로 잠금 해제
+            </Button>
+          </Stack>
+        </div>
+      ) : (
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+          <ErrorBoundary
+            title="에디터를 표시하지 못했습니다"
+            onResetNote={() =>
+              updateContent(selected.id, JSON.stringify([{ type: 'paragraph', content: '' }]))
+            }
+          >
+            <BlockEditor key={editorKey} note={selected} onEditorInit={setCurrentEditor} />
+          </ErrorBoundary>
+        </div>
+      )}
 
       <Drawer opened={historyOpen} onClose={() => setHistoryOpen(false)} title="노트 히스토리" position="right" size="md">
         <Text size="xs" c="dimmed" mb="sm">

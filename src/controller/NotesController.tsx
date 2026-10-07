@@ -32,6 +32,7 @@ import {
 } from '../model/FileVault';
 import type { VaultApi } from '../electron';
 import { SupabaseConfig, SupabaseService } from '../model/SupabaseService';
+import { CryptoService } from '../model/CryptoService';
 
 function getVault(): VaultApi | null {
   return window.bullsNote?.vault ?? null;
@@ -97,6 +98,10 @@ export interface NotesState {
   projectSortOption: SortOption;
   noteSortOption: SortOption;
   sortedProjects: Project[];
+  /** 종단간 암호화(E2EE) 보안 상태 */
+  isMasterSet: boolean;
+  isUnlocked: boolean;
+  securityModalOpened: boolean;
 }
 
 export interface NotesActions {
@@ -134,6 +139,13 @@ export interface NotesActions {
   disconnectSupabase(): void;
   setProjectSortOption(opt: SortOption): void;
   setNoteSortOption(opt: SortOption): void;
+  /** 보안 액션 */
+  openSecurityModal(): void;
+  closeSecurityModal(): void;
+  setupMasterPassword(password: string): Promise<boolean>;
+  unlockMasterPassword(password: string): Promise<boolean>;
+  lockMasterPassword(): void;
+  removeMasterPassword(): Promise<boolean>;
 }
 
 const Ctx = createContext<(NotesState & NotesActions) | null>(null);
@@ -235,6 +247,63 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     [noteSortOption],
   );
 
+  // 종단간 암호화(E2EE) 보안 상태 및 핸들러
+  const [isMasterSet, setIsMasterSet] = useState<boolean>(() => CryptoService.isMasterPasswordSet());
+  const [isUnlocked, setIsUnlocked] = useState<boolean>(() => CryptoService.isUnlocked());
+  const [securityModalOpened, setSecurityModalOpened] = useState(false);
+
+  const openSecurityModal = useCallback(() => setSecurityModalOpened(true), []);
+  const closeSecurityModal = useCallback(() => setSecurityModalOpened(false), []);
+
+  const setupMasterPassword = useCallback(
+    async (password: string): Promise<boolean> => {
+      await CryptoService.setupMasterPassword(password);
+      setIsMasterSet(true);
+      setIsUnlocked(true);
+      // 현재 메모리에 있는 노트들을 암호화하여 로컬 저장 및 Supabase upsert
+      const encrypted = await CryptoService.encryptNotes(notes);
+      NoteRepository.save(encrypted);
+      if (supabaseConnected) {
+        await SupabaseService.upsertNotes(notes);
+      }
+      return true;
+    },
+    [notes, supabaseConnected],
+  );
+
+  const unlockMasterPassword = useCallback(
+    async (password: string): Promise<boolean> => {
+      const ok = await CryptoService.unlock(password);
+      if (ok) {
+        setIsUnlocked(true);
+        // 모든 암호화된 노트를 복호화하여 상태 갱신
+        const decrypted = await CryptoService.decryptNotes(notes);
+        setNotes(decrypted);
+        return true;
+      }
+      return false;
+    },
+    [notes],
+  );
+
+  const lockMasterPassword = useCallback(() => {
+    CryptoService.lock();
+    setIsUnlocked(false);
+    // 메모리 상태를 로컬스토리지에 저장된 암호화 노트로 되돌려 평문 메모리 제거
+    const reloaded = NoteRepository.load();
+    setNotes(reloaded);
+  }, []);
+
+  const removeMasterPassword = useCallback(async (): Promise<boolean> => {
+    // 현재 복호화된 평문 상태의 노트를 로컬에 그대로 저장
+    NoteRepository.save(notes);
+    CryptoService.removeMasterPassword();
+    setIsMasterSet(false);
+    setIsUnlocked(false);
+    return true;
+  }, [notes]);
+
+
   // 주기적으로 알람 감지 (5초 주기)
   useEffect(() => {
     if (!ready) return;
@@ -290,11 +359,17 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const isSavePendingRef = useRef(false);
   const flushSaveRef = useRef<(() => Promise<void>) | null>(null);
 
-  // localStorage 모드: 기존 동작 유지
+  // localStorage 모드: 마스터 비밀번호 활성화 시 암호화하여 영속화
   useEffect(() => {
     if (vaultMode) return;
-    NoteRepository.save(notes);
-  }, [notes, vaultMode]);
+    if (isMasterSet && isUnlocked) {
+      void CryptoService.encryptNotes(notes).then((encrypted) => {
+        NoteRepository.save(encrypted);
+      });
+    } else {
+      NoteRepository.save(notes);
+    }
+  }, [notes, vaultMode, isMasterSet, isUnlocked]);
 
   useEffect(() => {
     if (vaultMode) return;
@@ -385,7 +460,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
               if (text == null) continue;
               const parsed = parseNoteFile(f.id, text);
               if (!parsed) continue;
-              const withUrls = await swapAssetsToDataUrls(parsed.body, (name) => vault.readAsset(name));
+              const decryptedBody = await CryptoService.decrypt(parsed.body);
+              const withUrls = await swapAssetsToDataUrls(decryptedBody, (name) => vault.readAsset(name));
               const blocks = await headless.toBlocks(withUrls);
               const content = JSON.stringify(blocks);
               loaded.push({
@@ -441,7 +517,11 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
             n.id,
             (name, b64) => vault.writeAsset(name, b64),
           );
-          const text = serializeNoteFile(n, body);
+          let finalBody = body;
+          if (CryptoService.isMasterPasswordSet() && CryptoService.isUnlocked()) {
+            finalBody = await CryptoService.encrypt(body);
+          }
+          const text = serializeNoteFile(n, finalBody);
           if (lastSavedRef.current.get(n.id) !== text) {
             await vault.write(n.id, text);
             lastSavedRef.current.set(n.id, text);
@@ -1262,6 +1342,15 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       saveSupabaseConfig,
       syncWithSupabase,
       disconnectSupabase,
+      isMasterSet,
+      isUnlocked,
+      securityModalOpened,
+      openSecurityModal,
+      closeSecurityModal,
+      setupMasterPassword,
+      unlockMasterPassword,
+      lockMasterPassword,
+      removeMasterPassword,
     }),
     [
       projects,
@@ -1320,6 +1409,15 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       sortedProjects,
       setProjectSortOption,
       setNoteSortOption,
+      isMasterSet,
+      isUnlocked,
+      securityModalOpened,
+      openSecurityModal,
+      closeSecurityModal,
+      setupMasterPassword,
+      unlockMasterPassword,
+      lockMasterPassword,
+      removeMasterPassword,
     ],
   );
 
