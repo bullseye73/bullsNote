@@ -19,6 +19,7 @@ import {
   IconCode,
   IconCopy,
   IconDownload,
+  IconEye,
   IconFileTypePdf,
   IconHistory,
   IconMarkdown,
@@ -46,6 +47,7 @@ import { ErrorBoundary } from './ErrorBoundary';
 import { EditorToolbar } from './EditorToolbar';
 import { ReminderPopover } from './ReminderPopover';
 import { DatePickerModal } from './DatePickerModal';
+import { PrintPreviewModal } from './PrintPreviewModal';
 import { formatDateIso } from '../model/dateUtils';
 import { getDateAtSuggestions, getDateSlashMenuItems } from '../model/dateSuggestions';
 import { createSyntaxExtension, getAppSchema } from '../model/codeHighlight';
@@ -204,6 +206,7 @@ export function NoteEditorView() {
     restoreHistory,
   } = useNotes();
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [printPreviewOpen, setPrintPreviewOpen] = useState(false);
   const [currentEditor, setCurrentEditor] = useState<AnyEditor | null>(null);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
 
@@ -217,17 +220,17 @@ export function NoteEditorView() {
     window.print();
   }, []);
 
-  // 단축키: Ctrl + P (Mac: Cmd + P) -> 인쇄
+  // 단축키: Ctrl + P (Mac: Cmd + P) -> 인쇄 미리보기 열기
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p') {
         e.preventDefault();
-        handlePrint();
+        setPrintPreviewOpen(true);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handlePrint]);
+  }, []);
 
   // PDF 내보내기
   const handleExportPdf = useCallback(async () => {
@@ -315,7 +318,7 @@ export function NoteEditorView() {
   const editorKey = `${selected.id}`;
 
   return (
-    <Stack gap="xs" p="md" h="100%" style={{ overflow: 'auto' }}>
+    <Stack gap="xs" p="md" h="100%" className="note-editor-stack" style={{ overflow: 'auto' }}>
       {/* 인쇄 시에만 표시되는 인쇄 전용 헤더 (A4 문서용 깔끔한 레이아웃) */}
       <div className="print-only" style={{ marginBottom: 20, paddingBottom: 12, borderBottom: '2px solid #222' }}>
         <h1 style={{ fontSize: '24pt', fontWeight: 800, margin: '0 0 10px 0', color: '#111' }}>
@@ -392,14 +395,14 @@ export function NoteEditorView() {
               </Badge>
             )}
 
-            {/* 인쇄 버튼 */}
-            <Tooltip label="인쇄 (Ctrl+P / Cmd+P)">
+            {/* 인쇄 및 미리보기 버튼 */}
+            <Tooltip label="인쇄 및 미리보기 (Ctrl+P / Cmd+P)">
               <ActionIcon
                 size="lg"
                 variant="light"
                 color="gray"
-                onClick={handlePrint}
-                aria-label="노트 인쇄"
+                onClick={() => setPrintPreviewOpen(true)}
+                aria-label="인쇄 및 미리보기"
               >
                 <IconPrinter size={17} />
               </ActionIcon>
@@ -428,6 +431,14 @@ export function NoteEditorView() {
                 </Tooltip>
               </Menu.Target>
               <Menu.Dropdown>
+                <Menu.Item
+                  leftSection={<IconEye size={15} color="var(--mantine-color-blue-6)" />}
+                  onClick={() => setPrintPreviewOpen(true)}
+                >
+                  인쇄 / PDF 미리보기…
+                </Menu.Item>
+                <Menu.Divider />
+
                 <Menu.Label>클립보드 복사</Menu.Label>
                 <Menu.Item
                   leftSection={<IconMarkdown size={15} />}
@@ -645,6 +656,15 @@ export function NoteEditorView() {
           </Stack>
         )}
       </Drawer>
+
+      <PrintPreviewModal
+        opened={printPreviewOpen}
+        onClose={() => setPrintPreviewOpen(false)}
+        note={selected}
+        editor={currentEditor}
+        onPrint={handlePrint}
+        onExportPdf={handleExportPdf}
+      />
     </Stack>
   );
 }

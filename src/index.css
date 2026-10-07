@@ -33,7 +33,66 @@
   display: none;
 }
 
+/* Print Preview Content Styling */
+.print-preview-content pre {
+  background: #f4f4f5;
+  padding: 12px 14px;
+  border-radius: 6px;
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.9em;
+  margin: 12px 0;
+}
+.print-preview-content code {
+  background: #f4f4f5;
+  padding: 2px 5px;
+  border-radius: 4px;
+  font-size: 0.9em;
+}
+.print-preview-content blockquote {
+  border-left: 4px solid #3b82f6;
+  padding-left: 14px;
+  color: #4b5563;
+  margin: 14px 0;
+}
+.print-preview-content table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 14px 0;
+}
+.print-preview-content th,
+.print-preview-content td {
+  border: 1px solid #d1d5db;
+  padding: 8px 12px;
+  text-align: left;
+}
+.print-preview-content th {
+  background-color: #f9fafb;
+}
+.print-preview-content img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+}
+
 @media print {
+  /* 모든 요소 스크롤바 완전 제거 및 오버플로우 해제 */
+  *,
+  *::before,
+  *::after {
+    overflow: visible !important;
+    scrollbar-width: none !important;
+    -ms-overflow-style: none !important;
+  }
+
+  ::-webkit-scrollbar,
+  *::-webkit-scrollbar {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+    background: transparent !important;
+  }
+
   /* Mantine AppShell 및 부가 UI 숨김 */
   .mantine-AppShell-header,
   .mantine-AppShell-navbar,
@@ -47,7 +106,17 @@
   }
 
   /* 레이아웃 제약 해제하여 자연스러운 페이지 출력 지원 */
-  html, body, #root, .mantine-AppShell-root, .mantine-AppShell-main {
+  html,
+  body,
+  #root,
+  .mantine-AppShell-root,
+  .mantine-AppShell-main,
+  .note-editor-wrapper,
+  .mantine-Stack-root,
+  div,
+  section,
+  main,
+  article {
     height: auto !important;
     min-height: auto !important;
     max-height: none !important;
@@ -87,3 +156,4 @@
     color: #111111 !important;
   }
 }
+
