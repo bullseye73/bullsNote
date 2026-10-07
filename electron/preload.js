@@ -1,9 +1,10 @@
 // preload: renderer 격리 유지, 필요시 안전한 API만 노출
 const { contextBridge, ipcRenderer } = require('electron');
+const packageJson = require('../package.json');
 
 contextBridge.exposeInMainWorld('bullsNote', {
   platform: process.platform,
-  version: '0.1.0',
+  version: packageJson.version || '0.1.0',
   notification: {
     show: (data) => ipcRenderer.invoke('notification:show', data),
     onOpenNote: (callback) => {

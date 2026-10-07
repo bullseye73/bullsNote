@@ -48,21 +48,23 @@ electron/       → 데스크톱 셸 (main.js, preload.js, vault-ipc.js, tray.js
 
 GitHub Actions를 통해 태그를 푸시하면 **Windows(`.exe`), macOS(`.dmg`), Linux(`.AppImage`/`.deb`)** 설치 파일이 GitHub Release에 자동 빌드되어 게시됩니다.
 
-### 1단계: 버전 확인 및 커밋
-`package.json`의 `"version"`을 업데이트하고 커밋을 완료합니다.
+### 1단계: 버전 업데이트 및 태그 생성 (권장)
+`npm version` 명령어를 사용하면 `package.json`의 버전 번호 수정과 `Git 태그` 생성이 한 번에 처리됩니다:
 ```bash
-git add .
-git commit -m "릴리즈 준비: v0.1.0"
-git push origin main
+# 패치 버전 증가 (0.1.0 -> 0.1.1 및 v0.1.1 태그 생성)
+npm version patch
+
+# 또는 마이너 버전 증가 (0.1.0 -> 0.2.0 및 v0.2.0 태그 생성)
+# npm version minor
+
+# 또는 특정 버전 직접 지정
+# npm version 0.1.2
 ```
 
-### 2단계: Git 태그 생성 및 푸시
+### 2단계: 메인 브랜치 및 태그 푸시
 ```bash
-# 태그 생성 (v로 시작하는 버전 형식)
-git tag v0.1.0
-
-# 태그를 원격 저장소로 푸시
-git push origin v0.1.0
+# 코드와 태그를 원격 저장소로 함께 푸시
+git push origin main --tags
 ```
 
 ### 3단계: GitHub Release 확인
