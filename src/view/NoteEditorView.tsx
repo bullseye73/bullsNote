@@ -39,7 +39,7 @@ import { filterSuggestionItems, type BlockNoteEditor } from '@blocknote/core';
 import '@blocknote/core/fonts/inter.css';
 import '@blocknote/react/style.css';
 import '@blocknote/ariakit/style.css';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Note, getPathTitles, getPastelConfig, PASTEL_COLORS } from '../model/Note';
 import { isBlocksJson, noteBodyText, parseBlocks } from '../model/HashtagService';
 import { useNotes } from '../controller/NotesController';
@@ -48,6 +48,7 @@ import { EditorToolbar } from './EditorToolbar';
 import { ReminderPopover } from './ReminderPopover';
 import { DatePickerModal } from './DatePickerModal';
 import { PrintPreviewModal } from './PrintPreviewModal';
+import { NoteTableOfContents } from './NoteTableOfContents';
 import { formatDateIso } from '../model/dateUtils';
 import { getDateAtSuggestions, getDateSlashMenuItems } from '../model/dateSuggestions';
 import { createSyntaxExtension, getAppSchema } from '../model/codeHighlight';
@@ -87,6 +88,7 @@ function BlockEditor({
   const scheme = useComputedColorScheme('light', { getInitialValueInEffect: true });
   const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [datePickerInitialDate, setDatePickerInitialDate] = useState<Date | undefined>(undefined);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   const initialContent = useMemo(() => {
     // 검증된 블록만 전달, 그 외는 플레인 텍스트 문단으로 보존 (크래시 방지)
@@ -148,37 +150,51 @@ function BlockEditor({
         />
       </div>
       <div
-        style={{ flex: 1, minHeight: 0, overflow: 'auto' }}
-        onClick={(e) => {
-          if (e.target === e.currentTarget) {
-            editor.focus();
-          }
+        style={{
+          flex: 1,
+          minHeight: 0,
+          position: 'relative',
+          display: 'flex',
+          flexDirection: 'column',
         }}
       >
-        <BlockNoteView
-          editor={editor}
-          theme={scheme === 'dark' ? 'dark' : 'light'}
-          slashMenu={false}
-          onChange={() => updateContent(note.id, JSON.stringify(editor.document))}
-        >
-          {/* 노션 스타일 @ 멘션 날짜 추천 메뉴 (@오늘, @내일, @11/20 등 동적 파싱 + 달력 선택) */}
-          <SuggestionMenuController
-            triggerCharacter="@"
-            getItems={async (query) =>
-              getDateAtSuggestions(query, editor, () => handleOpenDatePicker())
+        {/* 우측 상단 고정 목차 (TOC) */}
+        <NoteTableOfContents editor={editor} scrollContainerRef={scrollContainerRef} />
+
+        <div
+          ref={scrollContainerRef}
+          style={{ flex: 1, minHeight: 0, overflow: 'auto' }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              editor.focus();
             }
-          />
-          {/* 날짜 삽입 항목이 포함된 / 슬래시 명령어 메뉴 */}
-          <SuggestionMenuController
-            triggerCharacter="/"
-            shouldOpen={(e) => !e.selection.$from.parent.type.isInGroup('tableContent')}
-            getItems={async (query) => {
-              const defaultSlashItems = getDefaultReactSlashMenuItems(editor);
-              const dateSlashItems = getDateSlashMenuItems(editor, () => handleOpenDatePicker());
-              return filterSuggestionItems([...dateSlashItems, ...defaultSlashItems], query);
-            }}
-          />
-        </BlockNoteView>
+          }}
+        >
+          <BlockNoteView
+            editor={editor}
+            theme={scheme === 'dark' ? 'dark' : 'light'}
+            slashMenu={false}
+            onChange={() => updateContent(note.id, JSON.stringify(editor.document))}
+          >
+            {/* 노션 스타일 @ 멘션 날짜 추천 메뉴 (@오늘, @내일, @11/20 등 동적 파싱 + 달력 선택) */}
+            <SuggestionMenuController
+              triggerCharacter="@"
+              getItems={async (query) =>
+                getDateAtSuggestions(query, editor, () => handleOpenDatePicker())
+              }
+            />
+            {/* 날짜 삽입 항목이 포함된 / 슬래시 명령어 메뉴 */}
+            <SuggestionMenuController
+              triggerCharacter="/"
+              shouldOpen={(e) => !e.selection.$from.parent.type.isInGroup('tableContent')}
+              getItems={async (query) => {
+                const defaultSlashItems = getDefaultReactSlashMenuItems(editor);
+                const dateSlashItems = getDateSlashMenuItems(editor, () => handleOpenDatePicker());
+                return filterSuggestionItems([...dateSlashItems, ...defaultSlashItems], query);
+              }}
+            />
+          </BlockNoteView>
+        </div>
       </div>
 
       <DatePickerModal
