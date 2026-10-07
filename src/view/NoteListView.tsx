@@ -17,8 +17,12 @@ import { useState } from 'react';
 import { PastelColorConfig, PASTEL_COLORS, getPastelConfig, TreeNode, getPathTitles } from '../model/Note';
 import { noteBodyText } from '../model/HashtagService';
 import { useNotes } from '../controller/NotesController';
+import { CryptoService } from '../model/CryptoService';
 
 function excerpt(content: string): string {
+  if (CryptoService.isEncrypted(content) || CryptoService.isCorruptedPlaceholder(content)) {
+    return '🔒 암호화된 노트입니다.';
+  }
   const t = noteBodyText(content);
   return t.length > 120 ? `${t.slice(0, 120)}…` : t;
 }

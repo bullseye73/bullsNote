@@ -22,6 +22,7 @@ import {
   IconShieldLock,
 } from '@tabler/icons-react';
 import { useNotes } from '../controller/NotesController';
+import { CryptoService } from '../model/CryptoService';
 
 interface SecurityModalProps {
   opened: boolean;
@@ -30,6 +31,7 @@ interface SecurityModalProps {
 
 export function SecurityModal({ opened, onClose }: SecurityModalProps) {
   const {
+    notes,
     isMasterSet,
     isUnlocked,
     setupMasterPassword,
@@ -54,7 +56,8 @@ export function SecurityModal({ opened, onClose }: SecurityModalProps) {
       setOldPassword('');
       setError(null);
       setSuccessMsg(null);
-      if (!isMasterSet) {
+      const hasEncrypted = notes.some((n) => CryptoService.isEncrypted(n.content));
+      if (!isMasterSet && !hasEncrypted) {
         setViewMode('setup');
       } else if (!isUnlocked) {
         setViewMode('unlock');
@@ -62,7 +65,7 @@ export function SecurityModal({ opened, onClose }: SecurityModalProps) {
         setViewMode('manage');
       }
     }
-  }, [opened, isMasterSet, isUnlocked]);
+  }, [opened, isMasterSet, isUnlocked, notes]);
 
   // 마스터 비밀번호 최초 설정
   const handleSetup = async () => {

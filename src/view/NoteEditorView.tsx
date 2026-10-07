@@ -7,6 +7,7 @@ import {
   Drawer,
   Group,
   Menu,
+  PasswordInput,
   Stack,
   Text,
   TextInput,
@@ -46,6 +47,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Note, getPathTitles, getPastelConfig, PASTEL_COLORS } from '../model/Note';
 import { isBlocksJson, noteBodyText, parseBlocks } from '../model/HashtagService';
 import { useNotes } from '../controller/NotesController';
+import { CryptoService } from '../model/CryptoService';
 import { ErrorBoundary } from './ErrorBoundary';
 import { EditorToolbar } from './EditorToolbar';
 import { ReminderPopover } from './ReminderPopover';
@@ -225,12 +227,39 @@ export function NoteEditorView() {
     restoreHistory,
     isMasterSet,
     isUnlocked,
+    unlockMasterPassword,
     openSecurityModal,
   } = useNotes();
   const [historyOpen, setHistoryOpen] = useState(false);
   const [printPreviewOpen, setPrintPreviewOpen] = useState(false);
   const [currentEditor, setCurrentEditor] = useState<AnyEditor | null>(null);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
+
+  // 에디터 내 빠른 잠금 해제 상태
+  const [quickPassword, setQuickPassword] = useState('');
+  const [quickError, setQuickError] = useState<string | null>(null);
+  const [quickLoading, setQuickLoading] = useState(false);
+
+  const handleQuickUnlock = async () => {
+    if (!quickPassword) {
+      setQuickError('마스터 비밀번호를 입력해주세요.');
+      return;
+    }
+    setQuickError(null);
+    setQuickLoading(true);
+    try {
+      const ok = await unlockMasterPassword(quickPassword);
+      if (ok) {
+        setQuickPassword('');
+      } else {
+        setQuickError('비밀번호가 올바르지 않습니다.');
+      }
+    } catch {
+      setQuickError('잠금 해제 중 오류가 발생했습니다.');
+    } finally {
+      setQuickLoading(false);
+    }
+  };
 
   const showFeedback = useCallback((msg: string) => {
     setCopyFeedback(msg);
@@ -621,11 +650,15 @@ export function NoteEditorView() {
         </Group>
         <Text size="xs" c="dimmed" mb={8}>
           생성 {new Date(selected.createdAt).toLocaleString('ko-KR')} · 수정{' '}
-          {new Date(selected.updatedAt).toLocaleString('ko-KR')} · {noteBodyText(selected.content).length}자
+          {new Date(selected.updatedAt).toLocaleString('ko-KR')} ·{' '}
+          {CryptoService.isEncrypted(selected.content)
+            ? '🔒 암호화됨'
+            : `${noteBodyText(selected.content).length}자`}
         </Text>
       </div>
 
-      {isMasterSet && !isUnlocked ? (
+      {(!isUnlocked && (isMasterSet || CryptoService.isEncrypted(selected.content))) ||
+      CryptoService.isEncrypted(selected.content) ? (
         <div
           style={{
             flex: 1,
@@ -638,7 +671,7 @@ export function NoteEditorView() {
             borderRadius: 8,
           }}
         >
-          <Stack align="center" gap="md" style={{ maxWidth: 440, textAlign: 'center' }}>
+          <Stack align="center" gap="md" style={{ maxWidth: 440, width: '100%', textAlign: 'center' }}>
             <ThemeIcon size={64} radius="xl" color="orange" variant="light">
               <IconLock size={36} />
             </ThemeIcon>
@@ -648,16 +681,39 @@ export function NoteEditorView() {
               </Text>
               <Text size="sm" c="dimmed" mt={6}>
                 안전한 보안을 위해 본문이 AES-GCM 256비트로 암호화되어 보호 중입니다.
-                내용을 확인하고 편집하려면 마스터 비밀번호로 잠금을 해제하세요.
+                마스터 비밀번호를 입력하면 내용을 확인하고 편집할 수 있습니다.
               </Text>
             </div>
+
+            <Group gap={8} style={{ width: '100%', maxWidth: 360 }} justify="center">
+              <PasswordInput
+                placeholder="마스터 비밀번호 입력"
+                value={quickPassword}
+                onChange={(e) => setQuickPassword(e.currentTarget.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void handleQuickUnlock();
+                }}
+                style={{ flex: 1 }}
+                error={quickError}
+                autoFocus
+              />
+              <Button
+                color="orange"
+                onClick={handleQuickUnlock}
+                loading={quickLoading}
+                leftSection={<IconLockOpen size={16} />}
+              >
+                잠금 해제
+              </Button>
+            </Group>
+
             <Button
-              color="orange"
-              size="md"
-              leftSection={<IconLockOpen size={18} />}
+              variant="subtle"
+              size="xs"
+              color="gray"
               onClick={openSecurityModal}
             >
-              마스터 비밀번호로 잠금 해제
+              보안 설정 창 열기
             </Button>
           </Stack>
         </div>

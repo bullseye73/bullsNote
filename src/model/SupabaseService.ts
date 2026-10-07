@@ -1,6 +1,6 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { Note, Project } from './Note';
-import { CryptoService } from './CryptoService';
+import { CryptoService, VERIFIER_STORAGE_KEY } from './CryptoService';
 
 const SUPABASE_CONFIG_STORAGE_KEY = 'bullsnote.supabase.config.v1';
 
@@ -243,6 +243,27 @@ class SupabaseSyncManager {
     }
   }
 
+  // --- 보안 토큰 서버 동기화 ---
+  public async uploadSecurityVerifier(verifierString: string): Promise<boolean> {
+    if (!this.isConnected() || !this.client) return false;
+    try {
+      await this.client.from('bullsnote_notes').upsert(
+        {
+          id: '__bullsnote_security_verifier__',
+          title: '__BULLSNOTE_SECURITY_VERIFIER__',
+          content: verifierString,
+          project_id: '__sys__',
+          created_at: Date.now(),
+          updated_at: Date.now(),
+        },
+        { onConflict: 'id' }
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   // --- 데이터 변환 헬퍼 ---
   private projectToRow(p: Project): DbProjectRow {
     return {
@@ -265,7 +286,23 @@ class SupabaseSyncManager {
   }
 
   private async noteToRow(n: Note): Promise<DbNoteRow> {
-    const encryptedContent = await CryptoService.encrypt(n.content || '');
+    let encryptedContent = n.content || '';
+    // 언락 상태이고 평문인 경우에만 암호화 수행 (이미 암호문이거나 잠금 상태면 원본 그대로 보존)
+    if (CryptoService.isUnlocked() && !CryptoService.isEncrypted(encryptedContent)) {
+      encryptedContent = await CryptoService.encrypt(encryptedContent);
+    }
+    // 히스토리 스냅샷도 암호화 보장
+    let historyToSave = n.history || [];
+    if (CryptoService.isUnlocked() && Array.isArray(historyToSave) && historyToSave.length > 0) {
+      historyToSave = await Promise.all(
+        historyToSave.map(async (h) => {
+          if (h.content && !CryptoService.isEncrypted(h.content)) {
+            return { ...h, content: await CryptoService.encrypt(h.content) };
+          }
+          return h;
+        })
+      );
+    }
     return {
       id: n.id,
       title: n.title,
@@ -277,25 +314,42 @@ class SupabaseSyncManager {
       pinned: Boolean(n.pinned),
       favorite: Boolean(n.favorite),
       parent_id: n.parentId,
-      history: n.history || [],
+      history: historyToSave,
       created_at: n.createdAt,
       updated_at: n.updatedAt,
     };
   }
 
   private async rowToNote(row: DbNoteRow): Promise<Note> {
+    const rawContent = row.content || '';
+    let content = rawContent;
+    // 언락되어 있다면 복호화, 잠겨있다면 암호문 그대로 유지하여 데이터 보존! (절대 플레이스홀더 문자열로 덮어쓰지 않음)
+    if (CryptoService.isUnlocked() && CryptoService.isEncrypted(rawContent)) {
+      content = await CryptoService.decrypt(rawContent);
+    }
+    let historyLoaded = Array.isArray(row.history) ? (row.history as Note['history']) : [];
+    if (CryptoService.isUnlocked() && historyLoaded.length > 0) {
+      historyLoaded = await Promise.all(
+        historyLoaded.map(async (h) => {
+          if (h.content && CryptoService.isEncrypted(h.content)) {
+            return { ...h, content: await CryptoService.decrypt(h.content) };
+          }
+          return h;
+        })
+      );
+    }
     return {
       id: row.id,
       title: row.title || '제목 없음',
       projectId: row.project_id || 'default',
       color: row.color || 'blue',
       reminder: (row.reminder as Note['reminder']) || null,
-      content: await CryptoService.decrypt(row.content || ''),
+      content,
       tags: Array.isArray(row.tags) ? (row.tags as string[]) : [],
       pinned: Boolean(row.pinned),
       favorite: Boolean(row.favorite),
       parentId: row.parent_id || null,
-      history: Array.isArray(row.history) ? (row.history as Note['history']) : [],
+      history: historyLoaded,
       createdAt: Number(row.created_at) || Date.now(),
       updatedAt: Number(row.updated_at) || Date.now(),
     };
@@ -412,8 +466,21 @@ class SupabaseSyncManager {
         throw new Error(`원격 노트 조회 실패: ${noteError.message}`);
       }
 
+      // 서버에 보안 verifier가 저장되어 있다면 로컬스토리지에 동기화
+      const verifierRow = (remoteNotesRaw || []).find((r) => r.id === '__bullsnote_security_verifier__');
+      if (verifierRow && verifierRow.content && CryptoService.isEncrypted(verifierRow.content)) {
+        try {
+          localStorage.setItem(VERIFIER_STORAGE_KEY, verifierRow.content);
+        } catch {}
+      }
+
+      // 실제 사용자 노트만 필터링 (시스템용 verifier 행 제외)
+      const userNotesRaw = (remoteNotesRaw as DbNoteRow[] || []).filter(
+        (r) => r.id !== '__bullsnote_security_verifier__'
+      );
+
       const remoteProjects: Project[] = (remoteProjectsRaw as DbProjectRow[] || []).map((r) => this.rowToProject(r));
-      const remoteNotes: Note[] = await Promise.all((remoteNotesRaw as DbNoteRow[] || []).map((r) => this.rowToNote(r)));
+      const remoteNotes: Note[] = await Promise.all(userNotesRaw.map((r) => this.rowToNote(r)));
 
       let uploadedCount = 0;
       const downloadedCount = remoteNotes.length;
@@ -456,9 +523,12 @@ class SupabaseSyncManager {
       if (remoteNotes.length > 0) {
         // 서버에 기존 노트가 이미 존재하는 경우:
         for (const ln of localNotes) {
-          if (!noteMap.has(ln.id)) {
+          // 손상된 플레이스홀더 노트는 서버에 업로드하지 않음
+          if (CryptoService.isCorruptedPlaceholder(ln.content)) continue;
+
+          const remote = noteMap.get(ln.id);
+          if (!remote) {
             // 서버에 없는 로컬 전용 노트
-            // 사용자가 수정하지 않은 기본 안내 시드 노트만 제외하고, 그 외 사용자가 작성/수정한 노트는 보존 및 업로드
             const isUnmodifiedSeed =
               (ln.id === 'seed-1' && ln.title.includes('환영')) ||
               (ln.id === 'seed-1-1' && ln.title.includes('치트시트')) ||
@@ -467,15 +537,22 @@ class SupabaseSyncManager {
               noteMap.set(ln.id, ln);
               notesToUpload.push(ln);
             }
+          } else {
+            // 서버에 이미 있는 노트: 로컬의 수정 시간이 서버보다 더 최신인 경우 로컬 버전 채택 및 업로드
+            if (ln.updatedAt > remote.updatedAt) {
+              noteMap.set(ln.id, ln);
+              notesToUpload.push(ln);
+            }
           }
-          // noteMap.has(ln.id)인 경우: 서버의 노트가 이미 등록되어 있어 로컬 내용을 서버 내용으로 덮어씀 (서버 우선)
         }
       } else {
         // 서버에 노트가 전혀 없는 경우 (새 DB 최초 연동):
         // 로컬에 있는 모든 노트를 서버로 최초 업로드
         for (const ln of localNotes) {
-          noteMap.set(ln.id, ln);
-          notesToUpload.push(ln);
+          if (!CryptoService.isCorruptedPlaceholder(ln.content)) {
+            noteMap.set(ln.id, ln);
+            notesToUpload.push(ln);
+          }
         }
       }
 

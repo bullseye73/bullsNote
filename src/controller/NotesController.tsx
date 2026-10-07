@@ -252,19 +252,46 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const [isUnlocked, setIsUnlocked] = useState<boolean>(() => CryptoService.isUnlocked());
   const [securityModalOpened, setSecurityModalOpened] = useState(false);
 
+  // 노트 목록에 암호화된 노트가 포함되어 있다면 마스터 비밀번호가 설정된 것으로 자동 감지
+  useEffect(() => {
+    if (!isMasterSet) {
+      if (notes.some((n) => CryptoService.isEncrypted(n.content))) {
+        setIsMasterSet(true);
+      }
+    }
+  }, [notes, isMasterSet]);
+
+  // 앱 기동 시 보안 보호가 설정되어 있고 잠겨있다면 자동으로 비밀번호 입력 모달 오픈
+  const initialModalPromptRef = useRef(false);
+  useEffect(() => {
+    if (!initialModalPromptRef.current && isMasterSet && !isUnlocked) {
+      initialModalPromptRef.current = true;
+      setSecurityModalOpened(true);
+    }
+  }, [isMasterSet, isUnlocked]);
+
   const openSecurityModal = useCallback(() => setSecurityModalOpened(true), []);
   const closeSecurityModal = useCallback(() => setSecurityModalOpened(false), []);
 
   const setupMasterPassword = useCallback(
     async (password: string): Promise<boolean> => {
-      await CryptoService.setupMasterPassword(password);
+      // 기존 암호화된 노트가 있다면 그 salt를 재사용하여 호환성 유지
+      const encryptedNote = notes.find((n) => CryptoService.isEncrypted(n.content));
+      const existingSalt = encryptedNote ? CryptoService.extractSaltHex(encryptedNote.content) : null;
+
+      await CryptoService.setupMasterPassword(password, existingSalt);
       setIsMasterSet(true);
       setIsUnlocked(true);
-      // 현재 메모리에 있는 노트들을 암호화하여 로컬 저장 및 Supabase upsert
-      const encrypted = await CryptoService.encryptNotes(notes);
+      // 현재 메모리에 있는 노트들을 복호화하여 편집 가능한 평문으로 전환
+      const decrypted = await CryptoService.decryptNotes(notes);
+      setNotes(decrypted);
+      // 로컬 저장소에는 암호화하여 저장
+      const encrypted = await CryptoService.encryptNotes(decrypted);
       NoteRepository.save(encrypted);
       if (supabaseConnected) {
-        await SupabaseService.upsertNotes(notes);
+        const verifier = localStorage.getItem('bullsnote.security.verifier.v1');
+        if (verifier) void SupabaseService.uploadSecurityVerifier(verifier);
+        await SupabaseService.upsertNotes(decrypted);
       }
       return true;
     },
@@ -273,35 +300,51 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   const unlockMasterPassword = useCallback(
     async (password: string): Promise<boolean> => {
-      const ok = await CryptoService.unlock(password);
+      const encryptedSamples = notes
+        .map((n) => n.content)
+        .filter((c) => CryptoService.isEncrypted(c));
+      const ok = await CryptoService.unlock(password, encryptedSamples);
       if (ok) {
         setIsUnlocked(true);
+        setIsMasterSet(true);
         // 모든 암호화된 노트를 복호화하여 상태 갱신
         const decrypted = await CryptoService.decryptNotes(notes);
         setNotes(decrypted);
+        if (supabaseConnected) {
+          const verifier = localStorage.getItem('bullsnote.security.verifier.v1');
+          if (verifier) void SupabaseService.uploadSecurityVerifier(verifier);
+        }
         return true;
       }
       return false;
     },
-    [notes],
+    [notes, supabaseConnected],
   );
 
-  const lockMasterPassword = useCallback(() => {
+  const lockMasterPassword = useCallback(async () => {
+    // 잠그기 전 현재 평문 노트들을 암호화하여 로컬에 저장
+    const encrypted = await CryptoService.encryptNotes(notes);
+    NoteRepository.save(encrypted);
     CryptoService.lock();
     setIsUnlocked(false);
-    // 메모리 상태를 로컬스토리지에 저장된 암호화 노트로 되돌려 평문 메모리 제거
-    const reloaded = NoteRepository.load();
-    setNotes(reloaded);
-  }, []);
+    // 메모리 상태도 암호화된 상태로 전환하여 평문 메모리 폐기
+    setNotes(encrypted);
+  }, [notes]);
 
   const removeMasterPassword = useCallback(async (): Promise<boolean> => {
     // 현재 복호화된 평문 상태의 노트를 로컬에 그대로 저장
-    NoteRepository.save(notes);
+    const decrypted = await CryptoService.decryptNotes(notes);
+    setNotes(decrypted);
+    NoteRepository.save(decrypted);
     CryptoService.removeMasterPassword();
     setIsMasterSet(false);
     setIsUnlocked(false);
+    if (supabaseConnected) {
+      await SupabaseService.upsertNotes(decrypted);
+      await SupabaseService.deleteNote('__bullsnote_security_verifier__');
+    }
     return true;
-  }, [notes]);
+  }, [notes, supabaseConnected]);
 
 
   // 주기적으로 알람 감지 (5초 주기)
@@ -362,10 +405,19 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   // localStorage 모드: 마스터 비밀번호 활성화 시 암호화하여 영속화
   useEffect(() => {
     if (vaultMode) return;
-    if (isMasterSet && isUnlocked) {
-      void CryptoService.encryptNotes(notes).then((encrypted) => {
-        NoteRepository.save(encrypted);
-      });
+    if (isMasterSet) {
+      if (isUnlocked) {
+        // 언락 상태(평문 메모리 보유 중): 백그라운드에서 암호화하여 안전하게 저장
+        void CryptoService.encryptNotes(notes).then((encrypted) => {
+          NoteRepository.save(encrypted);
+        });
+      } else {
+        // 잠금 상태: 이미 암호화되어 있는 노트들만 저장 (평문 덮어쓰기 방지)
+        const allEncrypted = notes.every((n) => CryptoService.isEncrypted(n.content));
+        if (allEncrypted) {
+          NoteRepository.save(notes);
+        }
+      }
     } else {
       NoteRepository.save(notes);
     }
@@ -376,7 +428,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     NoteRepository.saveProjects(projects);
   }, [projects, vaultMode]);
 
-  // localStorage 모드: 레거시 마이그레이션
+  // localStorage 모드: 레거시 마이그레이션 (암호화된 노트는 블록 변환 제외)
   const migratedRef = useRef(false);
   useEffect(() => {
     if (vaultMode || migratedRef.current) return;
@@ -384,11 +436,14 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     (async () => {
       try {
         const current = NoteRepository.load();
-        if (!current.some((n) => !isBlocksJson(n.content))) return;
+        const needsMigration = current.some(
+          (n) => !isBlocksJson(n.content) && !CryptoService.isEncrypted(n.content),
+        );
+        if (!needsMigration) return;
         const headless = await getHeadless();
         const converted = await Promise.all(
           current.map(async (n) => {
-            if (isBlocksJson(n.content)) return n;
+            if (isBlocksJson(n.content) || CryptoService.isEncrypted(n.content)) return n;
             const blocks = await headless.toBlocks(n.content);
             const content = JSON.stringify(blocks);
             return { ...n, content, tags: extractHashtags(n.title, content) };
@@ -1200,7 +1255,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         if (!q) return true;
         return (
           n.title.toLowerCase().includes(q) ||
-          noteBodyText(n.content).toLowerCase().includes(q) ||
+          (!CryptoService.isEncrypted(n.content) && noteBodyText(n.content).toLowerCase().includes(q)) ||
           n.tags.some((t) => t.includes(q))
         );
       })
@@ -1221,7 +1276,14 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     try {
       const res = await SupabaseService.syncAll(notes, projects);
       if (res.success) {
-        const sortedNotes = res.notes.sort(sortNotes);
+        let syncedNotes = res.notes;
+        if (CryptoService.isUnlocked()) {
+          syncedNotes = await CryptoService.decryptNotes(syncedNotes);
+        }
+        if (syncedNotes.some((n) => CryptoService.isEncrypted(n.content)) || CryptoService.isMasterPasswordSet()) {
+          setIsMasterSet(true);
+        }
+        const sortedNotes = syncedNotes.sort(sortNotes);
         setNotes(sortedNotes);
         setProjects(res.projects);
         NoteRepository.save(sortedNotes);
