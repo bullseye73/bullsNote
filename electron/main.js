@@ -1,5 +1,6 @@
-const { app, BrowserWindow, nativeImage, shell, ipcMain, Notification, Menu, MenuItem } = require('electron');
+const { app, BrowserWindow, nativeImage, shell, ipcMain, Notification, Menu, MenuItem, dialog } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const { registerVaultIpc } = require('./vault-ipc');
 const { setupTray } = require('./tray');
 
@@ -176,6 +177,40 @@ app.whenReady().then(() => {
       return true;
     } catch {
       return false;
+    }
+  });
+
+  ipcMain.handle('print:exportPdf', async (event, { title }) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) return { success: false, error: '창을 찾을 수 없습니다.' };
+
+    const safeTitle = (title || '노트').replace(/[/\\?%*:|"<>]/g, '_').trim() || '노트';
+    const { canceled, filePath } = await dialog.showSaveDialog(win, {
+      title: 'PDF로 내보내기',
+      defaultPath: `${safeTitle}.pdf`,
+      filters: [{ name: 'PDF 문서', extensions: ['pdf'] }],
+    });
+
+    if (canceled || !filePath) {
+      return { success: false, canceled: true };
+    }
+
+    try {
+      const pdfData = await event.sender.printToPDF({
+        pageSize: 'A4',
+        printBackground: true,
+        margins: {
+          top: 0.4,
+          bottom: 0.4,
+          left: 0.4,
+          right: 0.4,
+        },
+      });
+      await fs.promises.writeFile(filePath, pdfData);
+      return { success: true, filePath };
+    } catch (err) {
+      console.error('PDF 내보내기 실패:', err);
+      return { success: false, error: err.message };
     }
   });
 

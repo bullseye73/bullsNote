@@ -27,3 +27,63 @@
   transform: translateX(2px);
   background-color: var(--mantine-color-default-hover);
 }
+
+/* Print Styling */
+.print-only {
+  display: none;
+}
+
+@media print {
+  /* Mantine AppShell 및 부가 UI 숨김 */
+  .mantine-AppShell-header,
+  .mantine-AppShell-navbar,
+  .no-print,
+  .mantine-Modal-root,
+  .mantine-Drawer-root,
+  .mantine-Popover-dropdown,
+  .mantine-Menu-dropdown,
+  .mantine-Tooltip-tooltip {
+    display: none !important;
+  }
+
+  /* 레이아웃 제약 해제하여 자연스러운 페이지 출력 지원 */
+  html, body, #root, .mantine-AppShell-root, .mantine-AppShell-main {
+    height: auto !important;
+    min-height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+    color: #1a1a1a !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .mantine-AppShell-main {
+    padding-top: 0 !important;
+    padding-left: 0 !important;
+  }
+
+  /* 인쇄 전용 헤더 노출 */
+  .print-only {
+    display: block !important;
+  }
+
+  /* 인쇄용 페이지 여백 */
+  @page {
+    size: A4 portrait;
+    margin: 15mm;
+  }
+
+  /* 페이지 잘림 방지 */
+  pre, code, table, img, blockquote {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* BlockNote 에디터 인쇄 스타일 */
+  .bn-container, .bn-editor {
+    padding: 0 !important;
+    background: transparent !important;
+    color: #111111 !important;
+  }
+}

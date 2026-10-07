@@ -17,6 +17,10 @@ export interface NotificationApi {
   onOpenNote(callback: (noteId: string) => void): () => void;
 }
 
+export interface PrintApi {
+  exportPdf(title: string): Promise<{ success: boolean; filePath?: string; canceled?: boolean; error?: string }>;
+}
+
 declare global {
   interface Window {
     bullsNote?: {
@@ -24,6 +28,7 @@ declare global {
       version: string;
       vault?: VaultApi;
       notification?: NotificationApi;
+      print?: PrintApi;
     };
   }
 }

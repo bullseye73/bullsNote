@@ -186,6 +186,7 @@ function Shell() {
             {listOpened && (
               <>
                 <div
+                  className="no-print"
                   style={{
                     width: list.width,
                     flexShrink: 0,
@@ -196,14 +197,16 @@ function Shell() {
                 >
                   <ListPanel />
                 </div>
-                <ResizeSplitter
-                  onMouseDown={list.startResize}
-                  onDoubleClick={list.resetWidth}
-                  title="마우스 드래그로 노트 목록 너비 조절 (더블클릭 시 기본값)"
-                />
+                <div className="no-print">
+                  <ResizeSplitter
+                    onMouseDown={list.startResize}
+                    onDoubleClick={list.resetWidth}
+                    title="마우스 드래그로 노트 목록 너비 조절 (더블클릭 시 기본값)"
+                  />
+                </div>
               </>
             )}
-            <div style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'auto' }}>
+            <div className="note-editor-wrapper" style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'auto' }}>
               <NoteEditorView />
             </div>
           </div>

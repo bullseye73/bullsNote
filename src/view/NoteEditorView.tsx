@@ -13,14 +13,28 @@ import {
   Tooltip,
   useComputedColorScheme,
 } from '@mantine/core';
-import { IconBell, IconHistory, IconPalette, IconPin, IconStar } from '@tabler/icons-react';
+import {
+  IconBell,
+  IconCheck,
+  IconCode,
+  IconCopy,
+  IconDownload,
+  IconFileTypePdf,
+  IconHistory,
+  IconMarkdown,
+  IconPalette,
+  IconPin,
+  IconPrinter,
+  IconShare,
+  IconStar,
+} from '@tabler/icons-react';
 import { BlockNoteView } from '@blocknote/ariakit';
 import {
   SuggestionMenuController,
   getDefaultReactSlashMenuItems,
   useCreateBlockNote,
 } from '@blocknote/react';
-import { filterSuggestionItems } from '@blocknote/core';
+import { filterSuggestionItems, type BlockNoteEditor } from '@blocknote/core';
 import '@blocknote/core/fonts/inter.css';
 import '@blocknote/react/style.css';
 import '@blocknote/ariakit/style.css';
@@ -35,6 +49,19 @@ import { DatePickerModal } from './DatePickerModal';
 import { formatDateIso } from '../model/dateUtils';
 import { getDateAtSuggestions, getDateSlashMenuItems } from '../model/dateSuggestions';
 import { createSyntaxExtension, getAppSchema } from '../model/codeHighlight';
+import {
+  canNativeShare,
+  copyHtmlToClipboard,
+  copyPlainTextToClipboard,
+  downloadFile,
+  exportToHtmlDocument,
+  exportToMarkdown,
+  exportToPdf,
+  sanitizeFileName,
+  shareNative,
+} from '../model/exportUtils';
+
+type AnyEditor = BlockNoteEditor<any, any, any>;
 
 /** 이미지 붙여넣기/드롭 -> dataURL로 인라인 저장 */
 async function uploadFile(file: File): Promise<string> {
@@ -47,7 +74,13 @@ async function uploadFile(file: File): Promise<string> {
   return dataUrl;
 }
 
-function BlockEditor({ note }: { note: Note }) {
+function BlockEditor({
+  note,
+  onEditorInit,
+}: {
+  note: Note;
+  onEditorInit?: (editor: AnyEditor) => void;
+}) {
   const { updateContent } = useNotes();
   const scheme = useComputedColorScheme('light', { getInitialValueInEffect: true });
   const [datePickerOpen, setDatePickerOpen] = useState(false);
@@ -98,13 +131,20 @@ function BlockEditor({ note }: { note: Note }) {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleInsertToday]);
 
+  // 외부(상위 컴포넌트)로 에디터 인스턴스 공유 (내보내기/공유/인쇄용)
+  useEffect(() => {
+    onEditorInit?.(editor);
+  }, [editor, onEditorInit]);
+
   return (
     <Stack gap={4} style={{ flex: 1, minHeight: 0 }}>
-      <EditorToolbar
-        editor={editor}
-        onOpenDatePicker={() => handleOpenDatePicker()}
-        onInsertToday={handleInsertToday}
-      />
+      <div className="no-print">
+        <EditorToolbar
+          editor={editor}
+          onOpenDatePicker={() => handleOpenDatePicker()}
+          onInsertToday={handleInsertToday}
+        />
+      </div>
       <div
         style={{ flex: 1, minHeight: 0, overflow: 'auto' }}
         onClick={(e) => {
@@ -164,6 +204,87 @@ export function NoteEditorView() {
     restoreHistory,
   } = useNotes();
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [currentEditor, setCurrentEditor] = useState<AnyEditor | null>(null);
+  const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
+
+  const showFeedback = useCallback((msg: string) => {
+    setCopyFeedback(msg);
+    setTimeout(() => setCopyFeedback(null), 2500);
+  }, []);
+
+  // 인쇄 실행
+  const handlePrint = useCallback(() => {
+    window.print();
+  }, []);
+
+  // 단축키: Ctrl + P (Mac: Cmd + P) -> 인쇄
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p') {
+        e.preventDefault();
+        handlePrint();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handlePrint]);
+
+  // PDF 내보내기
+  const handleExportPdf = useCallback(async () => {
+    if (!selected) return;
+    const res = await exportToPdf(selected.title || '노트');
+    if (res.success) {
+      showFeedback('PDF 내보내기 완료');
+    }
+  }, [selected, showFeedback]);
+
+  // 마크다운 복사
+  const handleCopyMarkdown = useCallback(async () => {
+    if (!currentEditor || !selected) return;
+    const md = exportToMarkdown(currentEditor, selected.title);
+    const ok = await copyPlainTextToClipboard(md);
+    if (ok) showFeedback('마크다운 복사됨');
+  }, [currentEditor, selected, showFeedback]);
+
+  // 서식 있는 텍스트(HTML) 복사
+  const handleCopyHtml = useCallback(async () => {
+    if (!currentEditor || !selected) return;
+    const html = exportToHtmlDocument(currentEditor, selected.title);
+    const md = exportToMarkdown(currentEditor, selected.title);
+    const ok = await copyHtmlToClipboard(html, md);
+    if (ok) showFeedback('서식 있는 텍스트 복사됨');
+  }, [currentEditor, selected, showFeedback]);
+
+  // 일반 텍스트 복사
+  const handleCopyPlainText = useCallback(async () => {
+    if (!selected) return;
+    const plain = noteBodyText(selected.content);
+    const ok = await copyPlainTextToClipboard(selected.title ? `${selected.title}\n\n${plain}` : plain);
+    if (ok) showFeedback('일반 텍스트 복사됨');
+  }, [selected, showFeedback]);
+
+  // 마크다운(.md) 파일 저장
+  const handleDownloadMarkdown = useCallback(() => {
+    if (!currentEditor || !selected) return;
+    const md = exportToMarkdown(currentEditor, selected.title);
+    downloadFile(`${sanitizeFileName(selected.title)}.md`, md, 'text/markdown;charset=utf-8');
+    showFeedback('.md 파일 다운로드됨');
+  }, [currentEditor, selected, showFeedback]);
+
+  // HTML(.html) 파일 저장
+  const handleDownloadHtml = useCallback(() => {
+    if (!currentEditor || !selected) return;
+    const html = exportToHtmlDocument(currentEditor, selected.title);
+    downloadFile(`${sanitizeFileName(selected.title)}.html`, html, 'text/html;charset=utf-8');
+    showFeedback('.html 파일 다운로드됨');
+  }, [currentEditor, selected, showFeedback]);
+
+  // OS 시스템 공유 창
+  const handleNativeShare = useCallback(async () => {
+    if (!currentEditor || !selected) return;
+    const md = exportToMarkdown(currentEditor, selected.title);
+    await shareNative(selected.title, md);
+  }, [currentEditor, selected]);
 
   if (!ready) {
     return (
@@ -195,164 +316,281 @@ export function NoteEditorView() {
 
   return (
     <Stack gap="xs" p="md" h="100%" style={{ overflow: 'auto' }}>
-      <Group justify="space-between" align="center" wrap="nowrap">
-        <Text size="xs" c="dimmed">
-          {breadcrumbs.join(' / ')}
-        </Text>
-        <Group gap="xs">
-          {selected.reminder && !selected.reminder.dismissed && (
+      {/* 인쇄 시에만 표시되는 인쇄 전용 헤더 (A4 문서용 깔끔한 레이아웃) */}
+      <div className="print-only" style={{ marginBottom: 20, paddingBottom: 12, borderBottom: '2px solid #222' }}>
+        <h1 style={{ fontSize: '24pt', fontWeight: 800, margin: '0 0 10px 0', color: '#111' }}>
+          {selected.title || '제목 없음'}
+        </h1>
+        <div style={{ fontSize: '10pt', color: '#555', display: 'flex', flexWrap: 'wrap', gap: 16 }}>
+          <span>생성: {new Date(selected.createdAt).toLocaleString('ko-KR')}</span>
+          <span>수정: {new Date(selected.updatedAt).toLocaleString('ko-KR')}</span>
+          {selected.tags.length > 0 && <span>태그: #{selected.tags.join(' #')}</span>}
+        </div>
+      </div>
+
+      {/* 화면용 브레드크럼 및 알람/색상 뱃지 */}
+      <div className="no-print">
+        <Group justify="space-between" align="center" wrap="nowrap" mb={6}>
+          <Text size="xs" c="dimmed">
+            {breadcrumbs.join(' / ')}
+          </Text>
+          <Group gap="xs">
+            {selected.reminder && !selected.reminder.dismissed && (
+              <Badge
+                size="xs"
+                variant="light"
+                color="blue"
+                leftSection={<IconBell size={11} />}
+              >
+                {new Date(selected.reminder.targetAt).toLocaleString('ko-KR', {
+                  month: 'numeric',
+                  day: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })}
+                {selected.reminder.repeat !== 'none' ? ' (반복)' : ''}
+              </Badge>
+            )}
             <Badge
               size="xs"
-              variant="light"
-              color="blue"
-              leftSection={<IconBell size={11} />}
+              variant="filled"
+              style={{
+                backgroundColor: colorCfg.bg,
+                color: colorCfg.textColor,
+                border: `1px solid ${colorCfg.border}`,
+              }}
             >
-              {new Date(selected.reminder.targetAt).toLocaleString('ko-KR', {
-                month: 'numeric',
-                day: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit',
-              })}
-              {selected.reminder.repeat !== 'none' ? ' (반복)' : ''}
+              {colorCfg.name}
             </Badge>
-          )}
-          <Badge
-            size="xs"
-            variant="filled"
-            style={{
-              backgroundColor: colorCfg.bg,
-              color: colorCfg.textColor,
-              border: `1px solid ${colorCfg.border}`,
-            }}
-          >
-            {colorCfg.name}
-          </Badge>
+          </Group>
         </Group>
-      </Group>
 
-      <div
-        style={{
-          height: 3,
-          borderRadius: 2,
-          background: `linear-gradient(90deg, ${colorCfg.border} 0%, ${colorCfg.bg} 100%)`,
-        }}
-      />
-
-      <Group justify="space-between" wrap="nowrap">
-        <TextInput
-          value={selected.title}
-          onChange={(e) => updateTitle(selected.id, e.currentTarget.value)}
-          variant="unstyled"
-          size="xl"
-          fw={700}
-          placeholder="제목 없음 (본문에 #태그 가능)"
-          style={{ flex: 1 }}
+        <div
+          style={{
+            height: 3,
+            borderRadius: 2,
+            background: `linear-gradient(90deg, ${colorCfg.border} 0%, ${colorCfg.bg} 100%)`,
+            marginBottom: 8,
+          }}
         />
-        <Group gap="xs" wrap="nowrap">
-          {/* 파스텔 색상 선택 메뉴 */}
-          <Menu position="bottom-end" withArrow shadow="md" withinPortal>
-            <Menu.Target>
-              <Tooltip label={`노트 색상: ${colorCfg.name}`}>
-                <ActionIcon
-                  size="lg"
-                  variant="subtle"
-                  aria-label="노트 색상 변경"
-                  style={{
-                    backgroundColor: colorCfg.bg,
-                    border: `2px solid ${colorCfg.border}`,
-                    color: colorCfg.iconColor,
-                  }}
-                >
-                  <IconPalette size={17} />
-                </ActionIcon>
-              </Tooltip>
-            </Menu.Target>
-            <Menu.Dropdown>
-              <Menu.Label>노트 색상 변경</Menu.Label>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6, padding: '4px 8px' }}>
-                {Object.values(PASTEL_COLORS).map((c) => {
-                  const isCurrent = (selected.color || 'blue') === c.id;
-                  return (
-                    <Tooltip key={c.id} label={c.name} position="top" withArrow>
-                      <ActionIcon
-                        size="md"
-                        radius="xl"
-                        onClick={() => updateColor(selected.id, c.id)}
-                        style={{
-                          backgroundColor: c.bg,
-                          border: `2px solid ${c.border}`,
-                          boxShadow: isCurrent ? `0 0 0 2px ${c.textColor}` : undefined,
-                          transform: isCurrent ? 'scale(1.2)' : 'none',
-                          transition: 'all 0.15s ease',
-                        }}
-                      />
-                    </Tooltip>
-                  );
-                })}
-              </div>
-            </Menu.Dropdown>
-          </Menu>
 
-          {/* 알람 리마인더 설정 팝오버 */}
-          <ReminderPopover note={selected} />
-
-          <Button
-            size="xs"
-            variant="light"
-            color="gray"
-            leftSection={<IconHistory size={15} />}
-            rightSection={
-              <Badge size="xs" variant="filled" color={selected.history.length > 0 ? 'blue' : 'gray'}>
-                {selected.history.length}
+        <Group justify="space-between" wrap="nowrap" mb={6}>
+          <TextInput
+            value={selected.title}
+            onChange={(e) => updateTitle(selected.id, e.currentTarget.value)}
+            variant="unstyled"
+            size="xl"
+            fw={700}
+            placeholder="제목 없음 (본문에 #태그 가능)"
+            style={{ flex: 1 }}
+          />
+          <Group gap="xs" wrap="nowrap">
+            {/* 복사 성공 안내 피드백 */}
+            {copyFeedback && (
+              <Badge size="sm" color="teal" variant="filled" leftSection={<IconCheck size={12} />}>
+                {copyFeedback}
               </Badge>
-            }
-            onClick={() => setHistoryOpen(true)}
-          >
-            히스토리
-          </Button>
-          <Divider orientation="vertical" />
-          <Tooltip label={selected.pinned ? '핀 해제' : '상단 고정'}>
-            <ActionIcon
-              size="lg"
-              variant={selected.pinned ? 'filled' : 'light'}
-              color="blue"
-              onClick={() => togglePin(selected.id)}
-              aria-label="핀"
-            >
-              <IconPin size={17} />
-            </ActionIcon>
-          </Tooltip>
-          <Tooltip label={selected.favorite ? '즐겨찾기 해제' : '즐겨찾기 등록'}>
-            <ActionIcon
-              size="lg"
-              variant={selected.favorite ? 'filled' : 'light'}
-              color="yellow"
-              onClick={() => toggleFavorite(selected.id)}
-              aria-label="즐겨찾기"
-            >
-              <IconStar size={17} />
-            </ActionIcon>
-          </Tooltip>
-        </Group>
-      </Group>
+            )}
 
-      <Group gap={4}>
-        {selected.tags.length === 0 ? (
-          <Text size="xs" c="dimmed">
-            #태그 없음 — 본문에 예를 들어 #회의록 을 입력하세요.
-          </Text>
-        ) : (
-          selected.tags.map((t) => (
-            <Badge key={t} variant="light" style={{ cursor: 'pointer' }} onClick={() => setActiveTag(t)}>
-              #{t}
-            </Badge>
-          ))
-        )}
-      </Group>
-      <Text size="xs" c="dimmed">
-        생성 {new Date(selected.createdAt).toLocaleString('ko-KR')} · 수정{' '}
-        {new Date(selected.updatedAt).toLocaleString('ko-KR')} · {noteBodyText(selected.content).length}자
-      </Text>
+            {/* 인쇄 버튼 */}
+            <Tooltip label="인쇄 (Ctrl+P / Cmd+P)">
+              <ActionIcon
+                size="lg"
+                variant="light"
+                color="gray"
+                onClick={handlePrint}
+                aria-label="노트 인쇄"
+              >
+                <IconPrinter size={17} />
+              </ActionIcon>
+            </Tooltip>
+
+            {/* PDF 내보내기 버튼 */}
+            <Tooltip label="PDF로 내보내기">
+              <ActionIcon
+                size="lg"
+                variant="light"
+                color="red"
+                onClick={handleExportPdf}
+                aria-label="PDF로 내보내기"
+              >
+                <IconFileTypePdf size={17} />
+              </ActionIcon>
+            </Tooltip>
+
+            {/* 공유 및 내보내기 메뉴 */}
+            <Menu position="bottom-end" withArrow shadow="md" withinPortal>
+              <Menu.Target>
+                <Tooltip label="공유 및 내보내기">
+                  <ActionIcon size="lg" variant="light" color="blue" aria-label="공유 및 내보내기">
+                    <IconShare size={17} />
+                  </ActionIcon>
+                </Tooltip>
+              </Menu.Target>
+              <Menu.Dropdown>
+                <Menu.Label>클립보드 복사</Menu.Label>
+                <Menu.Item
+                  leftSection={<IconMarkdown size={15} />}
+                  onClick={handleCopyMarkdown}
+                >
+                  마크다운(Markdown) 복사
+                </Menu.Item>
+                <Menu.Item
+                  leftSection={<IconCode size={15} />}
+                  onClick={handleCopyHtml}
+                >
+                  서식 있는 텍스트(HTML) 복사
+                </Menu.Item>
+                <Menu.Item
+                  leftSection={<IconCopy size={15} />}
+                  onClick={handleCopyPlainText}
+                >
+                  일반 텍스트만 복사
+                </Menu.Item>
+
+                <Menu.Divider />
+                <Menu.Label>파일로 내보내기</Menu.Label>
+                <Menu.Item
+                  leftSection={<IconFileTypePdf size={15} color="var(--mantine-color-red-6)" />}
+                  onClick={handleExportPdf}
+                >
+                  PDF 문서 (.pdf)
+                </Menu.Item>
+                <Menu.Item
+                  leftSection={<IconDownload size={15} />}
+                  onClick={handleDownloadMarkdown}
+                >
+                  마크다운 파일 (.md)
+                </Menu.Item>
+                <Menu.Item
+                  leftSection={<IconDownload size={15} />}
+                  onClick={handleDownloadHtml}
+                >
+                  HTML 웹페이지 (.html)
+                </Menu.Item>
+
+                {canNativeShare() && (
+                  <>
+                    <Menu.Divider />
+                    <Menu.Label>기기 공유</Menu.Label>
+                    <Menu.Item
+                      leftSection={<IconShare size={15} color="var(--mantine-color-blue-6)" />}
+                      onClick={handleNativeShare}
+                    >
+                      시스템 공유 창 열기…
+                    </Menu.Item>
+                  </>
+                )}
+              </Menu.Dropdown>
+            </Menu>
+
+            <Divider orientation="vertical" />
+
+            {/* 파스텔 색상 선택 메뉴 */}
+            <Menu position="bottom-end" withArrow shadow="md" withinPortal>
+              <Menu.Target>
+                <Tooltip label={`노트 색상: ${colorCfg.name}`}>
+                  <ActionIcon
+                    size="lg"
+                    variant="subtle"
+                    aria-label="노트 색상 변경"
+                    style={{
+                      backgroundColor: colorCfg.bg,
+                      border: `2px solid ${colorCfg.border}`,
+                      color: colorCfg.iconColor,
+                    }}
+                  >
+                    <IconPalette size={17} />
+                  </ActionIcon>
+                </Tooltip>
+              </Menu.Target>
+              <Menu.Dropdown>
+                <Menu.Label>노트 색상 변경</Menu.Label>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6, padding: '4px 8px' }}>
+                  {Object.values(PASTEL_COLORS).map((c) => {
+                    const isCurrent = (selected.color || 'blue') === c.id;
+                    return (
+                      <Tooltip key={c.id} label={c.name} position="top" withArrow>
+                        <ActionIcon
+                          size="md"
+                          radius="xl"
+                          onClick={() => updateColor(selected.id, c.id)}
+                          style={{
+                            backgroundColor: c.bg,
+                            border: `2px solid ${c.border}`,
+                            boxShadow: isCurrent ? `0 0 0 2px ${c.textColor}` : undefined,
+                            transform: isCurrent ? 'scale(1.2)' : 'none',
+                            transition: 'all 0.15s ease',
+                          }}
+                        />
+                      </Tooltip>
+                    );
+                  })}
+                </div>
+              </Menu.Dropdown>
+            </Menu>
+
+            {/* 알람 리마인더 설정 팝오버 */}
+            <ReminderPopover note={selected} />
+
+            <Button
+              size="xs"
+              variant="light"
+              color="gray"
+              leftSection={<IconHistory size={15} />}
+              rightSection={
+                <Badge size="xs" variant="filled" color={selected.history.length > 0 ? 'blue' : 'gray'}>
+                  {selected.history.length}
+                </Badge>
+              }
+              onClick={() => setHistoryOpen(true)}
+            >
+              히스토리
+            </Button>
+            <Divider orientation="vertical" />
+            <Tooltip label={selected.pinned ? '핀 해제' : '상단 고정'}>
+              <ActionIcon
+                size="lg"
+                variant={selected.pinned ? 'filled' : 'light'}
+                color="blue"
+                onClick={() => togglePin(selected.id)}
+                aria-label="핀"
+              >
+                <IconPin size={17} />
+              </ActionIcon>
+            </Tooltip>
+            <Tooltip label={selected.favorite ? '즐겨찾기 해제' : '즐겨찾기 등록'}>
+              <ActionIcon
+                size="lg"
+                variant={selected.favorite ? 'filled' : 'light'}
+                color="yellow"
+                onClick={() => toggleFavorite(selected.id)}
+                aria-label="즐겨찾기"
+              >
+                <IconStar size={17} />
+              </ActionIcon>
+            </Tooltip>
+          </Group>
+        </Group>
+
+        <Group gap={4} mb={4}>
+          {selected.tags.length === 0 ? (
+            <Text size="xs" c="dimmed">
+              #태그 없음 — 본문에 예를 들어 #회의록 을 입력하세요.
+            </Text>
+          ) : (
+            selected.tags.map((t) => (
+              <Badge key={t} variant="light" style={{ cursor: 'pointer' }} onClick={() => setActiveTag(t)}>
+                #{t}
+              </Badge>
+            ))
+          )}
+        </Group>
+        <Text size="xs" c="dimmed" mb={8}>
+          생성 {new Date(selected.createdAt).toLocaleString('ko-KR')} · 수정{' '}
+          {new Date(selected.updatedAt).toLocaleString('ko-KR')} · {noteBodyText(selected.content).length}자
+        </Text>
+      </div>
 
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         <ErrorBoundary
@@ -361,7 +599,7 @@ export function NoteEditorView() {
             updateContent(selected.id, JSON.stringify([{ type: 'paragraph', content: '' }]))
           }
         >
-          <BlockEditor key={editorKey} note={selected} />
+          <BlockEditor key={editorKey} note={selected} onEditorInit={setCurrentEditor} />
         </ErrorBoundary>
       </div>
 
