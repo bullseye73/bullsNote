@@ -334,7 +334,7 @@ export function NoteEditorView() {
   const editorKey = `${selected.id}`;
 
   return (
-    <Stack gap="xs" p="md" h="100%" className="note-editor-stack" style={{ overflow: 'auto' }}>
+    <Stack gap="xs" p="md" h="100%" className="note-editor-stack" style={{ overflow: 'hidden' }}>
       {/* 인쇄 시에만 표시되는 인쇄 전용 헤더 (A4 문서용 깔끔한 레이아웃) */}
       <div className="print-only" style={{ marginBottom: 20, paddingBottom: 12, borderBottom: '2px solid #222' }}>
         <h1 style={{ fontSize: '24pt', fontWeight: 800, margin: '0 0 10px 0', color: '#111' }}>

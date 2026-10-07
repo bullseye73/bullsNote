@@ -206,7 +206,7 @@ function Shell() {
                 </div>
               </>
             )}
-            <div className="note-editor-wrapper" style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'auto' }}>
+            <div className="note-editor-wrapper" style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
               <NoteEditorView />
             </div>
           </div>
