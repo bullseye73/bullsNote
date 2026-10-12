@@ -469,13 +469,11 @@ export function markAttachmentDeletedInContent(
               (deletedAtt.storagePath && url.includes(deletedAtt.storagePath))
             ) {
               const currentName = String(block.props.name || deletedAtt.name);
-              const newName = currentName.includes('(삭제')
-                ? currentName
-                : `${currentName} (삭제된 파일)`;
+              const cleanName = currentName.replace(/ \(삭제(?:된 파일|됨)\)/g, '').trim();
               updatedBlock.props = {
                 ...block.props,
-                name: newName,
-                caption: '⚠️ 삭제된 첨부파일입니다',
+                name: cleanName,
+                caption: '',
               };
               modified = true;
             }
@@ -490,7 +488,7 @@ export function markAttachmentDeletedInContent(
             ) {
               updatedBlock.props = {
                 ...block.props,
-                caption: '⚠️ 삭제된 이미지입니다',
+                caption: '',
               };
               modified = true;
             }
@@ -509,12 +507,10 @@ export function markAttachmentDeletedInContent(
                   const updatedChildren = Array.isArray(item.content)
                     ? item.content.map((t: any) => {
                         const origText = String(t.text || '');
-                        const newText = origText.includes('(삭제')
-                          ? origText
-                          : `${origText} (삭제됨)`;
+                        const cleanText = origText.replace(/ \(삭제(?:된 파일|됨)\)/g, '').trim();
                         return {
                           ...t,
-                          text: newText,
+                          text: cleanText,
                           styles: { ...(t.styles || {}), strike: true },
                         };
                       })
@@ -554,8 +550,8 @@ export function markAttachmentDeletedInContent(
     const escapedUrl = deletedAtt.url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const linkRegex = new RegExp(`\\[([^\\]]+)\\]\\(${escapedUrl}\\)`, 'g');
     return content.replace(linkRegex, (_match, text) => {
-      const cleanText = text.replace(/ \(삭제됨\)$/, '');
-      return `~~[${cleanText} (삭제됨)](${deletedAtt.url})~~`;
+      const cleanText = text.replace(/ \(삭제(?:된 파일|됨)\)$/, '');
+      return `~~[${cleanText}](${deletedAtt.url})~~`;
     });
   }
 
@@ -579,13 +575,11 @@ export function markDeletedBlocks(
       const url = String(block.props.url);
       if (isDeletedAttachmentUrl(url, currentNoteAttachments, allNotes)) {
         const currentName = String(block.props.name || '첨부파일');
-        const newName = currentName.includes('(삭제')
-          ? currentName
-          : `${currentName} (삭제된 파일)`;
+        const cleanName = currentName.replace(/ \(삭제(?:된 파일|됨)\)/g, '').trim();
         updatedBlock.props = {
           ...block.props,
-          name: newName,
-          caption: block.props.caption || '⚠️ 삭제된 첨부파일입니다',
+          name: cleanName,
+          caption: '',
         };
       }
     }

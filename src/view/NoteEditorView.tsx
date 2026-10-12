@@ -254,14 +254,12 @@ function BlockEditor({
               (deletedAtt.storagePath && url.includes(deletedAtt.storagePath))
             ) {
               const currentName = String(block.props.name || deletedAtt.name);
-              const newName = currentName.includes('(삭제')
-                ? currentName
-                : `${currentName} (삭제된 파일)`;
+              const cleanName = currentName.replace(/ \(삭제(?:된 파일|됨)\)/g, '').trim();
               editor.updateBlock(block, {
                 props: {
                   ...block.props,
-                  name: newName,
-                  caption: '⚠️ 삭제된 첨부파일입니다',
+                  name: cleanName,
+                  caption: '',
                 },
               });
               modified = true;
