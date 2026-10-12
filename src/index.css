@@ -307,4 +307,27 @@
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08) !important;
 }
 
+/* ==========================================================================
+   제안 메뉴(@, /) 최소 높이 보장 및 하단 한 줄 잘림 방지
+   ========================================================================== */
+#bn-suggestion-menu,
+.bn-suggestion-menu,
+.bn-ariakit .bn-suggestion-menu {
+  min-height: 220px !important;
+  max-height: 380px !important;
+  overflow-y: auto !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+
+div:has(> #bn-suggestion-menu),
+div:has(> [id*="suggestion-menu"]),
+div:has(> .bn-suggestion-menu) {
+  min-height: 220px !important;
+  max-height: 380px !important;
+  overflow: visible !important;
+  z-index: 9999 !important;
+}
+
+
 

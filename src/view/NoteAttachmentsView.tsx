@@ -1,5 +1,5 @@
 // VIEW: Supabase Storage 연동 노트 첨부파일 관리 컴포넌트
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActionIcon,
   Badge,
@@ -75,14 +75,19 @@ export function NoteAttachmentsView({ note }: NoteAttachmentsViewProps) {
     removeAttachment,
   } = useNotes();
 
-  const [opened, setOpened] = useState(true);
+  const attachments = note.attachments || [];
+  const totalBytes = attachments.reduce((sum, a) => sum + (a.size || 0), 0);
+
+  const [opened, setOpened] = useState(attachments.length > 0);
   const [uploading, setUploading] = useState(false);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const attachments = note.attachments || [];
-  const totalBytes = attachments.reduce((sum, a) => sum + (a.size || 0), 0);
+  // 노트가 변경될 때 파일 유무에 따라 자동 접기/펼치기
+  useEffect(() => {
+    setOpened((note.attachments || []).length > 0);
+  }, [note.id]);
 
   // 파일 업로드 처리
   const handleFileUpload = async (files: FileList | File[]) => {

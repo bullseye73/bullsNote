@@ -88,9 +88,11 @@ async function uploadFileAsDataUrl(file: File): Promise<string> {
 
 function BlockEditor({
   note,
+  backlinks,
   onEditorInit,
 }: {
   note: Note;
+  backlinks: Note[];
   onEditorInit?: (editor: AnyEditor) => void;
 }) {
   const {
@@ -263,7 +265,7 @@ function BlockEditor({
 
         <div
           ref={scrollContainerRef}
-          style={{ flex: 1, minHeight: 0, overflow: 'auto' }}
+          style={{ flex: 1, minHeight: 0, overflow: 'auto', paddingBottom: 280 }}
           onClick={(e) => {
             if (e.target === e.currentTarget) {
               editor.focus();
@@ -324,6 +326,35 @@ function BlockEditor({
               }}
             />
           </BlockNoteView>
+
+          {/* 노트 하단 영역: 첨부파일 목록 및 백링크 목록 */}
+          <div
+            className="no-print"
+            style={{
+              marginTop: 48,
+              paddingLeft: 54,
+              paddingRight: 54,
+              paddingBottom: 24,
+              maxWidth: 900,
+            }}
+          >
+            <Divider mb="md" color="var(--mantine-color-gray-2)" />
+            <Stack gap="sm">
+              {/* 첨부파일 관리 패널 (파일 없을 시 접힘) */}
+              <NoteAttachmentsView note={note} />
+
+              {/* 이 노트를 참조(링크)하고 있는 백링크 목록 */}
+              {backlinks.length > 0 && (
+                <NoteBacklinksView
+                  currentNote={note}
+                  backlinks={backlinks}
+                  allNotes={notes}
+                  projects={projects}
+                  onSelectNote={select}
+                />
+              )}
+            </Stack>
+          </div>
         </div>
       </div>
 
@@ -819,24 +850,6 @@ export function NoteEditorView() {
             ? '🔒 암호화됨'
             : `${noteBodyText(selected.content).length}자`}
         </Text>
-
-        {/* 첨부파일 관리 패널 */}
-        <div style={{ marginBottom: 8 }}>
-          <NoteAttachmentsView note={selected} />
-        </div>
-
-        {/* 이 노트를 참조(링크)하고 있는 백링크 목록 */}
-        {backlinks.length > 0 && (
-          <div style={{ marginBottom: 8 }}>
-            <NoteBacklinksView
-              currentNote={selected}
-              backlinks={backlinks}
-              allNotes={notes}
-              projects={projects}
-              onSelectNote={select}
-            />
-          </div>
-        )}
       </div>
 
       {(!isUnlocked && (isMasterSet || CryptoService.isEncrypted(selected.content))) ||
@@ -907,7 +920,12 @@ export function NoteEditorView() {
               updateContent(selected.id, JSON.stringify([{ type: 'paragraph', content: '' }]))
             }
           >
-            <BlockEditor key={editorKey} note={selected} onEditorInit={setCurrentEditor} />
+            <BlockEditor
+              key={editorKey}
+              note={selected}
+              backlinks={backlinks}
+              onEditorInit={setCurrentEditor}
+            />
           </ErrorBoundary>
         </div>
       )}
