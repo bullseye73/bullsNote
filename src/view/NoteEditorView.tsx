@@ -44,7 +44,7 @@ import '@blocknote/core/fonts/inter.css';
 import '@blocknote/react/style.css';
 import '@blocknote/ariakit/style.css';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Note, getPathTitles, getPastelConfig, PASTEL_COLORS } from '../model/Note';
+import { Note, getPathTitles, getPathNodes, findBacklinks, getPastelConfig, PASTEL_COLORS } from '../model/Note';
 import { isBlocksJson, noteBodyText, parseBlocks } from '../model/HashtagService';
 import { useNotes } from '../controller/NotesController';
 import { CryptoService } from '../model/CryptoService';
@@ -56,6 +56,8 @@ import { PrintPreviewModal } from './PrintPreviewModal';
 import { NoteTableOfContents } from './NoteTableOfContents';
 import { formatDateIso } from '../model/dateUtils';
 import { getDateAtSuggestions, getDateSlashMenuItems } from '../model/dateSuggestions';
+import { getCombinedAtSuggestions, getNoteSlashMenuItems } from '../model/noteSuggestions';
+import { NoteBacklinksView } from './NoteBacklinksView';
 import { createSyntaxExtension, getAppSchema } from '../model/codeHighlight';
 import {
   canNativeShare,
@@ -89,7 +91,7 @@ function BlockEditor({
   note: Note;
   onEditorInit?: (editor: AnyEditor) => void;
 }) {
-  const { updateContent } = useNotes();
+  const { updateContent, select, notes, projects } = useNotes();
   const scheme = useComputedColorScheme('light', { getInitialValueInEffect: true });
   const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [datePickerInitialDate, setDatePickerInitialDate] = useState<Date | undefined>(undefined);
@@ -174,6 +176,20 @@ function BlockEditor({
               editor.focus();
             }
           }}
+          onClickCapture={(e) => {
+            const target = (e.target as HTMLElement).closest('a');
+            if (target) {
+              const href = target.getAttribute('href');
+              if (href && (href.startsWith('#note-') || href.startsWith('note://'))) {
+                e.preventDefault();
+                e.stopPropagation();
+                const targetNoteId = href.startsWith('#note-')
+                  ? href.replace('#note-', '')
+                  : href.replace('note://', '');
+                select(targetNoteId);
+              }
+            }
+          }}
         >
           <BlockNoteView
             editor={editor}
@@ -181,21 +197,32 @@ function BlockEditor({
             slashMenu={false}
             onChange={() => updateContent(note.id, JSON.stringify(editor.document))}
           >
-            {/* 노션 스타일 @ 멘션 날짜 추천 메뉴 (@오늘, @내일, @11/20 등 동적 파싱 + 달력 선택) */}
+            {/* 노션 스타일 @ 멘션 통합 추천 메뉴 (서브노트, 부모노트, 다른 노트 검색, 날짜 파싱) */}
             <SuggestionMenuController
               triggerCharacter="@"
               getItems={async (query) =>
-                getDateAtSuggestions(query, editor, () => handleOpenDatePicker())
+                getCombinedAtSuggestions(
+                  query,
+                  editor,
+                  notes,
+                  note,
+                  projects,
+                  () => handleOpenDatePicker()
+                )
               }
             />
-            {/* 날짜 삽입 항목이 포함된 / 슬래시 명령어 메뉴 */}
+            {/* 노트 링크 및 날짜가 포함된 / 슬래시 명령어 메뉴 */}
             <SuggestionMenuController
               triggerCharacter="/"
               shouldOpen={(e) => !e.selection.$from.parent.type.isInGroup('tableContent')}
               getItems={async (query) => {
                 const defaultSlashItems = getDefaultReactSlashMenuItems(editor);
                 const dateSlashItems = getDateSlashMenuItems(editor, () => handleOpenDatePicker());
-                return filterSuggestionItems([...dateSlashItems, ...defaultSlashItems], query);
+                const noteSlashItems = getNoteSlashMenuItems(editor, notes, note);
+                return filterSuggestionItems(
+                  [...noteSlashItems, ...dateSlashItems, ...defaultSlashItems],
+                  query
+                );
               }}
             />
           </BlockNoteView>
@@ -216,6 +243,7 @@ export function NoteEditorView() {
   const {
     ready,
     selected,
+    select,
     notes,
     projects,
     updateTitle,
@@ -340,6 +368,12 @@ export function NoteEditorView() {
     await shareNative(selected.title, md);
   }, [currentEditor, selected]);
 
+  // 이 노트를 참조하는 백링크 목록 계산 (React Rules of Hooks 준수를 위해 early return 이전에 호출)
+  const backlinks = useMemo(
+    () => (selected ? findBacklinks(notes, selected.id) : []),
+    [notes, selected?.id]
+  );
+
   if (!ready) {
     return (
       <Stack align="center" justify="center" h="100%">
@@ -357,11 +391,7 @@ export function NoteEditorView() {
   }
 
   const currentProject = projects.find((p) => p.id === (selected.projectId || 'default'));
-  const path = getPathTitles(notes, selected.id);
-  const breadcrumbs = [
-    ...(currentProject ? [`${currentProject.icon} ${currentProject.name}`] : []),
-    ...path,
-  ];
+  const pathNodes = getPathNodes(notes, selected.id);
 
   const colorCfg = getPastelConfig(selected.color);
 
@@ -385,9 +415,45 @@ export function NoteEditorView() {
       {/* 화면용 브레드크럼 및 알람/색상 뱃지 */}
       <div className="no-print">
         <Group justify="space-between" align="center" wrap="nowrap" mb={6}>
-          <Text size="xs" c="dimmed">
-            {breadcrumbs.join(' / ')}
-          </Text>
+          <Group gap={4} wrap="nowrap" style={{ overflow: 'hidden' }}>
+            {currentProject && (
+              <>
+                <Text size="xs" c="dimmed">
+                  {currentProject.icon} {currentProject.name}
+                </Text>
+                <Text size="xs" c="dimmed">
+                  /
+                </Text>
+              </>
+            )}
+            {pathNodes.map((pNode, idx) => {
+              const isCurrent = pNode.id === selected.id;
+              return (
+                <Group key={pNode.id} gap={4} wrap="nowrap">
+                  {idx > 0 && (
+                    <Text size="xs" c="dimmed">
+                      /
+                    </Text>
+                  )}
+                  {isCurrent ? (
+                    <Text size="xs" fw={600} c="dimmed" truncate>
+                      {pNode.title || '제목 없음'}
+                    </Text>
+                  ) : (
+                    <Text
+                      size="xs"
+                      c="dimmed"
+                      className="clickable-breadcrumb-item"
+                      truncate
+                      onClick={() => select(pNode.id)}
+                    >
+                      {pNode.title || '제목 없음'}
+                    </Text>
+                  )}
+                </Group>
+              );
+            })}
+          </Group>
           <Group gap="xs">
             {selected.reminder && !selected.reminder.dismissed && (
               <Badge
@@ -655,6 +721,19 @@ export function NoteEditorView() {
             ? '🔒 암호화됨'
             : `${noteBodyText(selected.content).length}자`}
         </Text>
+
+        {/* 이 노트를 참조(링크)하고 있는 백링크 목록 */}
+        {backlinks.length > 0 && (
+          <div style={{ marginBottom: 8 }}>
+            <NoteBacklinksView
+              currentNote={selected}
+              backlinks={backlinks}
+              allNotes={notes}
+              projects={projects}
+              onSelectNote={select}
+            />
+          </div>
+        )}
       </div>
 
       {(!isUnlocked && (isMasterSet || CryptoService.isEncrypted(selected.content))) ||

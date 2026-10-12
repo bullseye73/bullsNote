@@ -350,3 +350,29 @@ export function getPathTitles(notes: Note[], id: string): string[] {
   }
   return path;
 }
+
+/** 루트부터 자신까지의 경로 Note 객체 배열 (클릭 가능한 브레드크럼용) */
+export function getPathNodes(notes: Note[], id: string): Note[] {
+  const byId = new Map(notes.map((n) => [n.id, n]));
+  const path: Note[] = [];
+  let cur = byId.get(id);
+  const seen = new Set<string>();
+  while (cur && !seen.has(cur.id)) {
+    seen.add(cur.id);
+    path.unshift(cur);
+    cur = cur.parentId ? byId.get(cur.parentId) : undefined;
+  }
+  return path;
+}
+
+/** 특정 노트 ID를 본문에서 참조(링크)하고 있는 다른 백링크 노트 목록 탐색 */
+export function findBacklinks(notes: Note[], targetNoteId: string): Note[] {
+  if (!targetNoteId) return [];
+  const anchor = `#note-${targetNoteId}`;
+  const schema = `note://${targetNoteId}`;
+  return notes.filter((n) => {
+    if (n.id === targetNoteId) return false;
+    return n.content.includes(anchor) || n.content.includes(schema);
+  });
+}
+

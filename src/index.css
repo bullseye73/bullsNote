@@ -220,3 +220,72 @@
   }
 }
 
+/* ==========================================================================
+   에디터 내 노트 멘션/링크 (Notion 스타일 인터랙티브 태그/칩)
+   ========================================================================== */
+.bn-editor a[href^="#note-"],
+.bn-editor a[href^="note://"] {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 3px !important;
+  background-color: var(--mantine-color-blue-0) !important;
+  color: var(--mantine-color-blue-8) !important;
+  border: 1px solid var(--mantine-color-blue-2) !important;
+  border-radius: 4px !important;
+  padding: 1px 6px !important;
+  margin: 0 2px !important;
+  text-decoration: none !important;
+  font-weight: 500 !important;
+  line-height: 1.4 !important;
+  cursor: pointer !important;
+  transition: all 0.15s ease !important;
+}
+
+[data-mantine-color-scheme="dark"] .bn-editor a[href^="#note-"],
+[data-mantine-color-scheme="dark"] .bn-editor a[href^="note://"] {
+  background-color: rgba(51, 154, 240, 0.18) !important;
+  color: var(--mantine-color-blue-3) !important;
+  border-color: rgba(51, 154, 240, 0.35) !important;
+}
+
+.bn-editor a[href^="#note-"]:hover,
+.bn-editor a[href^="note://"]:hover {
+  background-color: var(--mantine-color-blue-1) !important;
+  border-color: var(--mantine-color-blue-4) !important;
+  color: var(--mantine-color-blue-9) !important;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+}
+
+[data-mantine-color-scheme="dark"] .bn-editor a[href^="#note-"]:hover,
+[data-mantine-color-scheme="dark"] .bn-editor a[href^="note://"]:hover {
+  background-color: rgba(51, 154, 240, 0.3) !important;
+  border-color: var(--mantine-color-blue-4) !important;
+  color: #fff !important;
+}
+
+/* 백링크 카드 호버 인터랙션 */
+.backlink-item-card:hover {
+  transform: translateX(3px);
+  border-color: var(--mantine-color-blue-4) !important;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+}
+
+.clickable-breadcrumb-item {
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.clickable-breadcrumb-item:hover {
+  background-color: var(--mantine-color-gray-1);
+  color: var(--mantine-color-blue-6) !important;
+}
+
+[data-mantine-color-scheme="dark"] .clickable-breadcrumb-item:hover {
+  background-color: rgba(255, 255, 255, 0.08);
+  color: var(--mantine-color-blue-4) !important;
+}
+
+
