@@ -19,6 +19,7 @@ import {
   SortOption,
   compareProjects,
   compareNotesWithOption,
+  markAttachmentDeletedInContent,
 } from '../model/Note';
 import { playChimeSound } from '../model/sound';
 import { NoteRepository, seedNotes } from '../model/NoteRepository';
@@ -1372,10 +1373,15 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
           console.warn('[Supabase] 첨부파일 삭제 예외:', e);
         }
       }
-      mutate(noteId, (n) => ({
-        ...n,
-        attachments: (n.attachments || []).filter((a) => a.id !== attachmentId),
-      }));
+      mutate(noteId, (n) => {
+        const nextAttachments = (n.attachments || []).filter((a) => a.id !== attachmentId);
+        const nextContent = att ? markAttachmentDeletedInContent(n.content, att) : n.content;
+        return {
+          ...n,
+          content: nextContent,
+          attachments: nextAttachments,
+        };
+      });
     },
     [notes, mutate]
   );

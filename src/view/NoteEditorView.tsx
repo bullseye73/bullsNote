@@ -44,7 +44,17 @@ import '@blocknote/core/fonts/inter.css';
 import '@blocknote/react/style.css';
 import '@blocknote/ariakit/style.css';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Note, getPathTitles, getPathNodes, findBacklinks, getPastelConfig, PASTEL_COLORS } from '../model/Note';
+import {
+  Note,
+  NoteAttachment,
+  getPathTitles,
+  getPathNodes,
+  findBacklinks,
+  getPastelConfig,
+  PASTEL_COLORS,
+  isDeletedAttachmentUrl,
+  markDeletedBlocks,
+} from '../model/Note';
 import { isBlocksJson, noteBodyText, parseBlocks } from '../model/HashtagService';
 import { useNotes } from '../controller/NotesController';
 import { CryptoService } from '../model/CryptoService';
@@ -114,10 +124,12 @@ function BlockEditor({
   const initialContent = useMemo(() => {
     // 검증된 블록만 전달, 그 외는 플레인 텍스트 문단으로 보존 (크래시 방지)
     const blocks = parseBlocks(note.content);
-    if (blocks) return blocks as never;
+    if (blocks) {
+      return markDeletedBlocks(blocks, note.attachments, notes) as never;
+    }
     const text = isBlocksJson(note.content) ? '' : noteBodyText(note.content);
     return [{ type: 'paragraph', content: text || '' } as never];
-  }, [note.id, note.content]);
+  }, [note.id, note.content, note.attachments, notes]);
 
   // Supabase 스토리지 연동 여부에 따른 파일 업로드 핸들러
   const handleUploadFile = useCallback(
@@ -229,6 +241,99 @@ function BlockEditor({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleInsertToday]);
 
+  // 첨부파일 삭제 시 현재 에디터 본문의 파일 블록도 실시간으로 (삭제된 파일) 상태로 즉시 갱신
+  const handleAttachmentDeleted = useCallback(
+    (deletedAtt: NoteAttachment) => {
+      let modified = false;
+      const traverse = (blocks: any[]) => {
+        for (const block of blocks) {
+          if (block.type === 'file' && block.props?.url) {
+            const url = String(block.props.url);
+            if (
+              url === deletedAtt.url ||
+              (deletedAtt.storagePath && url.includes(deletedAtt.storagePath))
+            ) {
+              const currentName = String(block.props.name || deletedAtt.name);
+              const newName = currentName.includes('(삭제')
+                ? currentName
+                : `${currentName} (삭제된 파일)`;
+              editor.updateBlock(block, {
+                props: {
+                  ...block.props,
+                  name: newName,
+                  caption: '⚠️ 삭제된 첨부파일입니다',
+                },
+              });
+              modified = true;
+            }
+          }
+          if (Array.isArray(block.children) && block.children.length > 0) {
+            traverse(block.children);
+          }
+        }
+      };
+      traverse(editor.document as any);
+
+      if (modified) {
+        updateContent(note.id, JSON.stringify(editor.document));
+      }
+    },
+    [editor, note.id, updateContent]
+  );
+
+  // 에디터 DOM 내 삭제된 첨부파일 링크 및 파일 블록에 data-deleted-attachment 속성 동적 부여
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    const markDeletedElements = () => {
+      // 1. 모든 링크 <a> 태그 검사
+      const anchors = container.querySelectorAll<HTMLAnchorElement>('a[href]');
+      anchors.forEach((a) => {
+        const href = a.getAttribute('href');
+        if (isDeletedAttachmentUrl(href, note.attachments, notes)) {
+          a.setAttribute('data-deleted-attachment', 'true');
+          a.classList.add('deleted-attachment-link');
+          a.setAttribute('title', '삭제된 첨부파일입니다 (열기 불가)');
+        } else if (a.hasAttribute('data-deleted-attachment')) {
+          a.removeAttribute('data-deleted-attachment');
+          a.classList.remove('deleted-attachment-link');
+          a.removeAttribute('title');
+        }
+      });
+
+      // 2. BlockNote의 파일 블록 [data-content-type="file"] 검사
+      const fileBlocks = container.querySelectorAll<HTMLElement>('[data-content-type="file"]');
+      fileBlocks.forEach((fb) => {
+        const link = fb.querySelector<HTMLAnchorElement>('a[href]');
+        const href = link?.getAttribute('href') || fb.getAttribute('data-url');
+        if (isDeletedAttachmentUrl(href, note.attachments, notes)) {
+          fb.setAttribute('data-deleted-attachment', 'true');
+          fb.classList.add('deleted-attachment-block');
+          fb.setAttribute('title', '삭제된 첨부파일입니다');
+        } else if (fb.hasAttribute('data-deleted-attachment')) {
+          fb.removeAttribute('data-deleted-attachment');
+          fb.classList.remove('deleted-attachment-block');
+          fb.removeAttribute('title');
+        }
+      });
+    };
+
+    markDeletedElements();
+
+    const observer = new MutationObserver(() => {
+      markDeletedElements();
+    });
+    observer.observe(container, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['href', 'data-url'],
+    });
+
+    return () => observer.disconnect();
+  }, [note.attachments, notes, note.id, note.content]);
+
   // 외부(상위 컴포넌트)로 에디터 인스턴스 공유 (내보내기/공유/인쇄용)
   useEffect(() => {
     onEditorInit?.(editor);
@@ -275,6 +380,7 @@ function BlockEditor({
             const target = (e.target as HTMLElement).closest('a');
             if (target) {
               const href = target.getAttribute('href');
+              // 1. 노트 간 이동 링크 (#note-, note://)
               if (href && (href.startsWith('#note-') || href.startsWith('note://'))) {
                 e.preventDefault();
                 e.stopPropagation();
@@ -282,6 +388,36 @@ function BlockEditor({
                   ? href.replace('#note-', '')
                   : href.replace('note://', '');
                 select(targetNoteId);
+                return;
+              }
+
+              // 2. 삭제된 첨부파일 링크 클릭 시 404 차단
+              if (
+                target.getAttribute('data-deleted-attachment') === 'true' ||
+                target.classList.contains('deleted-attachment-link') ||
+                isDeletedAttachmentUrl(href, note.attachments, notes)
+              ) {
+                e.preventDefault();
+                e.stopPropagation();
+                alert('해당 첨부파일은 이미 삭제되어 다운로드하거나 열 수 없습니다.');
+                return;
+              }
+            }
+
+            // 3. BlockNote의 file 블록 컨테이너 직접 클릭 시 404 차단
+            const fileBlock = (e.target as HTMLElement).closest('[data-content-type="file"]');
+            if (fileBlock) {
+              const innerLink = fileBlock.querySelector('a');
+              const href = innerLink?.getAttribute('href') || fileBlock.getAttribute('data-url');
+              if (
+                fileBlock.getAttribute('data-deleted-attachment') === 'true' ||
+                fileBlock.classList.contains('deleted-attachment-block') ||
+                isDeletedAttachmentUrl(href, note.attachments, notes)
+              ) {
+                e.preventDefault();
+                e.stopPropagation();
+                alert('해당 첨부파일은 이미 삭제되어 다운로드하거나 열 수 없습니다.');
+                return;
               }
             }
           }}
@@ -341,7 +477,10 @@ function BlockEditor({
             <Divider mb="md" color="var(--mantine-color-gray-2)" />
             <Stack gap="sm">
               {/* 첨부파일 관리 패널 (파일 없을 시 접힘) */}
-              <NoteAttachmentsView note={note} />
+              <NoteAttachmentsView
+                note={note}
+                onAttachmentDeleted={handleAttachmentDeleted}
+              />
 
               {/* 이 노트를 참조(링크)하고 있는 백링크 목록 */}
               {backlinks.length > 0 && (

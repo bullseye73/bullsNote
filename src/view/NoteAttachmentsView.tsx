@@ -35,6 +35,7 @@ import { SupabaseService } from '../model/SupabaseService';
 
 interface NoteAttachmentsViewProps {
   note: Note;
+  onAttachmentDeleted?: (att: NoteAttachment) => void;
 }
 
 /** 파일 크기 포맷 (Byte -> KB / MB) */
@@ -66,7 +67,7 @@ function getFileIcon(fileName: string, mimeType?: string) {
   return <IconFile size={20} color="var(--mantine-color-gray-6)" />;
 }
 
-export function NoteAttachmentsView({ note }: NoteAttachmentsViewProps) {
+export function NoteAttachmentsView({ note, onAttachmentDeleted }: NoteAttachmentsViewProps) {
   const {
     supabaseConnected,
     supabaseConfig,
@@ -152,6 +153,7 @@ export function NoteAttachmentsView({ note }: NoteAttachmentsViewProps) {
   const handleDelete = async (att: NoteAttachment) => {
     if (window.confirm(`"${att.name}" 첨부파일을 삭제하시겠습니까?`)) {
       await removeAttachment(note.id, att.id);
+      onAttachmentDeleted?.(att);
     }
   };
 

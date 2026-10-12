@@ -389,3 +389,216 @@ export function findBacklinks(notes: Note[], targetNoteId: string): Note[] {
   });
 }
 
+/** URL이 Supabase 등 클라우드 스토리지 첨부파일 URL인지 확인 */
+export function isAttachmentUrl(url?: string | null): boolean {
+  if (!url) return false;
+  return (
+    url.includes('bullsnote-attachments') ||
+    url.includes('/storage/v1/object/public/') ||
+    url.includes('#deleted') ||
+    url.includes('deleted=true')
+  );
+}
+
+/**
+ * 주어진 URL이 삭제된 첨부파일 URL인지 판별합니다.
+ * - URL에 명시적으로 #deleted 해시가 있는 경우
+ * - 스토리지 버킷 첨부파일 URL이지만 현재 노트(또는 전체 노트)의 attachments 목록에 없는 경우
+ */
+export function isDeletedAttachmentUrl(
+  url?: string | null,
+  currentNoteAttachments?: NoteAttachment[],
+  allNotes?: Note[]
+): boolean {
+  if (!url) return false;
+  if (url.includes('#deleted') || url.includes('deleted=true')) {
+    return true;
+  }
+  if (!isAttachmentUrl(url)) {
+    return false;
+  }
+
+  // 1. 현재 노트의 활성 첨부파일 목록과 비교
+  const inCurrent = (currentNoteAttachments || []).some(
+    (att) =>
+      (att.url && url.includes(att.url)) ||
+      (att.storagePath && url.includes(att.storagePath))
+  );
+  if (inCurrent) return false;
+
+  // 2. 전체 노트의 활성 첨부파일 목록과 비교 (다른 노트에서 복사한 링크 대비)
+  if (allNotes && allNotes.length > 0) {
+    const inAnyNote = allNotes.some((n) =>
+      (n.attachments || []).some(
+        (att) =>
+          (att.url && url.includes(att.url)) ||
+          (att.storagePath && url.includes(att.storagePath))
+      )
+    );
+    if (inAnyNote) return false;
+  }
+
+  return true;
+}
+
+/**
+ * 노트 본문(BlockNote JSON 또는 텍스트)에서 삭제된 특정 첨부파일의 링크를 찾아
+ * 파일명에 (삭제된 파일) 및 취소선, 안내 캡션을 추가하여 갱신합니다.
+ */
+export function markAttachmentDeletedInContent(
+  content: string,
+  deletedAtt: NoteAttachment
+): string {
+  if (!content) return content;
+
+  // 1. BlockNote JSON인 경우
+  try {
+    const parsed = JSON.parse(content);
+    if (Array.isArray(parsed)) {
+      let modified = false;
+
+      const traverse = (blocks: any[]): any[] => {
+        return blocks.map((block) => {
+          let updatedBlock = { ...block };
+
+          // file 블록 검사
+          if (block.type === 'file' && block.props?.url) {
+            const url = String(block.props.url);
+            if (
+              url === deletedAtt.url ||
+              (deletedAtt.storagePath && url.includes(deletedAtt.storagePath))
+            ) {
+              const currentName = String(block.props.name || deletedAtt.name);
+              const newName = currentName.includes('(삭제')
+                ? currentName
+                : `${currentName} (삭제된 파일)`;
+              updatedBlock.props = {
+                ...block.props,
+                name: newName,
+                caption: '⚠️ 삭제된 첨부파일입니다',
+              };
+              modified = true;
+            }
+          }
+
+          // image 블록 검사
+          if (block.type === 'image' && block.props?.url) {
+            const url = String(block.props.url);
+            if (
+              url === deletedAtt.url ||
+              (deletedAtt.storagePath && url.includes(deletedAtt.storagePath))
+            ) {
+              updatedBlock.props = {
+                ...block.props,
+                caption: '⚠️ 삭제된 이미지입니다',
+              };
+              modified = true;
+            }
+          }
+
+          // content 내 inlineContent(link) 검사
+          if (Array.isArray(block.content)) {
+            const newContent = block.content.map((item: any) => {
+              if (item && item.type === 'link' && item.href) {
+                const href = String(item.href);
+                if (
+                  href === deletedAtt.url ||
+                  (deletedAtt.storagePath && href.includes(deletedAtt.storagePath))
+                ) {
+                  modified = true;
+                  const updatedChildren = Array.isArray(item.content)
+                    ? item.content.map((t: any) => {
+                        const origText = String(t.text || '');
+                        const newText = origText.includes('(삭제')
+                          ? origText
+                          : `${origText} (삭제됨)`;
+                        return {
+                          ...t,
+                          text: newText,
+                          styles: { ...(t.styles || {}), strike: true },
+                        };
+                      })
+                    : item.content;
+                  return {
+                    ...item,
+                    content: updatedChildren,
+                  };
+                }
+              }
+              return item;
+            });
+            updatedBlock.content = newContent;
+          }
+
+          // children 재귀 순회
+          if (Array.isArray(block.children) && block.children.length > 0) {
+            updatedBlock.children = traverse(block.children);
+          }
+
+          return updatedBlock;
+        });
+      };
+
+      const updatedBlocks = traverse(parsed);
+      if (modified) {
+        return JSON.stringify(updatedBlocks);
+      }
+      return content;
+    }
+  } catch {
+    // JSON이 아니면 마크다운 처리로 진행
+  }
+
+  // 2. 일반 마크다운 / 텍스트인 경우
+  if (deletedAtt.url && content.includes(deletedAtt.url)) {
+    const escapedUrl = deletedAtt.url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const linkRegex = new RegExp(`\\[([^\\]]+)\\]\\(${escapedUrl}\\)`, 'g');
+    return content.replace(linkRegex, (_match, text) => {
+      const cleanText = text.replace(/ \(삭제됨\)$/, '');
+      return `~~[${cleanText} (삭제됨)](${deletedAtt.url})~~`;
+    });
+  }
+
+  return content;
+}
+
+/**
+ * BlockNote 블록 배열을 순회하여 이미 삭제된 첨부파일 블록들의 이름과 캡션을 보정합니다.
+ */
+export function markDeletedBlocks(
+  blocks: any[],
+  currentNoteAttachments?: NoteAttachment[],
+  allNotes?: Note[]
+): any[] {
+  if (!Array.isArray(blocks)) return blocks;
+
+  return blocks.map((block) => {
+    let updatedBlock = { ...block };
+
+    if (block.type === 'file' && block.props?.url) {
+      const url = String(block.props.url);
+      if (isDeletedAttachmentUrl(url, currentNoteAttachments, allNotes)) {
+        const currentName = String(block.props.name || '첨부파일');
+        const newName = currentName.includes('(삭제')
+          ? currentName
+          : `${currentName} (삭제된 파일)`;
+        updatedBlock.props = {
+          ...block.props,
+          name: newName,
+          caption: block.props.caption || '⚠️ 삭제된 첨부파일입니다',
+        };
+      }
+    }
+
+    if (Array.isArray(block.children) && block.children.length > 0) {
+      updatedBlock.children = markDeletedBlocks(
+        block.children,
+        currentNoteAttachments,
+        allNotes
+      );
+    }
+
+    return updatedBlock;
+  });
+}
+
