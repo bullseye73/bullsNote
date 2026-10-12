@@ -288,4 +288,23 @@
   color: var(--mantine-color-blue-4) !important;
 }
 
+/* 첨부파일 카드 호버 인터랙션 */
+.attachment-file-card:hover {
+  transform: translateY(-1px);
+  border-color: var(--mantine-color-teal-4) !important;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+}
+
+/* BlockNote 내장 파일 블록 스타일 보정 */
+.bn-file-block,
+[data-content-type="file"] {
+  border-radius: 8px !important;
+  transition: all 0.2s ease !important;
+}
+
+.bn-file-block:hover,
+[data-content-type="file"]:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08) !important;
+}
+
 

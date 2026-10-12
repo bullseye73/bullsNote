@@ -7,6 +7,7 @@ import {
   IconFileText,
   IconFolderUp,
   IconLink,
+  IconPaperclip,
 } from '@tabler/icons-react';
 import { Note, Project } from './Note';
 import { getDateAtSuggestions } from './dateSuggestions';
@@ -117,12 +118,13 @@ export function getCombinedAtSuggestions(
 }
 
 /**
- * / 슬래시 메뉴에 추가할 노트/서브노트 링크 아이템
+ * / 슬래시 메뉴에 추가할 노트/서브노트 링크 및 파일 첨부 아이템
  */
 export function getNoteSlashMenuItems(
   editor: AnyEditor,
   notes: Note[],
-  currentNote: Note
+  currentNote: Note,
+  onAttachFile?: () => void
 ): DefaultReactSuggestionItem[] {
   const subNotes = notes.filter((n) => n.parentId === currentNote.id);
 
@@ -137,6 +139,19 @@ export function getNoteSlashMenuItems(
       onItemClick: () => {
         editor.focus();
         editor.insertInlineContent('@');
+      },
+    },
+    {
+      title: '파일 첨부 (Supabase Storage)',
+      subtext: '클라우드 스토리지에 파일을 업로드하고 본문에 연결합니다',
+      badge: '스토리지',
+      aliases: ['파일', '첨부', 'file', 'upload', 'attach', '스토리지'],
+      group: '미디어 및 파일',
+      icon: <IconPaperclip size={18} color="var(--mantine-color-teal-6)" />,
+      onItemClick: () => {
+        if (onAttachFile) {
+          onAttachFile();
+        }
       },
     },
   ];

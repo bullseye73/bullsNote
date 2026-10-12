@@ -78,7 +78,6 @@ function ListPanel() {
 function Shell() {
   const [menuOpened, { toggle: toggleMenu }] = useDisclosure(true);
   const [listOpened, { toggle: toggleList }] = useDisclosure(true);
-  const [supabaseModalOpened, { open: openSupabaseModal, close: closeSupabaseModal }] = useDisclosure(false);
   const {
     create,
     supabaseConnected,
@@ -89,6 +88,9 @@ function Shell() {
     securityModalOpened,
     openSecurityModal,
     closeSecurityModal,
+    supabaseModalOpened,
+    openSupabaseModal,
+    closeSupabaseModal,
   } = useNotes();
 
   // 사이드바(프로젝트) 및 노트 목록 동적 너비 리사이징 (localStorage 영구 보존)

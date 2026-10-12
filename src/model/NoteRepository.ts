@@ -73,6 +73,9 @@ function migrate(raw: unknown): Note[] {
                 h && typeof (h as { title?: unknown }).title === 'string' && typeof (h as { savedAt?: unknown }).savedAt === 'number',
             )
           : [],
+        attachments: Array.isArray((n as { attachments?: unknown }).attachments)
+          ? (n as { attachments: Note['attachments'] }).attachments
+          : [],
         createdAt: typeof n.createdAt === 'number' ? n.createdAt : now,
         updatedAt: typeof n.updatedAt === 'number' ? n.updatedAt : now,
       } as Note;

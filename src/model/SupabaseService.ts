@@ -1,8 +1,9 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { Note, Project } from './Note';
+import { Note, NoteAttachment, Project } from './Note';
 import { CryptoService, VERIFIER_STORAGE_KEY } from './CryptoService';
 
 const SUPABASE_CONFIG_STORAGE_KEY = 'bullsnote.supabase.config.v1';
+export const SUPABASE_STORAGE_BUCKET = 'bullsnote-attachments';
 
 export interface SupabaseConfig {
   url: string;
@@ -20,7 +21,7 @@ export const DEFAULT_SUPABASE_CONFIG: SupabaseConfig = {
   lastSyncedAt: null,
 };
 
-export const SUPABASE_SETUP_SQL = `-- BullsNote용 Supabase 테이블 생성 스크립트
+export const SUPABASE_SETUP_SQL = `-- BullsNote용 Supabase 테이블 및 스토리지 생성 스크립트
 -- Supabase 대시보드 -> SQL Editor -> New Query에 붙여넣고 Run을 클릭하세요.
 
 -- 1. 프로젝트 테이블 생성
@@ -32,7 +33,7 @@ CREATE TABLE IF NOT EXISTS bullsnote_projects (
   updated_at BIGINT NOT NULL
 );
 
--- 2. 노트 테이블 생성
+-- 2. 노트 테이블 생성 (첨부파일 컬럼 포함)
 CREATE TABLE IF NOT EXISTS bullsnote_notes (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL DEFAULT '제목 없음',
@@ -45,12 +46,16 @@ CREATE TABLE IF NOT EXISTS bullsnote_notes (
   favorite BOOLEAN DEFAULT false,
   parent_id TEXT,
   history JSONB DEFAULT '[]'::jsonb,
+  attachments JSONB DEFAULT '[]'::jsonb,
   created_at BIGINT NOT NULL,
   updated_at BIGINT NOT NULL
 );
 
+-- 기존 테이블이 이미 있을 경우 attachments 컬럼 추가
+ALTER TABLE bullsnote_notes 
+ADD COLUMN IF NOT EXISTS attachments JSONB DEFAULT '[]'::jsonb;
+
 -- 3. RLS(Row Level Security) 설정 및 공개 접근 정책
--- (단일 사용자 로컬-클라우드 동기화를 위한 anon 전체 접근 허용)
 ALTER TABLE bullsnote_projects ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bullsnote_notes ENABLE ROW LEVEL SECURITY;
 
@@ -65,6 +70,24 @@ CREATE POLICY "Allow all for bullsnote_notes" ON bullsnote_notes
   FOR ALL TO anon, authenticated
   USING (true)
   WITH CHECK (true);
+
+-- 4. 첨부파일 전용 스토리지 버킷 생성 (공개 버킷, 최대 50MB)
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES (
+  'bullsnote-attachments',
+  'bullsnote-attachments',
+  true,
+  52428800,
+  NULL
+)
+ON CONFLICT (id) DO NOTHING;
+
+-- 5. 스토리지 객체에 대한 RLS 정책 (업로드, 다운로드, 삭제 허용)
+DROP POLICY IF EXISTS "Allow all for bullsnote-attachments" ON storage.objects;
+CREATE POLICY "Allow all for bullsnote-attachments" ON storage.objects
+  FOR ALL TO anon, authenticated
+  USING (bucket_id = 'bullsnote-attachments')
+  WITH CHECK (bucket_id = 'bullsnote-attachments');
 `;
 
 interface DbProjectRow {
@@ -87,6 +110,7 @@ interface DbNoteRow {
   favorite: boolean;
   parent_id: string | null;
   history: unknown;
+  attachments?: unknown;
   created_at: number;
   updated_at: number;
 }
@@ -315,6 +339,7 @@ class SupabaseSyncManager {
       favorite: Boolean(n.favorite),
       parent_id: n.parentId,
       history: historyToSave,
+      attachments: n.attachments || [],
       created_at: n.createdAt,
       updated_at: n.updatedAt,
     };
@@ -338,6 +363,11 @@ class SupabaseSyncManager {
         })
       );
     }
+
+    const rawAttachments = Array.isArray((row as { attachments?: unknown }).attachments)
+      ? ((row as { attachments: NoteAttachment[] }).attachments as NoteAttachment[])
+      : [];
+
     return {
       id: row.id,
       title: row.title || '제목 없음',
@@ -350,6 +380,7 @@ class SupabaseSyncManager {
       favorite: Boolean(row.favorite),
       parentId: row.parent_id || null,
       history: historyLoaded,
+      attachments: rawAttachments,
       createdAt: Number(row.created_at) || Date.now(),
       updatedAt: Number(row.updated_at) || Date.now(),
     };
@@ -388,6 +419,71 @@ class SupabaseSyncManager {
       console.warn('[Supabase] 노트 delete 예외:', e);
       return false;
     }
+  }
+
+  // --- Supabase Storage (첨부파일) 메서드 ---
+  public async uploadAttachment(noteId: string, file: File): Promise<NoteAttachment> {
+    if (!this.isConnected() || !this.client) {
+      throw new Error('Supabase가 연동되지 않았거나 비활성화되어 있습니다. 먼저 Supabase 설정을 완료해주세요.');
+    }
+
+    const cleanFileName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const storagePath = `${noteId}/${Date.now()}-${cleanFileName}`;
+
+    const { error } = await this.client.storage
+      .from(SUPABASE_STORAGE_BUCKET)
+      .upload(storagePath, file, {
+        cacheControl: '3600',
+        upsert: true,
+      });
+
+    if (error) {
+      throw new Error(`파일 업로드 실패: ${error.message}`);
+    }
+
+    const { data: urlData } = this.client.storage
+      .from(SUPABASE_STORAGE_BUCKET)
+      .getPublicUrl(storagePath);
+
+    return {
+      id: `att-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+      name: file.name,
+      size: file.size,
+      type: file.type || 'application/octet-stream',
+      storagePath,
+      url: urlData.publicUrl,
+      createdAt: Date.now(),
+    };
+  }
+
+  public async downloadAttachment(storagePath: string): Promise<Blob> {
+    if (!this.isConnected() || !this.client) {
+      throw new Error('Supabase가 연동되지 않았거나 비활성화되어 있습니다.');
+    }
+
+    const { data, error } = await this.client.storage
+      .from(SUPABASE_STORAGE_BUCKET)
+      .download(storagePath);
+
+    if (error) {
+      throw new Error(`파일 다운로드 실패: ${error.message}`);
+    }
+
+    return data;
+  }
+
+  public async deleteAttachment(storagePath: string): Promise<boolean> {
+    if (!this.isConnected() || !this.client) return false;
+
+    const { error } = await this.client.storage
+      .from(SUPABASE_STORAGE_BUCKET)
+      .remove([storagePath]);
+
+    if (error) {
+      console.warn('[Supabase] 스토리지 파일 삭제 실패:', error);
+      return false;
+    }
+    return true;
   }
 
   public async upsertProject(project: Project): Promise<boolean> {

@@ -174,6 +174,16 @@ export interface NoteSnapshot {
   savedAt: number;
 }
 
+export interface NoteAttachment {
+  id: string;
+  name: string;
+  size: number;
+  type: string;
+  storagePath: string;
+  url: string;
+  createdAt: number;
+}
+
 export interface Note {
   id: string;
   title: string;
@@ -193,6 +203,8 @@ export interface Note {
   parentId: string | null;
   /** 최신순 스냅샷 (최대 MAX_HISTORY개) */
   history: NoteSnapshot[];
+  /** 첨부 파일 목록 (Supabase Storage 등) */
+  attachments?: NoteAttachment[];
   createdAt: number;
   updatedAt: number;
 }
@@ -219,6 +231,7 @@ export function createEmptyNote(partial?: Partial<Note>): Note {
     favorite: false,
     parentId: null,
     history: [],
+    attachments: [],
     createdAt: now,
     updatedAt: now,
     ...partial,

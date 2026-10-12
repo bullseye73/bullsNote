@@ -6,6 +6,7 @@ import {
   HISTORY_INTERVAL_MS,
   MAX_HISTORY,
   Note,
+  NoteAttachment,
   NoteReminder,
   NoteSnapshot,
   Project,
@@ -102,6 +103,7 @@ export interface NotesState {
   isMasterSet: boolean;
   isUnlocked: boolean;
   securityModalOpened: boolean;
+  supabaseModalOpened: boolean;
 }
 
 export interface NotesActions {
@@ -146,6 +148,11 @@ export interface NotesActions {
   unlockMasterPassword(password: string): Promise<boolean>;
   lockMasterPassword(): void;
   removeMasterPassword(): Promise<boolean>;
+  /** Supabase 모달 및 첨부파일 액션 */
+  openSupabaseModal(): void;
+  closeSupabaseModal(): void;
+  addAttachment(noteId: string, attachment: NoteAttachment): void;
+  removeAttachment(noteId: string, attachmentId: string): Promise<void>;
 }
 
 const Ctx = createContext<(NotesState & NotesActions) | null>(null);
@@ -1340,6 +1347,39 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     }
   }, [ready, supabaseConfig.enabled, syncWithSupabase]);
 
+  const [supabaseModalOpened, setSupabaseModalOpened] = useState(false);
+  const openSupabaseModal = useCallback(() => setSupabaseModalOpened(true), []);
+  const closeSupabaseModal = useCallback(() => setSupabaseModalOpened(false), []);
+
+  const addAttachment = useCallback(
+    (noteId: string, attachment: NoteAttachment) => {
+      mutate(noteId, (n) => ({
+        ...n,
+        attachments: [...(n.attachments || []), attachment],
+      }));
+    },
+    [mutate]
+  );
+
+  const removeAttachment = useCallback(
+    async (noteId: string, attachmentId: string) => {
+      const targetNote = notes.find((n) => n.id === noteId);
+      const att = targetNote?.attachments?.find((a) => a.id === attachmentId);
+      if (att && att.storagePath) {
+        try {
+          await SupabaseService.deleteAttachment(att.storagePath);
+        } catch (e) {
+          console.warn('[Supabase] 첨부파일 삭제 예외:', e);
+        }
+      }
+      mutate(noteId, (n) => ({
+        ...n,
+        attachments: (n.attachments || []).filter((a) => a.id !== attachmentId),
+      }));
+    },
+    [notes, mutate]
+  );
+
   const selected = useMemo(() => notes.find((n) => n.id === selectedId) ?? null, [notes, selectedId]);
 
   const value = useMemo(
@@ -1413,6 +1453,11 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       unlockMasterPassword,
       lockMasterPassword,
       removeMasterPassword,
+      supabaseModalOpened,
+      openSupabaseModal,
+      closeSupabaseModal,
+      addAttachment,
+      removeAttachment,
     }),
     [
       projects,
@@ -1480,6 +1525,11 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       unlockMasterPassword,
       lockMasterPassword,
       removeMasterPassword,
+      supabaseModalOpened,
+      openSupabaseModal,
+      closeSupabaseModal,
+      addAttachment,
+      removeAttachment,
     ],
   );
 

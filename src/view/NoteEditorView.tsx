@@ -58,6 +58,8 @@ import { formatDateIso } from '../model/dateUtils';
 import { getDateAtSuggestions, getDateSlashMenuItems } from '../model/dateSuggestions';
 import { getCombinedAtSuggestions, getNoteSlashMenuItems } from '../model/noteSuggestions';
 import { NoteBacklinksView } from './NoteBacklinksView';
+import { NoteAttachmentsView } from './NoteAttachmentsView';
+import { SupabaseService } from '../model/SupabaseService';
 import { createSyntaxExtension, getAppSchema } from '../model/codeHighlight';
 import {
   canNativeShare,
@@ -73,8 +75,8 @@ import {
 
 type AnyEditor = BlockNoteEditor<any, any, any>;
 
-/** 이미지 붙여넣기/드롭 -> dataURL로 인라인 저장 */
-async function uploadFile(file: File): Promise<string> {
+/** 이미지 붙여넣기/드롭 -> dataURL로 인라인 저장 (로컬 폴백용) */
+async function uploadFileAsDataUrl(file: File): Promise<string> {
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result as string);
@@ -91,11 +93,21 @@ function BlockEditor({
   note: Note;
   onEditorInit?: (editor: AnyEditor) => void;
 }) {
-  const { updateContent, select, notes, projects } = useNotes();
+  const {
+    updateContent,
+    select,
+    notes,
+    projects,
+    supabaseConnected,
+    supabaseConfig,
+    openSupabaseModal,
+    addAttachment,
+  } = useNotes();
   const scheme = useComputedColorScheme('light', { getInitialValueInEffect: true });
   const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [datePickerInitialDate, setDatePickerInitialDate] = useState<Date | undefined>(undefined);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const hiddenFileInputRef = useRef<HTMLInputElement>(null);
 
   const initialContent = useMemo(() => {
     // 검증된 블록만 전달, 그 외는 플레인 텍스트 문단으로 보존 (크래시 방지)
@@ -105,12 +117,85 @@ function BlockEditor({
     return [{ type: 'paragraph', content: text || '' } as never];
   }, [note.id, note.content]);
 
+  // Supabase 스토리지 연동 여부에 따른 파일 업로드 핸들러
+  const handleUploadFile = useCallback(
+    async (file: File): Promise<string> => {
+      // 1. Supabase 연동 상태이면 클라우드 스토리지로 업로드
+      if (supabaseConnected && supabaseConfig.enabled) {
+        try {
+          const att = await SupabaseService.uploadAttachment(note.id, file);
+          addAttachment(note.id, att);
+          return att.url;
+        } catch (err) {
+          console.error('Supabase 스토리지 업로드 실패:', err);
+          if (file.type.startsWith('image/')) {
+            return uploadFileAsDataUrl(file);
+          }
+          alert(`스토리지 업로드 실패: ${err instanceof Error ? err.message : String(err)}`);
+          throw err;
+        }
+      }
+
+      // 2. Supabase 미연동 상태
+      if (file.type.startsWith('image/')) {
+        // 이미지는 로컬 dataURL로 삽입 허용
+        return uploadFileAsDataUrl(file);
+      }
+
+      // 일반 파일은 업로드 차단 및 설정 모달 유도
+      alert('파일 업로드 기능은 Supabase 클라우드 스토리지가 연동된 상태에서 사용할 수 있습니다. Supabase 설정을 완료해주세요.');
+      openSupabaseModal();
+      throw new Error('Supabase 미연동으로 파일 업로드 제한됨');
+    },
+    [supabaseConnected, supabaseConfig.enabled, note.id, addAttachment, openSupabaseModal]
+  );
+
   const editor = useCreateBlockNote({
     schema: getAppSchema() as never,
     initialContent,
-    uploadFile,
+    uploadFile: handleUploadFile,
     extensions: [createSyntaxExtension()],
   });
+
+  // / 슬래시 메뉴에서 파일 첨부 선택 시
+  const handleAttachFromSlash = useCallback(() => {
+    if (!supabaseConnected || !supabaseConfig.enabled) {
+      alert('파일 첨부 기능은 Supabase 클라우드 스토리지가 연동된 상태에서 사용할 수 있습니다. Supabase 설정을 완료해주세요.');
+      openSupabaseModal();
+      return;
+    }
+    hiddenFileInputRef.current?.click();
+  }, [supabaseConnected, supabaseConfig.enabled, openSupabaseModal]);
+
+  // 숨겨진 input에서 파일 선택 시 본문에 노션 스타일 file 블록 삽입
+  const handleFilePickedFromInput = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      try {
+        const url = await handleUploadFile(file);
+        editor.insertBlocks(
+          [
+            {
+              type: 'file',
+              props: {
+                url,
+                name: file.name,
+                caption: '',
+              },
+            } as never,
+          ],
+          editor.getTextCursorPosition().block,
+          'after'
+        );
+      } catch {
+        // 오류 처리는 handleUploadFile에서 수행
+      } finally {
+        if (e.target) e.target.value = '';
+      }
+    },
+    [editor, handleUploadFile]
+  );
 
   const handleInsertToday = useCallback(() => {
     editor.focus();
@@ -149,6 +234,14 @@ function BlockEditor({
 
   return (
     <Stack gap={4} style={{ flex: 1, minHeight: 0 }}>
+      {/* 슬래시 메뉴용 숨겨진 파일 선택 인풋 */}
+      <input
+        type="file"
+        ref={hiddenFileInputRef}
+        style={{ display: 'none' }}
+        onChange={handleFilePickedFromInput}
+      />
+
       <div className="no-print">
         <EditorToolbar
           editor={editor}
@@ -211,14 +304,19 @@ function BlockEditor({
                 )
               }
             />
-            {/* 노트 링크 및 날짜가 포함된 / 슬래시 명령어 메뉴 */}
+            {/* 노트 링크, 파일 첨부 및 날짜가 포함된 / 슬래시 명령어 메뉴 */}
             <SuggestionMenuController
               triggerCharacter="/"
               shouldOpen={(e) => !e.selection.$from.parent.type.isInGroup('tableContent')}
               getItems={async (query) => {
                 const defaultSlashItems = getDefaultReactSlashMenuItems(editor);
                 const dateSlashItems = getDateSlashMenuItems(editor, () => handleOpenDatePicker());
-                const noteSlashItems = getNoteSlashMenuItems(editor, notes, note);
+                const noteSlashItems = getNoteSlashMenuItems(
+                  editor,
+                  notes,
+                  note,
+                  handleAttachFromSlash
+                );
                 return filterSuggestionItems(
                   [...noteSlashItems, ...dateSlashItems, ...defaultSlashItems],
                   query
@@ -721,6 +819,11 @@ export function NoteEditorView() {
             ? '🔒 암호화됨'
             : `${noteBodyText(selected.content).length}자`}
         </Text>
+
+        {/* 첨부파일 관리 패널 */}
+        <div style={{ marginBottom: 8 }}>
+          <NoteAttachmentsView note={selected} />
+        </div>
 
         {/* 이 노트를 참조(링크)하고 있는 백링크 목록 */}
         {backlinks.length > 0 && (
