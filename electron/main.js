@@ -114,6 +114,17 @@ function createWindow() {
 
   // 외부 링크 클릭 시 새 Electron 창 대신 시스템 기본 브라우저로 오픈
   win.webContents.setWindowOpenHandler(({ url }) => {
+    // 내부 URL 또는 노트 내부 링크(#note-, note://)인 경우 외부 브라우저 오픈 차단
+    const isDevUrl = isDev && url.startsWith('http://localhost:5190');
+    const isInternalNote = url.includes('#note-') || url.startsWith('note:');
+    if (isDevUrl || isInternalNote || url.startsWith('file://')) {
+      const noteMatch = url.match(/#note-([a-zA-Z0-9_-]+)/) || url.match(/^note:\/\/([a-zA-Z0-9_-]+)/);
+      if (noteMatch && noteMatch[1]) {
+        win.webContents.send('alarm:openNote', noteMatch[1]);
+      }
+      return { action: 'deny' };
+    }
+
     if (url.startsWith('http:') || url.startsWith('https:')) {
       shell.openExternal(url);
     }
@@ -124,6 +135,17 @@ function createWindow() {
   win.webContents.on('will-navigate', (event, url) => {
     const isDevUrl = isDev && url.startsWith('http://localhost:5190');
     const isProdUrl = !isDev && url.startsWith('file://');
+    const isInternalNote = url.includes('#note-') || url.startsWith('note:');
+
+    if (isInternalNote) {
+      event.preventDefault();
+      const noteMatch = url.match(/#note-([a-zA-Z0-9_-]+)/) || url.match(/^note:\/\/([a-zA-Z0-9_-]+)/);
+      if (noteMatch && noteMatch[1]) {
+        win.webContents.send('alarm:openNote', noteMatch[1]);
+      }
+      return;
+    }
+
     if (!isDevUrl && !isProdUrl) {
       event.preventDefault();
       if (url.startsWith('http:') || url.startsWith('https:')) {

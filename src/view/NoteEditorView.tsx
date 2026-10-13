@@ -164,12 +164,59 @@ function BlockEditor({
     [supabaseConnected, supabaseConfig.enabled, note.id, addAttachment, openSupabaseModal]
   );
 
-  const editor = useCreateBlockNote({
-    schema: getAppSchema() as never,
-    initialContent,
-    uploadFile: handleUploadFile,
-    extensions: [createSyntaxExtension()],
-  });
+  // 에디터 내 링크 클릭 핸들러: 내부 노트 링크는 브라우저를 열지 않고 내부 이동만 수행
+  const handleLinkClick = useCallback(
+    (event: MouseEvent) => {
+      const target = (event.target as HTMLElement)?.closest('a');
+      if (!target) return true;
+      const href = target.getAttribute('href') || target.href || '';
+
+      // 1. 내부 노트 이동 링크 (#note-, note://)
+      if (href.includes('#note-') || href.startsWith('note://')) {
+        event.preventDefault();
+        event.stopPropagation();
+        const match = href.match(/#note-([a-zA-Z0-9_-]+)/) || href.match(/^note:\/\/([a-zA-Z0-9_-]+)/);
+        if (match && match[1]) {
+          select(match[1]);
+        }
+        return true;
+      }
+
+      // 2. 삭제된 첨부파일 링크 클릭 시 404 차단
+      if (
+        target.getAttribute('data-deleted-attachment') === 'true' ||
+        target.classList.contains('deleted-attachment-link') ||
+        isDeletedAttachmentUrl(href, note.attachments, notes)
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        alert('해당 첨부파일은 이미 삭제되어 다운로드하거나 열 수 없습니다.');
+        return true;
+      }
+
+      // 3. 외부 웹 링크
+      if (href.startsWith('http://') || href.startsWith('https://')) {
+        window.open(href, '_blank', 'noopener,noreferrer');
+        return true;
+      }
+
+      return true;
+    },
+    [select, note.attachments, notes]
+  );
+
+  const editor = useCreateBlockNote(
+    {
+      schema: getAppSchema() as never,
+      initialContent,
+      uploadFile: handleUploadFile,
+      extensions: [createSyntaxExtension()],
+      links: {
+        onClick: handleLinkClick,
+      },
+    },
+    [note.id]
+  );
 
   // / 슬래시 메뉴에서 파일 첨부 선택 시
   const handleAttachFromSlash = useCallback(() => {
@@ -240,6 +287,33 @@ function BlockEditor({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleInsertToday]);
+
+  // 에디터 내 링크 클릭 시 ProseMirror 기본 동작 및 외부 브라우저 오픈 완벽 방지 (네이티브 캡처)
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    const handleNativeLinkCapture = (e: MouseEvent) => {
+      const target = (e.target as HTMLElement)?.closest('a');
+      if (!target) return;
+      const href = target.getAttribute('href') || target.href || '';
+
+      if (href.includes('#note-') || href.startsWith('note://')) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        const match = href.match(/#note-([a-zA-Z0-9_-]+)/) || href.match(/^note:\/\/([a-zA-Z0-9_-]+)/);
+        if (match && match[1]) {
+          select(match[1]);
+        }
+      }
+    };
+
+    container.addEventListener('click', handleNativeLinkCapture, true);
+    return () => {
+      container.removeEventListener('click', handleNativeLinkCapture, true);
+    };
+  }, [select]);
 
   // 첨부파일 삭제 시 현재 에디터 본문의 파일 블록도 실시간으로 (삭제된 파일) 상태로 즉시 갱신
   const handleAttachmentDeleted = useCallback(
@@ -377,15 +451,15 @@ function BlockEditor({
           onClickCapture={(e) => {
             const target = (e.target as HTMLElement).closest('a');
             if (target) {
-              const href = target.getAttribute('href');
+              const href = target.getAttribute('href') || target.href || '';
               // 1. 노트 간 이동 링크 (#note-, note://)
-              if (href && (href.startsWith('#note-') || href.startsWith('note://'))) {
+              if (href && (href.includes('#note-') || href.startsWith('note://'))) {
                 e.preventDefault();
                 e.stopPropagation();
-                const targetNoteId = href.startsWith('#note-')
-                  ? href.replace('#note-', '')
-                  : href.replace('note://', '');
-                select(targetNoteId);
+                const match = href.match(/#note-([a-zA-Z0-9_-]+)/) || href.match(/^note:\/\/([a-zA-Z0-9_-]+)/);
+                if (match && match[1]) {
+                  select(match[1]);
+                }
                 return;
               }
 

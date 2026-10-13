@@ -390,16 +390,29 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     return () => clearInterval(interval);
   }, [notes, ready]);
 
-  // OS 시스템 알림 클릭 시 해당 노트로 이동
+  // OS 시스템 알림 또는 내부 링크 클릭 시 해당 노트로 이동
   useEffect(() => {
+    const handleCustomNav = (e: Event) => {
+      const customEvent = e as CustomEvent<{ noteId: string }>;
+      if (customEvent.detail?.noteId) {
+        setSelectedId(customEvent.detail.noteId);
+      }
+    };
+    window.addEventListener('bullsnote:navigate-note', handleCustomNav);
+
     const notifApi = window.bullsNote?.notification;
+    let notifCleanup: (() => void) | undefined;
     if (notifApi?.onOpenNote) {
-      const cleanup = notifApi.onOpenNote((targetId) => {
+      notifCleanup = notifApi.onOpenNote((targetId) => {
         setSelectedId(targetId);
         setActiveAlarmNote((cur) => (cur?.id === targetId ? null : cur));
       });
-      return cleanup;
     }
+
+    return () => {
+      window.removeEventListener('bullsnote:navigate-note', handleCustomNav);
+      if (notifCleanup) notifCleanup();
+    };
   }, []);
 
   const vaultMode = getVault() !== null;
