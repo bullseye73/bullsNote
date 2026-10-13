@@ -74,7 +74,9 @@ git push origin main --tags
    - **macOS**: `BullsNote-0.1.0.dmg`, `BullsNote-0.1.0-mac.zip`
    - **Linux**: `BullsNote-0.1.0.AppImage`, `bullsnote_0.1.0_amd64.deb`
 
-> **참고**: GitHub 저장소 설정(`Settings -> Actions -> General -> Workflow permissions`)에서 **Read and write permissions**가 활성화되어 있어야 릴리즈 산출물이 정상 등록됩니다.
+> **참고**:
+> - GitHub 저장소 설정(`Settings -> Actions -> General -> Workflow permissions`)에서 **Read and write permissions**가 활성화되어 있어야 릴리즈 산출물이 정상 등록됩니다.
+> - **macOS 설치 시 주의사항**: 미공증 앱 특성상 Gatekeeper에 의해 `"손상되었기 때문에 열 수 없습니다"`라는 경고가 발생할 수 있습니다. 아래 [문제 해결](#-문제-해결-및-팁)의 격리 속성 제거 명령어로 해결할 수 있습니다.
 
 ---
 
@@ -107,6 +109,15 @@ npm run dist:mac
 ---
 
 ## 🔧 문제 해결 및 팁
+- **macOS "앱이 손상되었기 때문에 열 수 없습니다" 오류 (Gatekeeper 차단)**:
+  Apple 개발자 인증서 미서명/미공증 앱을 인터넷(GitHub Release 등)에서 다운로드할 때 macOS 보안 정책(Gatekeeper)에 의해 격리(Quarantine) 플래그가 붙어 발생합니다. (파일이 실제로 손상된 것이 아닙니다)
+  1. `BullsNote.app`을 `/Applications` (응용 프로그램) 폴더로 이동합니다.
+  2. **터미널(Terminal)**을 실행하고 아래 명령어를 입력합니다:
+     ```bash
+     xattr -cr /Applications/BullsNote.app
+     ```
+  3. 이후 앱을 더블 클릭하여 실행하면 정상 실행됩니다.
+  *(또는 '시스템 설정 > 개인정보 보호 및 보안 > 보안' 섹션에서 '확인 없이 열기'를 클릭하여 허용할 수도 있습니다)*
 - **NSIS 캐시 오류**: Windows에서 NSIS 생성 시 오류가 발생하면 `%LOCALAPPDATA%\electron-builder\Cache\nsis` 폴더를 삭제 후 재시도하세요.
 - **Electron 바이너리 다운로드 실패**: `npm install --ignore-scripts` 후 `node node_modules/electron/install.js`를 별도로 실행하세요.
 - **Supabase CSP 오류 해결**: Supabase 통신은 `index.html`의 CSP 정책(`connect-src https: wss:`)에 허용되어 있습니다.
