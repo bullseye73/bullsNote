@@ -1013,6 +1013,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
           if (n.id === id) {
             // 잠금 상태(암호화된 본문)인 경우 제목 변경 차단 (태그 및 메타데이터 무결성 보호)
             if (CryptoService.isEncrypted(n.content)) return n;
+            // 내용 변경이 없으면 updatedAt 갱신 및 동기화 스킵
+            if (n.title === title) return n;
             const updated = { ...refreshTags(withHistory(n), title, n.content), updatedAt: Date.now() };
             queueNoteSync(updated);
             return updated;
@@ -1029,6 +1031,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       setNotes((prev) =>
         prev.map((n) => {
           if (n.id === id) {
+            // 내용 변경이 없으면 updatedAt 갱신, 히스토리 스냅샷 및 동기화 스킵
+            if (n.content === content) return n;
             const updated = { ...refreshTags(withHistory(n), n.title, content), updatedAt: Date.now() };
             queueNoteSync(updated);
             return updated;
