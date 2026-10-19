@@ -1061,13 +1061,13 @@ export function NoteEditorView() {
               </Menu.Target>
               <Menu.Dropdown>
                 <Menu.Label>노트 색상 변경</Menu.Label>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, padding: '6px 8px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(8, 1fr)', gap: 6, padding: '6px 8px', minWidth: 260 }}>
                   {Object.values(PASTEL_COLORS).map((c) => {
                     const isCurrent = (selected.color || 'blue') === c.id;
                     return (
                       <Tooltip key={c.id} label={c.name} position="top" withArrow>
                         <ActionIcon
-                          size="md"
+                          size="sm"
                           radius="xl"
                           onClick={() => updateColor(selected.id, c.id)}
                           style={{
