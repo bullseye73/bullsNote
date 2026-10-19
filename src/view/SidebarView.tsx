@@ -34,6 +34,7 @@ import {
 import { useState } from 'react';
 import { useNotes } from '../controller/NotesController';
 import { Project } from '../model/Note';
+import { APP_VERSION } from '../model/version';
 import { SortMenu } from './SortMenu';
 
 const POPULAR_ICONS = [
@@ -130,9 +131,14 @@ export function SidebarView({ onOpenSupabaseModal }: SidebarViewProps) {
   return (
     <Stack gap="xs" p="sm" h="100%">
       <Group justify="space-between">
-        <Text fw={800} size="lg">
-          BullsNote
-        </Text>
+        <Group gap={6} align="center">
+          <Text fw={800} size="lg">
+            BullsNote
+          </Text>
+          <Badge size="xs" variant="light" color="blue" radius="sm">
+            v{APP_VERSION}
+          </Badge>
+        </Group>
         <Tooltip label="현재 프로젝트에 새 노트 (Ctrl+N)">
           <ActionIcon color="blue" variant="filled" onClick={() => create()} aria-label="새 노트">
             <IconPlus size={16} />

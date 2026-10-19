@@ -1,6 +1,7 @@
 const { app, BrowserWindow, nativeImage, shell, ipcMain, Notification, Menu, MenuItem, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const packageJson = require('../package.json');
 const { registerVaultIpc } = require('./vault-ipc');
 const { setupTray } = require('./tray');
 
@@ -66,7 +67,9 @@ function setupAppMenu() {
 
 function createWindow() {
   const iconPath = path.join(__dirname, 'assets', 'icon.png');
+  const appVersion = packageJson.version || '1.1.1';
   const win = new BrowserWindow({
+    title: `BullsNote v${appVersion}`,
     width: 1280,
     height: 800,
     minWidth: 900,

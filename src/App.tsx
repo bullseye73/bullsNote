@@ -1,4 +1,5 @@
 // VIEW root: 헤더 + 좌측 메뉴 + 좌측 노트목록 + 에디터 (MVC의 V)
+import { useEffect } from 'react';
 import {
   ActionIcon,
   AppShell,
@@ -13,6 +14,7 @@ import {
 } from '@mantine/core';
 import '@mantine/core/styles.css';
 import './index.css';
+import { APP_VERSION } from './model/version';
 import { useDisclosure, useHotkeys } from '@mantine/hooks';
 import {
   IconCloudCheck,
@@ -110,6 +112,10 @@ function Shell() {
 
   useHotkeys([['ctrl+N', (e) => { e.preventDefault(); create(null); }]]);
 
+  useEffect(() => {
+    document.title = `BullsNote v${APP_VERSION}`;
+  }, []);
+
   const lastSyncText = lastSyncedAt
     ? `마지막 동기화: ${new Date(lastSyncedAt).toLocaleTimeString()}`
     : '동기화 이력 없음';
@@ -148,7 +154,12 @@ function Shell() {
               <IconListTree size={17} />
             </ActionIcon>
           </Tooltip>
-          <span style={{ fontWeight: 800 }}>BullsNote</span>
+          <Group gap={6} align="center">
+            <span style={{ fontWeight: 800 }}>BullsNote</span>
+            <Badge size="xs" variant="light" color="blue" radius="sm">
+              v{APP_VERSION}
+            </Badge>
+          </Group>
           <span style={{ fontSize: 12, opacity: 0.6 }}>MVC · Mantine · Electron (Win/Linux/Mac)</span>
         </Group>
 
