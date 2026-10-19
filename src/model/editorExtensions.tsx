@@ -42,42 +42,59 @@ export function createHashtagProseMirrorPlugin() {
     key: hashtagPluginKey,
     props: {
       decorations(state) {
-        const decorations: Decoration[] = [];
-        const { doc } = state;
+        try {
+          const decorations: Decoration[] = [];
+          const { doc } = state;
+          // 로컬 정규식 생성으로 동시성 및 lastIndex 상태 오염 방지
+          const hashtagRegex = /(?:^|\s)(#([가-힣a-zA-Z0-9_][가-힣a-zA-Z0-9_\-/]*))/g;
 
-        doc.descendants((node, pos, parent) => {
-          // 코드 블록 내부의 내용은 태그 데코레이션에서 제외
-          if (parent && parent.type.name.toLowerCase().includes('code')) {
-            return false;
-          }
-          if (!node.isText || !node.text) return;
-          // 인라인 코드 mark가 붙은 텍스트 제외
-          if (node.marks.some((m) => m.type.name === 'code')) return;
+          doc.descendants((node, pos, parent) => {
+            // 코드 블록 내부의 내용은 태그 데코레이션에서 제외
+            if (parent && parent.type.name.toLowerCase().includes('code')) {
+              return false;
+            }
+            if (!node.isText || !node.text) return;
+            // 인라인 코드 mark가 붙은 텍스트 제외
+            if (node.marks && node.marks.some((m) => m.type.name === 'code')) return;
 
-          const text = node.text;
-          let match: RegExpExecArray | null;
-          HASHTAG_REGEX.lastIndex = 0;
+            const text = node.text;
+            let match: RegExpExecArray | null;
+            hashtagRegex.lastIndex = 0;
 
-          while ((match = HASHTAG_REGEX.exec(text)) !== null) {
-            const fullMatch = match[0];
-            const hashtagWithHash = match[1];
-            const tagWithoutHash = match[2];
+            while ((match = hashtagRegex.exec(text)) !== null) {
+              const fullMatch = match[0];
+              const hashtagWithHash = match[1];
+              const tagWithoutHash = match[2];
 
-            const leadingSpaceLength = fullMatch.length - hashtagWithHash.length;
-            const start = pos + match.index + leadingSpaceLength;
-            const end = start + hashtagWithHash.length;
+              const leadingSpaceLength = fullMatch.length - hashtagWithHash.length;
+              const start = pos + match.index + leadingSpaceLength;
+              const end = start + hashtagWithHash.length;
 
-            decorations.push(
-              Decoration.inline(start, end, {
-                class: 'bn-hashtag-badge',
-                'data-tag': tagWithoutHash,
-                title: `#${tagWithoutHash} (클릭하여 태그 필터링)`,
-              })
-            );
-          }
-        });
+              // 문서 범위 유효성 검증
+              if (start >= 0 && end <= doc.content.size && start < end) {
+                decorations.push(
+                  Decoration.inline(start, end, {
+                    class: 'bn-hashtag-badge',
+                    'data-tag': tagWithoutHash,
+                    title: `#${tagWithoutHash} (클릭하여 태그 필터링)`,
+                  })
+                );
+              }
 
-        return DecorationSet.create(doc, decorations);
+              // 루프 무한 진행 방지
+              if (match.index === hashtagRegex.lastIndex) {
+                hashtagRegex.lastIndex++;
+              }
+            }
+          });
+
+          // ProseMirror 규격: decorations는 반드시 start 위치 오름차순으로 정렬되어야 함!
+          decorations.sort((a, b) => a.from - b.from);
+
+          return DecorationSet.create(doc, decorations);
+        } catch {
+          return DecorationSet.empty;
+        }
       },
     },
   });
@@ -205,19 +222,6 @@ export const CodeShortcutsExtension = createExtension(({ editor }) => {
         }
       },
     },
-    inputRules: [
-      // 백틱 3개(```)만 딱 입력한 순간 즉시 코드 블록으로 변환 지원
-      {
-        find: /^```$/,
-        replace: () => {
-          return {
-            type: 'codeBlock',
-            props: { language: 'text' },
-            content: [],
-          };
-        },
-      },
-    ],
   };
 });
 

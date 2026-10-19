@@ -555,26 +555,53 @@ a[data-deleted-attachment="true"]::after {
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.32) !important;
 }
 
-/* 상단 맥 터미널 스타일 3색 윈도우 도트 (Red, Yellow, Green) */
-.bn-block-content[data-content-type="codeBlock"]::before {
-  content: '' !important;
+/* 코드 블록 상단 좌측: 코드 접기/펼치기 아이콘 버튼 */
+.bn-code-collapse-btn {
   position: absolute !important;
-  top: 13px !important;
-  left: 16px !important;
-  width: 10px !important;
-  height: 10px !important;
-  border-radius: 50% !important;
-  background-color: #ff5f56 !important;
-  box-shadow: 16px 0 0 #ffbd2e, 32px 0 0 #27c93f !important;
-  z-index: 3 !important;
-  pointer-events: none !important;
+  top: 6px !important;
+  left: 10px !important;
+  z-index: 5 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 5px !important;
+  background-color: rgba(255, 255, 255, 0.08) !important;
+  border: 1px solid rgba(255, 255, 255, 0.16) !important;
+  color: #d4d4d8 !important;
+  border-radius: 5px !important;
+  padding: 3px 6px !important;
+  font-size: 11px !important;
+  cursor: pointer !important;
+  user-select: none !important;
+  transition: all 0.15s ease !important;
+  outline: none !important;
 }
 
-/* 상단 언어 선택 드롭다운 (Language Picker) */
+.bn-code-collapse-btn:hover {
+  background-color: rgba(255, 255, 255, 0.2) !important;
+  border-color: rgba(255, 255, 255, 0.3) !important;
+  color: #ffffff !important;
+  transform: translateY(-1px) !important;
+}
+
+.bn-code-collapse-btn.is-collapsed {
+  background-color: rgba(59, 130, 246, 0.2) !important;
+  border-color: rgba(59, 130, 246, 0.45) !important;
+  color: #93c5fd !important;
+  padding: 3px 8px !important;
+}
+
+.bn-code-collapse-btn .collapsed-badge {
+  font-size: 11px;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-weight: 500;
+  color: #bfdbfe;
+}
+
+/* 상단 언어 선택 드롭다운 (Language Picker) - 접기 버튼 우측에 배치 */
 .bn-block-content[data-content-type="codeBlock"] > div > select {
   position: absolute !important;
   top: 6px !important;
-  left: 72px !important;
+  left: 42px !important;
   opacity: 0.85 !important;
   appearance: auto !important;
   background-color: rgba(255, 255, 255, 0.08) !important;
@@ -603,46 +630,20 @@ a[data-deleted-attachment="true"]::after {
   color: #f4f4f5 !important;
 }
 
-/* 코드 블록 우측 상단 원클릭 복사(Copy) 버튼 */
-.bn-code-copy-btn {
-  position: absolute !important;
-  top: 6px !important;
-  right: 12px !important;
-  z-index: 5 !important;
-  display: inline-flex !important;
-  align-items: center !important;
-  gap: 5px !important;
-  background-color: rgba(255, 255, 255, 0.1) !important;
-  border: 1px solid rgba(255, 255, 255, 0.16) !important;
-  color: #e4e4e7 !important;
-  border-radius: 5px !important;
-  padding: 3px 8px !important;
-  font-size: 11px !important;
-  font-weight: 500 !important;
-  font-family: ui-sans-serif, system-ui, sans-serif !important;
-  cursor: pointer !important;
-  user-select: none !important;
-  transition: all 0.18s ease !important;
-  outline: none !important;
+/* 접힌 상태 (Collapsed Code Block) */
+.bn-block-content[data-content-type="codeBlock"][data-collapsed="true"] {
+  min-height: 38px !important;
+  padding-bottom: 6px !important;
 }
 
-.bn-code-copy-btn:hover {
-  background-color: rgba(255, 255, 255, 0.2) !important;
-  border-color: rgba(255, 255, 255, 0.32) !important;
-  color: #ffffff !important;
-  transform: translateY(-1px) !important;
-}
-
-.bn-code-copy-btn.copied {
-  background-color: #10b981 !important;
-  border-color: #10b981 !important;
-  color: #ffffff !important;
+.bn-block-content[data-content-type="codeBlock"][data-collapsed="true"] > pre {
+  display: none !important;
 }
 
 /* 코드 본문 영역 pre > code */
 .bn-block-content[data-content-type="codeBlock"] > pre {
   margin: 0 !important;
-  padding: 40px 18px 16px 18px !important;
+  padding: 38px 18px 16px 18px !important;
   overflow-x: auto !important;
   white-space: pre !important;
   tab-size: 2 !important;

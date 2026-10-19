@@ -212,16 +212,17 @@ function BlockEditor({
     [select, note.attachments, notes]
   );
 
+  const extensions = useMemo(
+    () => [createSyntaxExtension(), HashtagExtension(), CodeShortcutsExtension()],
+    []
+  );
+
   const editor = useCreateBlockNote(
     {
       schema: getAppSchema() as never,
       initialContent,
       uploadFile: handleUploadFile,
-      extensions: [
-        createSyntaxExtension(),
-        HashtagExtension(),
-        CodeShortcutsExtension(),
-      ],
+      extensions,
       links: {
         onClick: handleLinkClick,
       },
@@ -400,24 +401,6 @@ function BlockEditor({
           fb.removeAttribute('title');
         }
       });
-      // 3. 코드 블록에 원클릭 복사 버튼 주입
-      const codeBlocks = container.querySelectorAll<HTMLElement>('[data-content-type="codeBlock"]');
-      codeBlocks.forEach((cb) => {
-        if (!cb.querySelector('.bn-code-copy-btn')) {
-          const btn = document.createElement('button');
-          btn.type = 'button';
-          btn.className = 'bn-code-copy-btn';
-          btn.setAttribute('aria-label', '코드 복사');
-          btn.innerHTML = `
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-            </svg>
-            <span class="copy-text">복사</span>
-          `;
-          cb.appendChild(btn);
-        }
-      });
     };
 
     markDeletedElements();
@@ -532,28 +515,6 @@ function BlockEditor({
                 setActiveTag(tag);
                 return;
               }
-            }
-
-            // 5. 코드 블록 내 복사 버튼 클릭 시 코드 내용 복사
-            const copyBtn = (e.target as HTMLElement).closest('.bn-code-copy-btn');
-            if (copyBtn) {
-              e.preventDefault();
-              e.stopPropagation();
-              const cb = copyBtn.closest('[data-content-type="codeBlock"]');
-              const codeEl = cb?.querySelector('code');
-              if (codeEl) {
-                const codeText = codeEl.textContent || '';
-                void navigator.clipboard.writeText(codeText).then(() => {
-                  copyBtn.classList.add('copied');
-                  const textSpan = copyBtn.querySelector('.copy-text');
-                  if (textSpan) textSpan.textContent = '복사됨!';
-                  setTimeout(() => {
-                    copyBtn.classList.remove('copied');
-                    if (textSpan) textSpan.textContent = '복사';
-                  }, 1800);
-                });
-              }
-              return;
             }
           }}
         >
