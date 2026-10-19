@@ -54,8 +54,14 @@ function RowActions({
     notes,
     projects,
     moveNoteToProject,
+    isMasterSet,
+    isUnlocked,
   } = useNotes();
   const note = notes.find((n) => n.id === id)!;
+  const isNoteLocked =
+    note &&
+    ((!isUnlocked && (isMasterSet || CryptoService.isEncrypted(note.content))) ||
+      CryptoService.isEncrypted(note.content));
   const descendantCount = (() => {
     let c = 0;
     const stack = [id];
@@ -92,41 +98,42 @@ function RowActions({
         </ActionIcon>
       </Tooltip>
       {/* 이동: 들여쓰기 */}
-      <Tooltip label="들여쓰기 (이전 형제의 자식으로)">
+      <Tooltip label={isNoteLocked ? '잠긴 상태에서는 이동할 수 없습니다' : '들여쓰기 (이전 형제의 자식으로)'}>
         <ActionIcon
           size="sm"
           variant="subtle"
-          disabled={!hasPrevSibling}
+          disabled={!hasPrevSibling || isNoteLocked}
           onClick={() => indent(id)}
           aria-label="들여쓰기"
           style={{
-            color: active ? (hasPrevSibling ? colorCfg.iconColor : 'rgba(0,0,0,0.25)') : undefined,
+            color: active ? (hasPrevSibling && !isNoteLocked ? colorCfg.iconColor : 'rgba(0,0,0,0.25)') : undefined,
           }}
         >
           <IconIndentIncrease size={14} />
         </ActionIcon>
       </Tooltip>
       {/* 이동: 내어쓰기 */}
-      <Tooltip label="내어쓰기 (부모와 같은 레벨로)">
+      <Tooltip label={isNoteLocked ? '잠긴 상태에서는 이동할 수 없습니다' : '내어쓰기 (부모와 같은 레벨로)'}>
         <ActionIcon
           size="sm"
           variant="subtle"
-          disabled={!hasParent}
+          disabled={!hasParent || isNoteLocked}
           onClick={() => outdent(id)}
           aria-label="내어쓰기"
           style={{
-            color: active ? (hasParent ? colorCfg.iconColor : 'rgba(0,0,0,0.25)') : undefined,
+            color: active ? (hasParent && !isNoteLocked ? colorCfg.iconColor : 'rgba(0,0,0,0.25)') : undefined,
           }}
         >
           <IconIndentDecrease size={14} />
         </ActionIcon>
       </Tooltip>
       {/* 상태: 상단 고정 */}
-      <Tooltip label={note.pinned ? '핀 해제' : '상단 고정'}>
+      <Tooltip label={isNoteLocked ? '잠긴 상태에서는 변경할 수 없습니다' : (note.pinned ? '핀 해제' : '상단 고정')}>
         <ActionIcon
           size="sm"
           variant={note.pinned ? 'filled' : 'subtle'}
           color={note.pinned ? 'blue' : undefined}
+          disabled={isNoteLocked}
           onClick={() => togglePin(id)}
           aria-label="핀"
           style={{
@@ -138,11 +145,12 @@ function RowActions({
         </ActionIcon>
       </Tooltip>
       {/* 상태: 즐겨찾기 */}
-      <Tooltip label={note.favorite ? '즐겨찾기 해제' : '즐겨찾기 등록'}>
+      <Tooltip label={isNoteLocked ? '잠긴 상태에서는 변경할 수 없습니다' : (note.favorite ? '즐겨찾기 해제' : '즐겨찾기 등록')}>
         <ActionIcon
           size="sm"
           variant={note.favorite ? 'filled' : 'subtle'}
           color={note.favorite ? 'yellow' : undefined}
+          disabled={isNoteLocked}
           onClick={() => toggleFavorite(id)}
           aria-label="즐겨찾기"
           style={{
@@ -153,11 +161,12 @@ function RowActions({
         </ActionIcon>
       </Tooltip>
       {/* 관리 메뉴 */}
-      <Menu position="bottom-end" withArrow shadow="md" withinPortal>
+      <Menu position="bottom-end" withArrow shadow="md" withinPortal disabled={isNoteLocked}>
         <Menu.Target>
           <ActionIcon
             size="sm"
             variant="subtle"
+            disabled={isNoteLocked}
             aria-label="노트 관리 메뉴"
             style={{
               color: active ? colorCfg.iconColor : undefined,

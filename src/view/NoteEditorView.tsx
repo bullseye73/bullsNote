@@ -812,6 +812,11 @@ export function NoteEditorView() {
 
   const colorCfg = getPastelConfig(selected.color);
 
+  // 마스터 비밀번호로 잠긴 상태이거나 본문이 암호화되어 있는 경우 메타데이터 편집 비활성화
+  const isNoteLocked =
+    (!isUnlocked && (isMasterSet || CryptoService.isEncrypted(selected.content))) ||
+    CryptoService.isEncrypted(selected.content);
+
   // ready 이후에만 렌더되므로 content는 블록 JSON이 보장됨 (손상 시 문단 폴백)
   const editorKey = `${selected.id}`;
 
@@ -918,7 +923,8 @@ export function NoteEditorView() {
             variant="unstyled"
             size="xl"
             fw={700}
-            placeholder="제목 없음 (본문에 #태그 가능)"
+            disabled={isNoteLocked}
+            placeholder={isNoteLocked ? '잠긴 노트 (마스터 비밀번호로 잠금 해제 필요)' : '제목 없음 (본문에 #태그 가능)'}
             style={{ flex: 1 }}
           />
           <Group gap="xs" wrap="nowrap">
@@ -930,11 +936,12 @@ export function NoteEditorView() {
             )}
 
             {/* 인쇄 및 미리보기 버튼 */}
-            <Tooltip label="인쇄 및 미리보기 (Ctrl+P / Cmd+P)">
+            <Tooltip label={isNoteLocked ? '잠긴 상태에서는 인쇄할 수 없습니다' : '인쇄 및 미리보기 (Ctrl+P / Cmd+P)'}>
               <ActionIcon
                 size="lg"
                 variant="light"
                 color="gray"
+                disabled={isNoteLocked}
                 onClick={() => setPrintPreviewOpen(true)}
                 aria-label="인쇄 및 미리보기"
               >
@@ -943,11 +950,12 @@ export function NoteEditorView() {
             </Tooltip>
 
             {/* PDF 내보내기 버튼 */}
-            <Tooltip label="PDF로 내보내기">
+            <Tooltip label={isNoteLocked ? '잠긴 상태에서는 내보낼 수 없습니다' : 'PDF로 내보내기'}>
               <ActionIcon
                 size="lg"
                 variant="light"
                 color="red"
+                disabled={isNoteLocked}
                 onClick={handleExportPdf}
                 aria-label="PDF로 내보내기"
               >
@@ -956,10 +964,10 @@ export function NoteEditorView() {
             </Tooltip>
 
             {/* 공유 및 내보내기 메뉴 */}
-            <Menu position="bottom-end" withArrow shadow="md" withinPortal>
+            <Menu position="bottom-end" withArrow shadow="md" withinPortal disabled={isNoteLocked}>
               <Menu.Target>
-                <Tooltip label="공유 및 내보내기">
-                  <ActionIcon size="lg" variant="light" color="blue" aria-label="공유 및 내보내기">
+                <Tooltip label={isNoteLocked ? '잠긴 상태에서는 공유할 수 없습니다' : '공유 및 내보내기'}>
+                  <ActionIcon size="lg" variant="light" color="blue" disabled={isNoteLocked} aria-label="공유 및 내보내기">
                     <IconShare size={17} />
                   </ActionIcon>
                 </Tooltip>
@@ -1032,12 +1040,13 @@ export function NoteEditorView() {
             <Divider orientation="vertical" />
 
             {/* 파스텔 색상 선택 메뉴 */}
-            <Menu position="bottom-end" withArrow shadow="md" withinPortal>
+            <Menu position="bottom-end" withArrow shadow="md" withinPortal disabled={isNoteLocked}>
               <Menu.Target>
-                <Tooltip label={`노트 색상: ${colorCfg.name}`}>
+                <Tooltip label={isNoteLocked ? '잠긴 상태에서는 색상을 변경할 수 없습니다' : `노트 색상: ${colorCfg.name}`}>
                   <ActionIcon
                     size="lg"
                     variant="subtle"
+                    disabled={isNoteLocked}
                     aria-label="노트 색상 변경"
                     style={{
                       backgroundColor: colorCfg.bg,
@@ -1076,12 +1085,13 @@ export function NoteEditorView() {
             </Menu>
 
             {/* 알람 리마인더 설정 팝오버 */}
-            <ReminderPopover note={selected} />
+            <ReminderPopover note={selected} disabled={isNoteLocked} />
 
             <Button
               size="xs"
               variant="light"
               color="gray"
+              disabled={isNoteLocked}
               leftSection={<IconHistory size={15} />}
               rightSection={
                 <Badge size="xs" variant="filled" color={selected.history.length > 0 ? 'blue' : 'gray'}>
@@ -1093,22 +1103,24 @@ export function NoteEditorView() {
               히스토리
             </Button>
             <Divider orientation="vertical" />
-            <Tooltip label={selected.pinned ? '핀 해제' : '상단 고정'}>
+            <Tooltip label={isNoteLocked ? '잠긴 상태에서는 변경할 수 없습니다' : (selected.pinned ? '핀 해제' : '상단 고정')}>
               <ActionIcon
                 size="lg"
                 variant={selected.pinned ? 'filled' : 'light'}
                 color="blue"
+                disabled={isNoteLocked}
                 onClick={() => togglePin(selected.id)}
                 aria-label="핀"
               >
                 <IconPin size={17} />
               </ActionIcon>
             </Tooltip>
-            <Tooltip label={selected.favorite ? '즐겨찾기 해제' : '즐겨찾기 등록'}>
+            <Tooltip label={isNoteLocked ? '잠긴 상태에서는 변경할 수 없습니다' : (selected.favorite ? '즐겨찾기 해제' : '즐겨찾기 등록')}>
               <ActionIcon
                 size="lg"
                 variant={selected.favorite ? 'filled' : 'light'}
                 color="yellow"
+                disabled={isNoteLocked}
                 onClick={() => toggleFavorite(selected.id)}
                 aria-label="즐겨찾기"
               >

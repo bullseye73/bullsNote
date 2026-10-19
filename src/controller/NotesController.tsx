@@ -433,11 +433,11 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
           NoteRepository.save(encrypted);
         });
       } else {
-        // 잠금 상태: 이미 암호화되어 있는 노트들만 저장 (평문 덮어쓰기 방지)
-        const allEncrypted = notes.every((n) => CryptoService.isEncrypted(n.content));
-        if (allEncrypted) {
-          NoteRepository.save(notes);
-        }
+        // 잠금 상태: all-or-nothing 게이트를 제거하고 노트 단위로 안전하게 저장.
+        // CryptoService.decrypt()가 실패 시 원문 암호문을 보존하도록 구현되어 있으므로,
+        // 잠금 중 메모리에 존재하는 평문은 "마스터 비밀번호 설정 이후 잠긴 채로 새로 생성되었거나 원래 평문이던 노트"뿐이다.
+        // 따라서 암호문은 암호문 그대로, 평문은 평문 그대로 어떤 경우에도 "저장 통째로 스킵" 없이 영속화한다.
+        NoteRepository.save(notes);
       }
     } else {
       NoteRepository.save(notes);
@@ -820,6 +820,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       setNotes((prev) =>
         prev.map((n) => {
           if (n.id === id) {
+            // 잠금 상태에서 암호화된 노트는 메타데이터 변경 방지
+            if (CryptoService.isEncrypted(n.content)) return n;
             const updated = { ...fn(n), updatedAt: Date.now() };
             queueNoteSync(updated);
             return updated;
@@ -832,7 +834,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   );
 
   const refreshTags = useCallback((note: Note, title: string, content: string): Note => {
-    return { ...note, title, content, tags: extractHashtags(title, content) };
+    // 암호화된 본문인 경우 태그를 재계산하면 ENC:v1:... 암호문에서 본문 태그가 0개로 소실되므로 기존 note.tags 유지
+    const tags = CryptoService.isEncrypted(content) ? note.tags : extractHashtags(title, content);
+    return { ...note, title, content, tags };
   }, []);
 
   const select = useCallback((id: string | null) => setSelectedId(id), []);
@@ -1007,6 +1011,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       setNotes((prev) =>
         prev.map((n) => {
           if (n.id === id) {
+            // 잠금 상태(암호화된 본문)인 경우 제목 변경 차단 (태그 및 메타데이터 무결성 보호)
+            if (CryptoService.isEncrypted(n.content)) return n;
             const updated = { ...refreshTags(withHistory(n), title, n.content), updatedAt: Date.now() };
             queueNoteSync(updated);
             return updated;
@@ -1044,6 +1050,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       setNotes((prev) =>
         prev.map((n) => {
           if (n.id === id) {
+            // 잠금 상태(암호화된 본문)인 경우 알람 설정 변경 차단
+            if (CryptoService.isEncrypted(n.content)) return n;
             const updated = { ...n, reminder, updatedAt: Date.now() };
             queueNoteSync(updated);
             return updated;
@@ -1206,9 +1214,12 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
           const snap = n.history.find((h) => h.savedAt === savedAt);
           if (!snap) return n;
           const cur: Note = withHistory(n, true);
+          const restoredTags = CryptoService.isEncrypted(snap.content)
+            ? (snap.tags.length > 0 ? snap.tags : n.tags)
+            : (snap.tags.length > 0 ? snap.tags : extractHashtags(snap.title, snap.content));
           const updated = {
             ...refreshTags(cur, snap.title, snap.content),
-            tags: snap.tags.length > 0 ? snap.tags : extractHashtags(snap.title, snap.content),
+            tags: restoredTags,
             updatedAt: Date.now(),
           };
           queueNoteSync(updated);
