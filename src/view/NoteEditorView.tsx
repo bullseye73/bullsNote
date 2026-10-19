@@ -138,6 +138,15 @@ function BlockEditor({
     return [{ type: 'paragraph', content: text || '' } as never];
   }, [note.id, note.content, note.attachments, notes]);
 
+  // 에디터 자체 방출 콘텐츠와 외부 변경(히스토리 복원, 동기화 등)을 구분하기 위한 ref
+  const lastEmittedRef = useRef<string>(note.content);
+  const isApplyingExternalRef = useRef<boolean>(false);
+
+  // note.id가 변경될 때 (노트 전환 시) lastEmittedRef 동기화
+  useEffect(() => {
+    lastEmittedRef.current = note.content;
+  }, [note.id]);
+
   // Supabase 스토리지 연동 여부에 따른 파일 업로드 핸들러
   const handleUploadFile = useCallback(
     async (file: File): Promise<string> => {
@@ -359,11 +368,48 @@ function BlockEditor({
       traverse(editor.document as any);
 
       if (modified) {
-        updateContent(note.id, JSON.stringify(editor.document));
+        const json = JSON.stringify(editor.document);
+        lastEmittedRef.current = json;
+        updateContent(note.id, json);
       }
     },
     [editor, note.id, updateContent]
   );
+
+  // 외부 변경(히스토리 복원, vault poll, supabase sync, onResetNote 등)을 에디터 문서에 반영
+  useEffect(() => {
+    // 에디터 자신이 직렬화해서 내보낸 내용과 동일하면 외부 변경이 아님
+    if (note.content === lastEmittedRef.current) {
+      return;
+    }
+
+    const blocks = parseBlocks(note.content);
+    // 손상된 콘텐츠이거나 빈 배열/비정상 구조면 아무 것도 하지 않음 (기존 문서 보호)
+    if (!blocks) {
+      return;
+    }
+
+    const markedBlocks = markDeletedBlocks(blocks, note.attachments, notes);
+
+    isApplyingExternalRef.current = true;
+    try {
+      editor.replaceBlocks(editor.document, markedBlocks as never);
+      lastEmittedRef.current = note.content;
+    } finally {
+      // replaceBlocks로 유발된 동기 이벤트를 무시한 뒤, 비동기 틱까지 안전하게 가드 후 해제
+      queueMicrotask(() => {
+        isApplyingExternalRef.current = false;
+      });
+    }
+  }, [note.content, note.attachments, notes, editor]);
+
+  // 에디터 내부 변경 핸들러: 외부 변경 반영 중에는 호출을 건너뛰어 무한 루프 방지
+  const handleEditorChange = useCallback(() => {
+    if (isApplyingExternalRef.current) return;
+    const json = JSON.stringify(editor.document);
+    lastEmittedRef.current = json;
+    updateContent(note.id, json);
+  }, [editor, note.id, updateContent]);
 
   // 에디터 DOM 내 삭제된 첨부파일 링크 및 파일 블록에 data-deleted-attachment 속성 동적 부여
   useEffect(() => {
@@ -522,7 +568,7 @@ function BlockEditor({
             editor={editor}
             theme={scheme === 'dark' ? 'dark' : 'light'}
             slashMenu={false}
-            onChange={() => updateContent(note.id, JSON.stringify(editor.document))}
+            onChange={handleEditorChange}
           >
             {/* 해시태그(#) 입력 시 실시간 추천 및 자동완성 메뉴 */}
             <SuggestionMenuController
