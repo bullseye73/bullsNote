@@ -11,6 +11,7 @@ import {
   defaultStyleSpecs,
 } from '@blocknote/core';
 import { createHighlighter } from 'shiki';
+import { createJavaScriptRegexEngine } from 'shiki/engine/javascript';
 
 /** 코드 블록 언어 선택 목록 (키는 Shiki 언어 id와 일치) */
 export const CODE_LANGUAGES: Record<string, { name: string; aliases?: string[] }> = {
@@ -125,9 +126,24 @@ export function createRichCodeBlock(
 
     handleLanguageChange = (event: Event) => {
       if (!editor.isEditable) return;
+      const newLang = (event.target as HTMLSelectElement).value;
       editor.updateBlock(block.id, {
-        props: { language: (event.target as HTMLSelectElement).value },
+        props: { language: newLang },
       });
+      // 언어 변경 즉시 prosemirror-highlight 플러그인이 새 언어로 재파싱하도록 트리거
+      try {
+        editor.transact((tr: any) => {
+          tr.setMeta('prosemirror-highlight-refresh', true);
+        });
+      } catch {
+        try {
+          const view = (editor as any)._tiptapEditor?.view;
+          if (view) {
+            const tr = view.state.tr.setMeta('prosemirror-highlight-refresh', true);
+            view.dispatch(tr);
+          }
+        } catch {}
+      }
     };
 
     if (editor.isEditable) {
@@ -388,7 +404,11 @@ export const createRichCodeBlockSpec = (createBlockSpec as any)(
       code: true,
       defining: true,
       isolating: false,
-      highlight: (block: any) => block.props.language,
+      highlight: (block: any) => {
+        if (typeof block?.props === 'string') return block.props;
+        const lang = block?.props?.language ?? block?.attrs?.language;
+        return lang || 'javascript';
+      },
     },
     parse: (el: HTMLElement) => parsePreCode(el),
     parseContent: (opts: any) => parsePreCodeContent(opts, 'codeBlock'),
@@ -413,7 +433,10 @@ export function getAppSchema() {
     schemaCache = new CustomBlockNoteSchema({
       blockSpecs: {
         ...defaultBlockSpecs,
-        codeBlock: createRichCodeBlockSpec({ supportedLanguages: CODE_LANGUAGES }),
+        codeBlock: createRichCodeBlockSpec({
+          defaultLanguage: 'javascript',
+          supportedLanguages: CODE_LANGUAGES,
+        }),
       },
       inlineContentSpecs: defaultInlineContentSpecs,
       styleSpecs: defaultStyleSpecs,
@@ -425,10 +448,11 @@ export function getAppSchema() {
 type Highlighter = Awaited<ReturnType<typeof createHighlighter>>;
 let highlighterCache: Promise<Highlighter> | null = null;
 
-/** Shiki 하이라이터 싱글톤 (라이트/다크 테마 동시 로드) */
+/** Shiki 하이라이터 싱글톤 (JS 정규식 엔진 사용으로 WASM 의존성 없이 안정적 구문 강조) */
 export function getHighlighter(): Promise<Highlighter> {
   if (!highlighterCache) {
     highlighterCache = createHighlighter({
+      engine: createJavaScriptRegexEngine(),
       themes: ['github-light', 'github-dark'],
       langs: SHIKI_LANGS,
     });

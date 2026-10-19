@@ -142,11 +142,11 @@ export function EditorToolbar({
       } else {
         editor.updateBlock(b, {
           type: 'codeBlock',
-          props: { language: 'text' },
+          props: { language: 'javascript' },
         } as never);
       }
     } else {
-      insertAfter({ type: 'codeBlock', props: { language: 'text' } });
+      insertAfter({ type: 'codeBlock', props: { language: 'javascript' } });
     }
     editor.focus();
   };

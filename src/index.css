@@ -744,7 +744,7 @@ span[data-style-type="code"]:hover {
   border-radius: 0 !important;
   padding: 0 !important;
   margin: 0 !important;
-  color: #f4f4f5 !important;
+  color: #f4f4f5;
   font-size: 13.5px !important;
   font-family: 'JetBrains Mono', 'Fira Code', Menlo, Monaco, Consolas, monospace !important;
   display: block !important;
@@ -752,11 +752,33 @@ span[data-style-type="code"]:hover {
   box-shadow: none !important;
 }
 
-/* Shiki 하이라이팅 토큰 span: 배경 및 테두리 초기화 */
+/* Shiki 하이라이팅 토큰 span: 배경 및 테두리 초기화, Shiki 컬러 변수 우선 적용 */
 .bn-code-body pre code span {
   background: transparent !important;
   border: none !important;
   border-radius: 0 !important;
+}
+
+/* Shiki 문법 하이라이팅 토큰 컬러 보장 (다크/라이트 테마 공통 코드블록 다크 배경) */
+.shiki,
+span.shiki,
+.bn-code-body pre code .shiki,
+.bn-code-body pre code span.shiki,
+.bn-block-content[data-content-type="codeBlock"] pre code .shiki,
+.bn-block-content[data-content-type="codeBlock"] pre code span.shiki {
+  color: var(--shiki-dark, inherit) !important;
+}
+
+.bn-code-body pre code span[style*="--shiki-dark"] {
+  color: var(--shiki-dark) !important;
+}
+
+.bn-code-body pre code span[style*="--shiki-light"]:not([style*="--shiki-dark"]) {
+  color: var(--shiki-light) !important;
+}
+
+.bn-code-body pre code span[style*="color:"] {
+  color: revert !important;
 }
 
 /* 라이트 모드 지원 */

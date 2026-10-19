@@ -125,7 +125,11 @@ export const CodeShortcutsExtension = createExtension(({ editor }) => {
           const cursor = editor.getTextCursorPosition();
           const block = cursor.block;
           if (block.type === 'codeBlock') {
-            return false; // 이미 코드 블록 내부인 경우 기본 줄바꿈 허용
+            // 코드 블록 내부에서는 블록을 빠져나가지 않고 줄바꿈(\n)만 수행
+            return editor.transact((tr) => {
+              tr.insertText('\n');
+              return true;
+            });
           }
 
           // 현재 블록의 텍스트 확인
@@ -139,7 +143,7 @@ export const CodeShortcutsExtension = createExtension(({ editor }) => {
           const match = text.trim().match(/^```([a-zA-Z0-9_\-+#]*)$/);
           if (match) {
             const rawLang = match[1];
-            const language = rawLang ? resolveCodeLanguage(rawLang) : 'text';
+            const language = rawLang ? resolveCodeLanguage(rawLang) : 'javascript';
 
             editor.updateBlock(block, {
               type: 'codeBlock',
@@ -151,6 +155,57 @@ export const CodeShortcutsExtension = createExtension(({ editor }) => {
         } catch {
           // 예외 발생 시 기본 동작 유지
         }
+        return false;
+      },
+      // Shift+Enter도 코드 블록 내에서는 줄바꿈 유지
+      'Shift-Enter': () => {
+        try {
+          const cursor = editor.getTextCursorPosition();
+          const block = cursor.block;
+          if (block.type === 'codeBlock') {
+            return editor.transact((tr) => {
+              tr.insertText('\n');
+              return true;
+            });
+          }
+        } catch {}
+        return false;
+      },
+      // Ctrl + Enter (Mac: Cmd + Enter)로 코드 블록 빠져나오기
+      'Mod-Enter': () => {
+        try {
+          const cursor = editor.getTextCursorPosition();
+          const block = cursor.block;
+          if (block.type === 'codeBlock') {
+            const nextBlock = cursor.nextBlock;
+            if (nextBlock) {
+              editor.setTextCursorPosition(nextBlock, 'start');
+              return true;
+            }
+            // 다음 블록이 없으면 새 문단 생성 후 이동
+            const [newBlock] = editor.insertBlocks(
+              [{ type: 'paragraph' }],
+              block,
+              'after'
+            );
+            editor.setTextCursorPosition(newBlock, 'start');
+            return true;
+          }
+        } catch {}
+        return false;
+      },
+      // 코드 블록 내 Tab 들여쓰기 지원 (2공백)
+      Tab: () => {
+        try {
+          const cursor = editor.getTextCursorPosition();
+          const block = cursor.block;
+          if (block.type === 'codeBlock') {
+            return editor.transact((tr) => {
+              tr.insertText('  ');
+              return true;
+            });
+          }
+        } catch {}
         return false;
       },
       Space: () => {
@@ -171,7 +226,7 @@ export const CodeShortcutsExtension = createExtension(({ editor }) => {
           const match = text.trim().match(/^```([a-zA-Z0-9_\-+#]*)$/);
           if (match) {
             const rawLang = match[1];
-            const language = rawLang ? resolveCodeLanguage(rawLang) : 'text';
+            const language = rawLang ? resolveCodeLanguage(rawLang) : 'javascript';
 
             editor.updateBlock(block, {
               type: 'codeBlock',
@@ -195,7 +250,7 @@ export const CodeShortcutsExtension = createExtension(({ editor }) => {
           } else {
             editor.updateBlock(block, {
               type: 'codeBlock',
-              props: { language: 'text' },
+              props: { language: 'javascript' },
             } as never);
           }
           return true;
