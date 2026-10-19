@@ -1016,16 +1016,24 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   const create = useCallback(
     (parentId: string | null = null) => {
+      let initialColor = 'blue';
+      if (parentId) {
+        const parent = notes.find((x) => x.id === parentId);
+        if (parent?.color) {
+          initialColor = parent.color;
+        }
+      }
       const n = createEmptyNote({
         title: '새 노트',
         projectId: selectedProjectId,
         parentId,
+        color: initialColor,
       });
       setNotes((prev) => [n, ...prev]);
       setSelectedId(n.id);
       queueNoteSync(n);
     },
-    [selectedProjectId, queueNoteSync],
+    [selectedProjectId, notes, queueNoteSync],
   );
 
   const duplicate = useCallback(
@@ -1116,8 +1124,22 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   );
 
   const updateColor = useCallback(
-    (id: string, color: string) => mutate(id, (n) => ({ ...n, color })),
-    [mutate],
+    (id: string, color: string) => {
+      setNotes((prev) => {
+        // 부모 노드의 색상 변경 시 모든 자손(자식, 손자 등) 노드의 색상도 함께 연동 변경
+        const targetIds = getDescendantIds(prev, id);
+        return prev.map((n) => {
+          if (targetIds.has(n.id)) {
+            if (n.color === color) return n;
+            const updated = { ...n, color, updatedAt: Date.now() };
+            queueNoteSync(updated);
+            return updated;
+          }
+          return n;
+        });
+      });
+    },
+    [queueNoteSync],
   );
 
   const setReminder = useCallback(
@@ -1216,9 +1238,23 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         // 사이클 방지: 자손을 부모로 지정 불가
         if (parentId && getDescendantIds(prev, id).has(parentId)) return prev;
         if (parentId && !prev.some((n) => n.id === parentId)) return prev;
+
+        const parentColor = parentId ? prev.find((n) => n.id === parentId)?.color : null;
+        const targetIds = parentColor ? getDescendantIds(prev, id) : null;
+
         return prev.map((n) => {
           if (n.id === id) {
-            const updated = { ...n, parentId, updatedAt: Date.now() };
+            const updated = {
+              ...n,
+              parentId,
+              color: parentColor || n.color,
+              updatedAt: Date.now(),
+            };
+            queueNoteSync(updated);
+            return updated;
+          }
+          if (targetIds && targetIds.has(n.id) && parentColor) {
+            const updated = { ...n, color: parentColor, updatedAt: Date.now() };
             queueNoteSync(updated);
             return updated;
           }

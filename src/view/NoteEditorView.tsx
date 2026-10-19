@@ -1061,7 +1061,7 @@ export function NoteEditorView() {
               </Menu.Target>
               <Menu.Dropdown>
                 <Menu.Label>노트 색상 변경</Menu.Label>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6, padding: '4px 8px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, padding: '6px 8px' }}>
                   {Object.values(PASTEL_COLORS).map((c) => {
                     const isCurrent = (selected.color || 'blue') === c.id;
                     return (

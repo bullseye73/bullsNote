@@ -110,6 +110,17 @@ export const PASTEL_COLORS: Record<string, PastelColorConfig> = {
     badgeColor: '#2f1554',
     iconColor: '#2f1554',
   },
+  teal: {
+    id: 'teal',
+    name: '오션 틸',
+    bg: '#e6fffa',
+    border: '#12b886',
+    textColor: '#08483b',
+    dimmedColor: '#1d6e5d',
+    badgeBg: 'rgba(8, 72, 59, 0.12)',
+    badgeColor: '#08483b',
+    iconColor: '#08483b',
+  },
   gray: {
     id: 'gray',
     name: '소프트 그레이',
