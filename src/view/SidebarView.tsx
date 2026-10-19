@@ -87,6 +87,7 @@ export function SidebarView({ onOpenSupabaseModal }: SidebarViewProps) {
     vaultMode,
     vaultPath,
     vaultError,
+    storageError,
     chooseVault,
     resync,
     supabaseConnected,
@@ -287,9 +288,16 @@ export function SidebarView({ onOpenSupabaseModal }: SidebarViewProps) {
           )}
         </Stack>
       ) : (
-        <Text size="xs" c="dimmed">
-          브라우저 모드: localStorage 저장 (Electron 앱에서 파일 저장 지원)
-        </Text>
+        <Stack gap={4}>
+          <Text size="xs" c="dimmed">
+            브라우저 모드: localStorage 저장 (Electron 앱에서 파일 저장 지원)
+          </Text>
+          {storageError && (
+            <Text size="xs" c="red" fw={600} style={{ wordBreak: 'break-all' }}>
+              {storageError}
+            </Text>
+          )}
+        </Stack>
       )}
 
       {/* Supabase 클라우드 동기화 섹션 */}

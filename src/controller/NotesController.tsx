@@ -89,6 +89,7 @@ export interface NotesState {
   vaultMode: boolean;
   vaultPath: string;
   vaultError: string;
+  storageError: string;
   activeAlarmNote: Note | null;
   /** Supabase 클라우드 연동 상태 */
   supabaseConnected: boolean;
@@ -193,6 +194,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
   const [vaultPath, setVaultPath] = useState('');
   const [vaultError, setVaultError] = useState('');
+  const [storageError, setStorageError] = useState('');
   const [vaultGen, setVaultGen] = useState(0);
   const vaultInitGenRef = useRef(-1);
   const [search, setSearch] = useState('');
@@ -200,6 +202,12 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const [showFavoriteOnly, setShowFavoriteOnly] = useState(false);
   const [activeAlarmNote, setActiveAlarmNote] = useState<Note | null>(null);
   const triggeredAlarmsRef = useRef<Set<string>>(new Set());
+
+  // localStorage 모드 영속화 추적 (디바운스, 순번 토큰, 즉시 flush)
+  const localSaveSeqRef = useRef(0);
+  const localSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isLocalSavePendingRef = useRef(false);
+  const flushLocalSaveRef = useRef<(() => Promise<void>) | null>(null);
 
   // Supabase 클라우드 연동 상태
   const [supabaseConfig, setSupabaseConfigState] = useState<SupabaseConfig>(() => SupabaseService.getConfig());
@@ -330,9 +338,18 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   );
 
   const lockMasterPassword = useCallback(async () => {
+    if (isLocalSavePendingRef.current && flushLocalSaveRef.current) {
+      if (localSaveTimerRef.current) clearTimeout(localSaveTimerRef.current);
+      await flushLocalSaveRef.current();
+    }
     // 잠그기 전 현재 평문 노트들을 암호화하여 로컬에 저장
     const encrypted = await CryptoService.encryptNotes(notes);
-    NoteRepository.save(encrypted);
+    const res = NoteRepository.save(encrypted);
+    if (!res.success) {
+      setStorageError(res.error || '저장 실패');
+    } else {
+      setStorageError('');
+    }
     CryptoService.lock();
     setIsUnlocked(false);
     // 메모리 상태도 암호화된 상태로 전환하여 평문 메모리 폐기
@@ -343,7 +360,12 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     // 현재 복호화된 평문 상태의 노트를 로컬에 그대로 저장
     const decrypted = await CryptoService.decryptNotes(notes);
     setNotes(decrypted);
-    NoteRepository.save(decrypted);
+    const res = NoteRepository.save(decrypted);
+    if (!res.success) {
+      setStorageError(res.error || '저장 실패');
+    } else {
+      setStorageError('');
+    }
     CryptoService.removeMasterPassword();
     setIsMasterSet(false);
     setIsUnlocked(false);
@@ -423,26 +445,65 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const isSavePendingRef = useRef(false);
   const flushSaveRef = useRef<(() => Promise<void>) | null>(null);
 
-  // localStorage 모드: 마스터 비밀번호 활성화 시 암호화하여 영속화
+  const doLocalSave = useCallback(
+    async (currentNotes: Note[], isMaster: boolean, unlocked: boolean, seq: number) => {
+      isLocalSavePendingRef.current = false;
+      try {
+        let notesToSave = currentNotes;
+        if (isMaster) {
+          if (unlocked) {
+            notesToSave = await CryptoService.encryptNotes(currentNotes);
+            // 비동기 암호화 완료 후 자신이 최신 요청인지 순번 확인 (경합 방지)
+            if (seq !== localSaveSeqRef.current) {
+              return;
+            }
+          } else {
+            // 잠금 상태: 암호문은 암호문, 평문은 평문 보존
+            notesToSave = currentNotes;
+          }
+        }
+        const res = NoteRepository.save(notesToSave);
+        if (seq === localSaveSeqRef.current) {
+          if (res.success) {
+            setStorageError('');
+          } else {
+            setStorageError(res.error || '저장소 저장 실패');
+          }
+        }
+      } catch (err) {
+        if (seq === localSaveSeqRef.current) {
+          const msg = `저장 실패: ${err instanceof Error ? err.message : String(err)}`;
+          setStorageError(msg);
+        }
+      }
+    },
+    [],
+  );
+
+  // localStorage 모드: 디바운스(400ms) 및 순번 토큰을 적용하여 영속화 (키 입력마다 전체 재암호화 방지)
   useEffect(() => {
     if (vaultMode) return;
-    if (isMasterSet) {
-      if (isUnlocked) {
-        // 언락 상태(평문 메모리 보유 중): 백그라운드에서 암호화하여 안전하게 저장
-        void CryptoService.encryptNotes(notes).then((encrypted) => {
-          NoteRepository.save(encrypted);
-        });
-      } else {
-        // 잠금 상태: all-or-nothing 게이트를 제거하고 노트 단위로 안전하게 저장.
-        // CryptoService.decrypt()가 실패 시 원문 암호문을 보존하도록 구현되어 있으므로,
-        // 잠금 중 메모리에 존재하는 평문은 "마스터 비밀번호 설정 이후 잠긴 채로 새로 생성되었거나 원래 평문이던 노트"뿐이다.
-        // 따라서 암호문은 암호문 그대로, 평문은 평문 그대로 어떤 경우에도 "저장 통째로 스킵" 없이 영속화한다.
-        NoteRepository.save(notes);
-      }
-    } else {
-      NoteRepository.save(notes);
+
+    localSaveSeqRef.current += 1;
+    const currentSeq = localSaveSeqRef.current;
+    isLocalSavePendingRef.current = true;
+
+    const runSave = () => doLocalSave(notes, isMasterSet, isUnlocked, currentSeq);
+    flushLocalSaveRef.current = runSave;
+
+    if (localSaveTimerRef.current) {
+      clearTimeout(localSaveTimerRef.current);
     }
-  }, [notes, vaultMode, isMasterSet, isUnlocked]);
+    localSaveTimerRef.current = setTimeout(() => {
+      void runSave();
+    }, 400);
+
+    return () => {
+      if (localSaveTimerRef.current) {
+        clearTimeout(localSaveTimerRef.current);
+      }
+    };
+  }, [notes, vaultMode, isMasterSet, isUnlocked, doLocalSave]);
 
   useEffect(() => {
     if (vaultMode) return;
@@ -644,6 +705,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       if (isSavePendingRef.current && flushSaveRef.current) {
         void flushSaveRef.current();
       }
+      if (isLocalSavePendingRef.current && flushLocalSaveRef.current) {
+        void flushLocalSaveRef.current();
+      }
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
@@ -839,7 +903,14 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     return { ...note, title, content, tags };
   }, []);
 
-  const select = useCallback((id: string | null) => setSelectedId(id), []);
+  const select = useCallback((id: string | null) => {
+    // 노트 전환 시 미저장된 로컬 변경 즉시 flush
+    if (isLocalSavePendingRef.current && flushLocalSaveRef.current) {
+      if (localSaveTimerRef.current) clearTimeout(localSaveTimerRef.current);
+      void flushLocalSaveRef.current();
+    }
+    setSelectedId(id);
+  }, []);
 
   const selectedProject = useMemo(
     () => projects.find((p) => p.id === selectedProjectId) ?? projects[0] ?? null,
@@ -1435,6 +1506,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       vaultMode,
       vaultPath,
       vaultError,
+      storageError,
       activeAlarmNote,
       supabaseConnected,
       supabaseConfig,
@@ -1511,6 +1583,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       vaultMode,
       vaultPath,
       vaultError,
+      storageError,
       activeAlarmNote,
       supabaseConnected,
       supabaseConfig,

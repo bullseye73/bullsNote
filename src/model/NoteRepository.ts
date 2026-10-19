@@ -103,12 +103,32 @@ function safeParseProjects(raw: string | null): Project[] {
   }
 }
 
+export interface SaveResult {
+  success: boolean;
+  error?: string;
+}
+
 export const NoteRepository = {
   load(): Note[] {
     return safeParse(localStorage.getItem(STORAGE_KEY));
   },
-  save(notes: Note[]): void {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(notes));
+  save(notes: Note[]): SaveResult {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(notes));
+      return { success: true };
+    } catch (e: unknown) {
+      const isQuota =
+        e instanceof DOMException &&
+        (e.name === 'QuotaExceededError' ||
+          e.name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
+          e.code === 22 ||
+          e.code === 1014);
+      const msg = isQuota
+        ? '저장 실패: 브라우저 저장소(localStorage) 용량이 초과되었습니다. 본문 내 이미지(dataURL) 누적이 원인일 수 있습니다. 이미지를 줄이거나 파일 볼트/클라우드 스토리지를 이용해주세요.'
+        : `저장 실패: ${e instanceof Error ? e.message : String(e)}`;
+      console.error(msg, e);
+      return { success: false, error: msg };
+    }
   },
   loadProjects(): Project[] {
     return safeParseProjects(localStorage.getItem(PROJECTS_STORAGE_KEY));

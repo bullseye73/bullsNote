@@ -672,6 +672,7 @@ export function NoteEditorView() {
     restoreHistory,
     isMasterSet,
     isUnlocked,
+    storageError,
     unlockMasterPassword,
     openSecurityModal,
   } = useNotes();
@@ -1166,6 +1167,24 @@ export function NoteEditorView() {
             ? '🔒 암호화됨'
             : `${noteBodyText(selected.content).length}자`}
         </Text>
+        {storageError && (
+          <Badge
+            size="md"
+            color="red"
+            variant="filled"
+            fullWidth
+            style={{
+              borderRadius: 6,
+              padding: '8px 12px',
+              height: 'auto',
+              whiteSpace: 'normal',
+              textAlign: 'left',
+              marginBottom: 8,
+            }}
+          >
+            ⚠️ {storageError}
+          </Badge>
+        )}
       </div>
 
       {(!isUnlocked && (isMasterSet || CryptoService.isEncrypted(selected.content))) ||
