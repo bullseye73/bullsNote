@@ -82,6 +82,12 @@ import {
   sanitizeFileName,
   shareNative,
 } from '../model/exportUtils';
+import {
+  HashtagExtension,
+  CodeShortcutsExtension,
+  getHashtagSuggestions,
+} from '../model/editorExtensions';
+import { IconHash } from '@tabler/icons-react';
 
 type AnyEditor = BlockNoteEditor<any, any, any>;
 
@@ -110,6 +116,7 @@ function BlockEditor({
     select,
     notes,
     projects,
+    setActiveTag,
     supabaseConnected,
     supabaseConfig,
     openSupabaseModal,
@@ -210,7 +217,11 @@ function BlockEditor({
       schema: getAppSchema() as never,
       initialContent,
       uploadFile: handleUploadFile,
-      extensions: [createSyntaxExtension()],
+      extensions: [
+        createSyntaxExtension(),
+        HashtagExtension(),
+        CodeShortcutsExtension(),
+      ],
       links: {
         onClick: handleLinkClick,
       },
@@ -389,6 +400,24 @@ function BlockEditor({
           fb.removeAttribute('title');
         }
       });
+      // 3. 코드 블록에 원클릭 복사 버튼 주입
+      const codeBlocks = container.querySelectorAll<HTMLElement>('[data-content-type="codeBlock"]');
+      codeBlocks.forEach((cb) => {
+        if (!cb.querySelector('.bn-code-copy-btn')) {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'bn-code-copy-btn';
+          btn.setAttribute('aria-label', '코드 복사');
+          btn.innerHTML = `
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+            <span class="copy-text">복사</span>
+          `;
+          cb.appendChild(btn);
+        }
+      });
     };
 
     markDeletedElements();
@@ -492,6 +521,40 @@ function BlockEditor({
                 return;
               }
             }
+
+            // 4. 본문 내 해시태그(#태그) 칩 클릭 시 해당 태그로 즉시 필터링
+            const hashtagBadge = (e.target as HTMLElement).closest('.bn-hashtag-badge');
+            if (hashtagBadge) {
+              const tag = hashtagBadge.getAttribute('data-tag');
+              if (tag) {
+                e.preventDefault();
+                e.stopPropagation();
+                setActiveTag(tag);
+                return;
+              }
+            }
+
+            // 5. 코드 블록 내 복사 버튼 클릭 시 코드 내용 복사
+            const copyBtn = (e.target as HTMLElement).closest('.bn-code-copy-btn');
+            if (copyBtn) {
+              e.preventDefault();
+              e.stopPropagation();
+              const cb = copyBtn.closest('[data-content-type="codeBlock"]');
+              const codeEl = cb?.querySelector('code');
+              if (codeEl) {
+                const codeText = codeEl.textContent || '';
+                void navigator.clipboard.writeText(codeText).then(() => {
+                  copyBtn.classList.add('copied');
+                  const textSpan = copyBtn.querySelector('.copy-text');
+                  if (textSpan) textSpan.textContent = '복사됨!';
+                  setTimeout(() => {
+                    copyBtn.classList.remove('copied');
+                    if (textSpan) textSpan.textContent = '복사';
+                  }, 1800);
+                });
+              }
+              return;
+            }
           }}
         >
           <BlockNoteView
@@ -500,6 +563,13 @@ function BlockEditor({
             slashMenu={false}
             onChange={() => updateContent(note.id, JSON.stringify(editor.document))}
           >
+            {/* 해시태그(#) 입력 시 실시간 추천 및 자동완성 메뉴 */}
+            <SuggestionMenuController
+              triggerCharacter="#"
+              getItems={async (query) =>
+                getHashtagSuggestions(query, editor, notes, note)
+              }
+            />
             {/* 노션 스타일 @ 멘션 통합 추천 메뉴 (서브노트, 부모노트, 다른 노트 검색, 날짜 파싱) */}
             <SuggestionMenuController
               triggerCharacter="@"
@@ -1041,16 +1111,32 @@ export function NoteEditorView() {
           </Group>
         </Group>
 
-        <Group gap={4} mb={4}>
+        <Group gap={6} mb={6} align="center">
+          <ThemeIcon size={20} variant="subtle" color="blue" radius="sm">
+            <IconHash size={15} />
+          </ThemeIcon>
           {selected.tags.length === 0 ? (
             <Text size="xs" c="dimmed">
-              #태그 없음 — 본문에 예를 들어 #회의록 을 입력하세요.
+              태그 없음 — 본문에 <Text span fw={600} c="blue.6">#태그명</Text>을 입력하면 실시간으로 감지 및 분류됩니다.
             </Text>
           ) : (
             selected.tags.map((t) => (
-              <Badge key={t} variant="light" style={{ cursor: 'pointer' }} onClick={() => setActiveTag(t)}>
-                #{t}
-              </Badge>
+              <Tooltip key={t} label={`#${t} 태그로 목록 필터링`}>
+                <Badge
+                  key={t}
+                  variant="light"
+                  color="blue"
+                  size="sm"
+                  style={{
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease',
+                    fontWeight: 600,
+                  }}
+                  onClick={() => setActiveTag(t)}
+                >
+                  #{t}
+                </Badge>
+              </Tooltip>
             ))
           )}
         </Group>

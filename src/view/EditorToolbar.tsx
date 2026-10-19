@@ -12,6 +12,7 @@ import {
   IconH1,
   IconH2,
   IconH3,
+  IconHash,
   IconHeading,
   IconHighlight,
   IconItalic,
@@ -133,6 +134,23 @@ export function EditorToolbar({
     editor.focus();
   };
 
+  const toggleOrInsertCodeBlock = () => {
+    const b = cursorBlock();
+    if (b) {
+      if (b.type === 'codeBlock') {
+        editor.updateBlock(b, { type: 'paragraph' } as never);
+      } else {
+        editor.updateBlock(b, {
+          type: 'codeBlock',
+          props: { language: 'text' },
+        } as never);
+      }
+    } else {
+      insertAfter({ type: 'codeBlock', props: { language: 'text' } });
+    }
+    editor.focus();
+  };
+
   const copyMarkdown = async () => {
     try {
       await navigator.clipboard.writeText(editor.blocksToMarkdownLossy());
@@ -173,8 +191,26 @@ export function EditorToolbar({
       <Tool label="취소선" onClick={() => editor.toggleStyles({ strike: true })}>
         <IconStrikethrough size={16} />
       </Tool>
-      <Tool label="인라인 코드" onClick={() => editor.toggleStyles({ code: true })}>
+      <Tool
+        label="싱글라인 인라인 코드 (Ctrl+` 또는 Ctrl+E, `코드`)"
+        onClick={() => editor.toggleStyles({ code: true })}
+      >
         <IconCode size={16} />
+      </Tool>
+      <Tool
+        label="멀티라인 코드 블록 (``` + Enter 또는 Ctrl+Alt+C)"
+        onClick={toggleOrInsertCodeBlock}
+      >
+        <IconTerminal size={16} />
+      </Tool>
+      <Tool
+        label="해시태그 삽입 (단축키: #)"
+        onClick={() => {
+          editor.focus();
+          editor.insertInlineContent('#');
+        }}
+      >
+        <IconHash size={16} />
       </Tool>
 
       {/* 글자색 드롭다운 */}

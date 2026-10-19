@@ -451,6 +451,216 @@ a[data-deleted-attachment="true"]::after {
   border-color: rgba(255, 107, 107, 0.4);
 }
 
+/* ==========================================================================
+   에디터 본문 내 해시태그 (#태그) 시각적 강조 및 인터랙티브 배지
+   ========================================================================== */
+.bn-hashtag-badge {
+  display: inline-flex !important;
+  align-items: center !important;
+  background-color: rgba(37, 99, 235, 0.09) !important;
+  color: var(--mantine-color-blue-7) !important;
+  border: 1px solid rgba(37, 99, 235, 0.22) !important;
+  border-radius: 4px !important;
+  padding: 1px 6px !important;
+  margin: 0 2px !important;
+  font-weight: 600 !important;
+  font-size: 0.94em !important;
+  line-height: 1.4 !important;
+  letter-spacing: -0.2px !important;
+  cursor: pointer !important;
+  transition: all 0.15s ease !important;
+  user-select: text !important;
+}
+
+.bn-hashtag-badge:hover {
+  background-color: rgba(37, 99, 235, 0.18) !important;
+  border-color: var(--mantine-color-blue-5) !important;
+  color: var(--mantine-color-blue-9) !important;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 5px rgba(37, 99, 235, 0.18) !important;
+}
+
+[data-mantine-color-scheme="dark"] .bn-hashtag-badge {
+  background-color: rgba(59, 130, 246, 0.18) !important;
+  color: var(--mantine-color-blue-3) !important;
+  border-color: rgba(59, 130, 246, 0.38) !important;
+}
+
+[data-mantine-color-scheme="dark"] .bn-hashtag-badge:hover {
+  background-color: rgba(59, 130, 246, 0.3) !important;
+  border-color: var(--mantine-color-blue-4) !important;
+  color: #fff !important;
+  box-shadow: 0 2px 6px rgba(59, 130, 246, 0.25) !important;
+}
+
+/* ==========================================================================
+   싱글라인 (인라인) 코드 시각화 (Inline Code Styling)
+   ========================================================================== */
+.bn-editor code,
+.bn-inline-content code,
+[data-style-type="code"],
+.bn-editor [data-style-type="code"] {
+  display: inline !important;
+  font-family: 'JetBrains Mono', 'Fira Code', Menlo, Monaco, Consolas, "Liberation Mono", monospace !important;
+  font-size: 0.88em !important;
+  padding: 2px 6px !important;
+  margin: 0 2px !important;
+  border-radius: 4px !important;
+  background-color: rgba(225, 29, 72, 0.06) !important;
+  color: #c2255c !important;
+  border: 1px solid rgba(225, 29, 72, 0.18) !important;
+  font-weight: 500 !important;
+  box-decoration-break: clone !important;
+  -webkit-box-decoration-break: clone !important;
+  transition: background-color 0.15s ease, border-color 0.15s ease !important;
+}
+
+.bn-editor code:hover,
+[data-style-type="code"]:hover {
+  background-color: rgba(225, 29, 72, 0.1) !important;
+  border-color: rgba(225, 29, 72, 0.3) !important;
+}
+
+[data-mantine-color-scheme="dark"] .bn-editor code,
+[data-mantine-color-scheme="dark"] .bn-inline-content code,
+[data-mantine-color-scheme="dark"] [data-style-type="code"] {
+  background-color: rgba(255, 255, 255, 0.1) !important;
+  color: #ffa94d !important;
+  border-color: rgba(255, 255, 255, 0.18) !important;
+}
+
+[data-mantine-color-scheme="dark"] .bn-editor code:hover,
+[data-mantine-color-scheme="dark"] [data-style-type="code"]:hover {
+  background-color: rgba(255, 255, 255, 0.16) !important;
+  border-color: rgba(255, 255, 255, 0.3) !important;
+}
+
+/* ==========================================================================
+   멀티라인 / 블록 코드 시각화 (Multiline Code Block Styling)
+   ========================================================================== */
+.bn-block-content[data-content-type="codeBlock"] {
+  position: relative !important;
+  background-color: #18181b !important;
+  color: #f4f4f5 !important;
+  border-radius: 10px !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.22) !important;
+  overflow: hidden !important;
+  margin: 10px 0 !important;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
+}
+
+.bn-block-content[data-content-type="codeBlock"]:hover {
+  border-color: rgba(255, 255, 255, 0.22) !important;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.32) !important;
+}
+
+/* 상단 맥 터미널 스타일 3색 윈도우 도트 (Red, Yellow, Green) */
+.bn-block-content[data-content-type="codeBlock"]::before {
+  content: '' !important;
+  position: absolute !important;
+  top: 13px !important;
+  left: 16px !important;
+  width: 10px !important;
+  height: 10px !important;
+  border-radius: 50% !important;
+  background-color: #ff5f56 !important;
+  box-shadow: 16px 0 0 #ffbd2e, 32px 0 0 #27c93f !important;
+  z-index: 3 !important;
+  pointer-events: none !important;
+}
+
+/* 상단 언어 선택 드롭다운 (Language Picker) */
+.bn-block-content[data-content-type="codeBlock"] > div > select {
+  position: absolute !important;
+  top: 6px !important;
+  left: 72px !important;
+  opacity: 0.85 !important;
+  appearance: auto !important;
+  background-color: rgba(255, 255, 255, 0.08) !important;
+  color: #d4d4d8 !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  border-radius: 5px !important;
+  padding: 2px 8px !important;
+  font-size: 11px !important;
+  font-family: ui-sans-serif, system-ui, sans-serif !important;
+  font-weight: 500 !important;
+  cursor: pointer !important;
+  outline: none !important;
+  z-index: 4 !important;
+  transition: opacity 0.2s ease, background-color 0.2s ease !important;
+}
+
+.bn-block-content[data-content-type="codeBlock"] > div > select:hover,
+.bn-block-content[data-content-type="codeBlock"] > div > select:focus {
+  opacity: 1 !important;
+  background-color: rgba(255, 255, 255, 0.16) !important;
+  border-color: rgba(255, 255, 255, 0.3) !important;
+}
+
+.bn-block-content[data-content-type="codeBlock"] > div > select > option {
+  background-color: #27272a !important;
+  color: #f4f4f5 !important;
+}
+
+/* 코드 블록 우측 상단 원클릭 복사(Copy) 버튼 */
+.bn-code-copy-btn {
+  position: absolute !important;
+  top: 6px !important;
+  right: 12px !important;
+  z-index: 5 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 5px !important;
+  background-color: rgba(255, 255, 255, 0.1) !important;
+  border: 1px solid rgba(255, 255, 255, 0.16) !important;
+  color: #e4e4e7 !important;
+  border-radius: 5px !important;
+  padding: 3px 8px !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+  font-family: ui-sans-serif, system-ui, sans-serif !important;
+  cursor: pointer !important;
+  user-select: none !important;
+  transition: all 0.18s ease !important;
+  outline: none !important;
+}
+
+.bn-code-copy-btn:hover {
+  background-color: rgba(255, 255, 255, 0.2) !important;
+  border-color: rgba(255, 255, 255, 0.32) !important;
+  color: #ffffff !important;
+  transform: translateY(-1px) !important;
+}
+
+.bn-code-copy-btn.copied {
+  background-color: #10b981 !important;
+  border-color: #10b981 !important;
+  color: #ffffff !important;
+}
+
+/* 코드 본문 영역 pre > code */
+.bn-block-content[data-content-type="codeBlock"] > pre {
+  margin: 0 !important;
+  padding: 40px 18px 16px 18px !important;
+  overflow-x: auto !important;
+  white-space: pre !important;
+  tab-size: 2 !important;
+  line-height: 1.65 !important;
+}
+
+.bn-block-content[data-content-type="codeBlock"] > pre > code {
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  color: inherit !important;
+  font-size: 13.5px !important;
+  font-family: 'JetBrains Mono', 'Fira Code', Menlo, Monaco, Consolas, monospace !important;
+  display: block !important;
+}
+
+
 
 
 
