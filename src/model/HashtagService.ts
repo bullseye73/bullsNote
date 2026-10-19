@@ -95,9 +95,90 @@ export function extractHashtagsFromText(text: string): string[] {
   return [...found].sort();
 }
 
-/** 제목 + 본문(블록 JSON/마크다운)에서 해시태그 추출 */
+/** 인라인 항목이 코드(인라인 코드 스타일 또는 코드 타입)인지 판정 */
+export function isCodeInline(inline: unknown): boolean {
+  if (!inline || typeof inline !== 'object') return false;
+  const item = inline as { type?: unknown; styles?: { code?: unknown } };
+  if (item.styles?.code === true) return true;
+  if (typeof item.type === 'string' && item.type.toLowerCase().includes('code')) return true;
+  return false;
+}
+
+/** 블록이 코드 블록인지 판정 (타입명에 'code' 포함 시 코드 블록으로 판정) */
+export function isCodeBlock(block: unknown): boolean {
+  if (!block || typeof block !== 'object') return false;
+  const type = (block as { type?: unknown }).type;
+  return typeof type === 'string' && type.toLowerCase().includes('code');
+}
+
+/** 태그 추출 전용 인라인 텍스트 추출 (인라인 코드 styles?.code === true 제외) */
+function inlineTagText(inline: unknown): string {
+  if (typeof inline === 'string') return inline;
+  if (Array.isArray(inline)) {
+    return inline
+      .map((c) => {
+        if (!c || typeof c !== 'object') return '';
+        if (isCodeInline(c)) return '';
+        if (Array.isArray((c as { content?: unknown }).content)) {
+          return inlineTagText((c as { content?: unknown }).content);
+        }
+        return typeof (c as { text?: unknown }).text === 'string' ? (c as { text: string }).text : '';
+      })
+      .join('');
+  }
+  if (inline && typeof inline === 'object') {
+    const rows = (inline as { rows?: Array<{ cells?: unknown[] }> }).rows;
+    if (Array.isArray(rows)) {
+      return rows
+        .map((r) => (Array.isArray(r.cells) ? r.cells.map((cell) => inlineTagText(cell)).join(' | ') : ''))
+        .join('\n');
+    }
+  }
+  return '';
+}
+
+/** 태그 추출 전용 BlockNote 블록 JSON -> 순수 텍스트 (코드 블록 및 인라인 코드 제외) */
+export function blocksToTagText(content: string): string {
+  try {
+    const blocks = JSON.parse(content);
+    if (!Array.isArray(blocks)) return content;
+    const parts: string[] = [];
+    const walk = (list: Array<{ type?: unknown; content?: unknown; children?: unknown[] }>) => {
+      for (const b of list) {
+        if (!b || typeof b !== 'object') continue;
+        // 코드 블록 내부의 내용은 태그 추출에서 제외 (children 포함)
+        if (isCodeBlock(b)) continue;
+
+        const t = inlineTagText((b as { content?: unknown }).content);
+        if (t) parts.push(t);
+        const ch = (b as { children?: unknown[] }).children;
+        if (Array.isArray(ch)) walk(ch as Array<{ type?: unknown; content?: unknown; children?: unknown[] }>);
+      }
+    };
+    walk(blocks);
+    return parts.join('\n');
+  } catch {
+    return content;
+  }
+}
+
+/** 태그 추출 전용 본문(블록 JSON 또는 레거시 마크다운/HTML) -> 순수 텍스트 (코드 블록/인라인 코드 제외) */
+export function noteBodyTagText(content: string): string {
+  const s = content ?? '';
+  if (isBlocksJson(s)) return blocksToTagText(s);
+  if (/<[a-z][\s\S]*>/i.test(s)) {
+    // HTML 태그 중 <code>, <pre> 내용 제외
+    const strippedCode = s.replace(/<(pre|code)[^>]*>[\s\S]*?<\/\1>/gi, ' ');
+    return stripHtml(strippedCode);
+  }
+  // 마크다운: 코드 블록(```...```) 및 인라인 코드(`...`) 제거
+  const cleanMd = s.replace(/```[\s\S]*?```/g, ' ').replace(/`[^`]*`/g, ' ');
+  return cleanMd.replace(/[>*`\-+|[\]()!~]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/** 제목 + 본문(블록 JSON/마크다운)에서 해시태그 추출 (코드 블록/인라인 코드 제외) */
 export function extractHashtags(title: string, bodyContent: string): string[] {
-  const text = `${title} ${noteBodyText(bodyContent)}`;
+  const text = `${title} ${noteBodyTagText(bodyContent)}`;
   return extractHashtagsFromText(text);
 }
 
