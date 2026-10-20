@@ -33,7 +33,7 @@ import {
   swapDataUrlsToAssets,
 } from '../model/FileVault';
 import type { VaultApi } from '../electron';
-import { SupabaseConfig, SupabaseService } from '../model/SupabaseService';
+import { RealtimeStatus, SupabaseConfig, SupabaseService } from '../model/SupabaseService';
 import { CryptoService } from '../model/CryptoService';
 
 function getVault(): VaultApi | null {
@@ -94,6 +94,7 @@ export interface NotesState {
   /** Supabase 클라우드 연동 상태 */
   supabaseConnected: boolean;
   supabaseConfig: SupabaseConfig;
+  realtimeStatus: RealtimeStatus;
   isSyncing: boolean;
   syncError: string | null;
   lastSyncedAt: number | null;
@@ -139,7 +140,7 @@ export interface NotesActions {
   deleteProject(id: string): void;
   moveNoteToProject(noteId: string, targetProjectId: string): void;
   saveSupabaseConfig(config: SupabaseConfig): Promise<void>;
-  syncWithSupabase(): Promise<void>;
+  syncWithSupabase(isSilent?: boolean): Promise<void>;
   disconnectSupabase(): void;
   setProjectSortOption(opt: SortOption): void;
   setNoteSortOption(opt: SortOption): void;
@@ -191,6 +192,15 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   });
 
   const [selectedId, setSelectedId] = useState<string | null>(notes[0]?.id ?? null);
+
+  // 최신 상태를 비동기 리스너에서 참조하기 위한 Ref
+  const notesRef = useRef(notes);
+  notesRef.current = notes;
+  const projectsRef = useRef(projects);
+  projectsRef.current = projects;
+  const selectedProjectIdRef = useRef(selectedProjectId);
+  selectedProjectIdRef.current = selectedProjectId;
+
   const [ready, setReady] = useState(false);
   const [vaultPath, setVaultPath] = useState('');
   const [vaultError, setVaultError] = useState('');
@@ -211,10 +221,15 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   // Supabase 클라우드 연동 상태
   const [supabaseConfig, setSupabaseConfigState] = useState<SupabaseConfig>(() => SupabaseService.getConfig());
+  const [realtimeStatus, setRealtimeStatus] = useState<RealtimeStatus>(() => SupabaseService.getRealtimeStatus());
   const [isSyncing, setIsSyncing] = useState(false);
   const isSyncingRef = useRef(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const supabaseConnected = supabaseConfig.enabled && Boolean(supabaseConfig.url && supabaseConfig.anonKey);
+
+  useEffect(() => {
+    return SupabaseService.subscribeToRealtimeStatus(setRealtimeStatus);
+  }, []);
 
   // 프로젝트 및 노트 정렬 상태 (localStorage 영구 보존)
   const [projectSortOption, setProjectSortOptionState] = useState<SortOption>(() => {
@@ -1411,13 +1426,26 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   );
 
   // --- Supabase 동기화 액션 ---
-  const syncWithSupabase = useCallback(async () => {
-    if (!SupabaseService.isConnected()) return;
-    setIsSyncing(true);
+  const syncWithSupabase = useCallback(async (isSilent = false) => {
+    if (!SupabaseService.isConnected() || isSyncingRef.current) return;
+
+    // 자동 백그라운드 동기화인 경우, 사용자가 타이핑 중이면 작업 방해 방지를 위해 건너뜀
+    if (isSilent && (isLocalSavePendingRef.current || pendingNotesRef.current.size > 0)) {
+      return;
+    }
+
+    if (!isSilent) {
+      setIsSyncing(true);
+    }
     isSyncingRef.current = true;
-    setSyncError(null);
+    if (!isSilent) {
+      setSyncError(null);
+    }
+
     try {
-      const res = await SupabaseService.syncAll(notes, projects);
+      const curNotes = notesRef.current;
+      const curProjects = projectsRef.current;
+      const res = await SupabaseService.syncAll(curNotes, curProjects);
       if (res.success) {
         let syncedNotes = res.notes;
         if (CryptoService.isUnlocked()) {
@@ -1434,29 +1462,37 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         setSupabaseConfigState(SupabaseService.getConfig());
 
         // 선택 상태 보정: 동기화 후 현재 선택된 프로젝트와 노트가 유효하지 않으면 서버 데이터 기준으로 안전하게 재선택
-        const hasProj = res.projects.some((p) => p.id === selectedProjectId);
-        const nextProjId = hasProj ? selectedProjectId : res.projects[0]?.id ?? DEFAULT_PROJECT_ID;
-        if (nextProjId !== selectedProjectId) {
+        const currentProjId = selectedProjectIdRef.current;
+        const hasProj = res.projects.some((p) => p.id === currentProjId);
+        const nextProjId = hasProj ? currentProjId : res.projects[0]?.id ?? DEFAULT_PROJECT_ID;
+        if (nextProjId !== currentProjId) {
           setSelectedProjectId(nextProjId);
         }
 
         const projectNotes = sortedNotes.filter(
           (n) => (n.projectId || DEFAULT_PROJECT_ID) === nextProjId,
         );
-        const hasNote = projectNotes.some((n) => n.id === selectedId);
+        const currentSelId = selectedIdRef.current;
+        const hasNote = projectNotes.some((n) => n.id === currentSelId);
         if (!hasNote) {
           setSelectedId(projectNotes[0]?.id ?? sortedNotes[0]?.id ?? null);
         }
       } else {
-        setSyncError(res.error || '동기화 중 오류가 발생했습니다.');
+        if (!isSilent) {
+          setSyncError(res.error || '동기화 중 오류가 발생했습니다.');
+        }
       }
     } catch (err: unknown) {
-      setSyncError(err instanceof Error ? err.message : String(err));
+      if (!isSilent) {
+        setSyncError(err instanceof Error ? err.message : String(err));
+      }
     } finally {
-      setIsSyncing(false);
+      if (!isSilent) {
+        setIsSyncing(false);
+      }
       isSyncingRef.current = false;
     }
-  }, [notes, projects]);
+  }, []);
 
   const saveSupabaseConfig = useCallback(async (newConfig: SupabaseConfig) => {
     SupabaseService.saveConfig(newConfig);
@@ -1482,6 +1518,125 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       void syncWithSupabase();
     }
   }, [ready, supabaseConfig.enabled, syncWithSupabase]);
+
+  // --- Supabase Realtime 리스너: 다른 기기에서 DB 변경 시 즉각 자동 반영 ---
+  useEffect(() => {
+    if (!ready || !supabaseConnected || !supabaseConfig.autoSync) return;
+
+    const unsubscribe = SupabaseService.subscribeToRealtime(async (change) => {
+      if (change.type === 'sync_needed') {
+        void syncWithSupabase(true);
+        return;
+      }
+
+      if (change.type === 'project') {
+        if (change.action === 'DELETE') {
+          setProjects((prev) => {
+            const next = prev.filter((p) => p.id !== change.id);
+            NoteRepository.saveProjects(next);
+            return next;
+          });
+          if (selectedProjectIdRef.current === change.id) {
+            setSelectedProjectId(DEFAULT_PROJECT_ID);
+          }
+        } else {
+          setProjects((prev) => {
+            const exists = prev.some((p) => p.id === change.project.id);
+            const next = exists
+              ? prev.map((p) => (p.id === change.project.id ? change.project : p))
+              : [...prev, change.project];
+            NoteRepository.saveProjects(next);
+            return next;
+          });
+        }
+        SupabaseService.updateLastSyncedAt();
+        setSupabaseConfigState(SupabaseService.getConfig());
+        return;
+      }
+
+      if (change.type === 'note') {
+        if (change.action === 'DELETE') {
+          const doomedId = change.id;
+          setNotes((prev) => {
+            const next = prev.filter((n) => n.id !== doomedId);
+            NoteRepository.save(next);
+            return next;
+          });
+          if (selectedIdRef.current === doomedId) {
+            const remaining = notesRef.current.filter((n) => n.id !== doomedId);
+            setSelectedId(remaining[0]?.id ?? null);
+          }
+          SupabaseService.updateLastSyncedAt();
+          setSupabaseConfigState(SupabaseService.getConfig());
+          return;
+        }
+
+        // INSERT 또는 UPDATE
+        const remoteNote = change.note;
+        if (remoteNote.id === '__bullsnote_security_verifier__') return;
+
+        // 로컬에서 사용자가 방금 입력 중인 노트인 경우 덮어쓰기 방지
+        if (pendingNotesRef.current.has(remoteNote.id)) {
+          return;
+        }
+
+        setNotes((prev) => {
+          const local = prev.find((n) => n.id === remoteNote.id);
+          // 로컬 노트가 더 최신이거나 같으면 무시
+          if (local && local.updatedAt >= remoteNote.updatedAt) {
+            return prev;
+          }
+          const next = local
+            ? prev.map((n) => (n.id === remoteNote.id ? remoteNote : n))
+            : [remoteNote, ...prev];
+          const sorted = next.sort(sortNotes);
+          NoteRepository.save(sorted);
+          return sorted;
+        });
+
+        SupabaseService.updateLastSyncedAt();
+        setSupabaseConfigState(SupabaseService.getConfig());
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [ready, supabaseConnected, supabaseConfig.autoSync, syncWithSupabase]);
+
+  // --- 다중 기기 자동 동기화 트리거: 포커스, 탭 가시성, 네트워크 재연결, 30초 주기 하이브리드 폴링 ---
+  useEffect(() => {
+    if (!ready || !supabaseConnected || !supabaseConfig.autoSync) return;
+
+    // 1. 창 포커스 복귀 시 (다른 기기에서 수정한 뒤 이 기기로 돌아왔을 때)
+    const onFocus = () => void syncWithSupabase(true);
+
+    // 2. 브라우저 탭 활성화 시
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void syncWithSupabase(true);
+      }
+    };
+
+    // 3. 인터넷 재연결 시 (오프라인 -> 온라인)
+    const onOnline = () => void syncWithSupabase(true);
+
+    // 4. 웹소켓 유실 및 백그라운드 대비 30초 주기 무소음 동기화
+    const syncInterval = setInterval(() => {
+      void syncWithSupabase(true);
+    }, 30000);
+
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('online', onOnline);
+
+    return () => {
+      clearInterval(syncInterval);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('online', onOnline);
+    };
+  }, [ready, supabaseConnected, supabaseConfig.autoSync, syncWithSupabase]);
 
   const [supabaseModalOpened, setSupabaseModalOpened] = useState(false);
   const openSupabaseModal = useCallback(() => setSupabaseModalOpened(true), []);
@@ -1546,6 +1701,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       activeAlarmNote,
       supabaseConnected,
       supabaseConfig,
+      realtimeStatus,
       isSyncing,
       syncError,
       lastSyncedAt: supabaseConfig.lastSyncedAt,
@@ -1623,6 +1779,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       activeAlarmNote,
       supabaseConnected,
       supabaseConfig,
+      realtimeStatus,
       isSyncing,
       syncError,
       select,

@@ -43,6 +43,7 @@ export function SupabaseSettingsModal({ opened, onClose }: SupabaseSettingsModal
   const {
     supabaseConnected,
     supabaseConfig,
+    realtimeStatus,
     isSyncing,
     syncError,
     lastSyncedAt,
@@ -196,9 +197,29 @@ export function SupabaseSettingsModal({ opened, onClose }: SupabaseSettingsModal
                     </Text>
                   </div>
                 </Group>
-                <Badge color={supabaseConnected ? 'green' : 'gray'} variant="light">
-                  {supabaseConnected ? '연동됨' : '미연동'}
-                </Badge>
+                <Group gap="xs">
+                  {supabaseConnected && (
+                    <Badge
+                      color={
+                        realtimeStatus === 'connected'
+                          ? 'teal'
+                          : realtimeStatus === 'connecting'
+                          ? 'yellow'
+                          : 'gray'
+                      }
+                      variant="light"
+                    >
+                      {realtimeStatus === 'connected'
+                        ? '⚡ 실시간 동기화 활성'
+                        : realtimeStatus === 'connecting'
+                        ? '실시간 연결 중…'
+                        : '실시간 대기 중'}
+                    </Badge>
+                  )}
+                  <Badge color={supabaseConnected ? 'green' : 'gray'} variant="light">
+                    {supabaseConnected ? '연동됨' : '미연동'}
+                  </Badge>
+                </Group>
               </Group>
             </div>
 
@@ -227,7 +248,8 @@ export function SupabaseSettingsModal({ opened, onClose }: SupabaseSettingsModal
             />
 
             <Switch
-              label="자동 동기화 사용 (노트 생성/수정/삭제 시 백그라운드 자동 전송)"
+              label="실시간 자동 동기화 사용 (기기 간 실시간 자동 동기화 및 백그라운드 자동 전송)"
+              description="다른 기기에서 수정한 내용이 실시간으로 자동 반영되고, 이 기기의 변경 사항도 즉시 클라우드로 전송됩니다."
               checked={autoSync}
               onChange={(e) => setAutoSync(e.currentTarget.checked)}
             />
@@ -304,7 +326,7 @@ export function SupabaseSettingsModal({ opened, onClose }: SupabaseSettingsModal
                   에 로그인하여 새 프로젝트를 무료로 생성합니다.
                 </li>
                 <li>좌측 메뉴 <strong>SQL Editor</strong>로 이동하여 <strong>New query</strong>를 클릭합니다.</li>
-                <li>아래의 SQL 스크립트를 붙여넣고 우측 하단 <strong>Run</strong>을 누릅니다.</li>
+                <li>아래의 SQL 스크립트를 붙여넣고 우측 하단 <strong>Run</strong>을 누릅니다. (테이블 생성 및 다른 기기 간 실시간 동기화 활성화 포함)</li>
                 <li>
                   좌측 메뉴 <strong>Project Settings -&gt; API</strong>에서 <strong>Project URL</strong>과{' '}
                   <strong>anon public API Key</strong>를 복사하여 BullsNote 연동 설정 탭에 붙여넣습니다.

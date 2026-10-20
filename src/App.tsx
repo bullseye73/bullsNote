@@ -83,6 +83,7 @@ function Shell() {
   const {
     create,
     supabaseConnected,
+    realtimeStatus,
     isSyncing,
     lastSyncedAt,
     isMasterSet,
@@ -167,14 +168,14 @@ function Shell() {
           <Tooltip
             label={
               supabaseConnected
-                ? `Supabase 클라우드 연동됨 (${lastSyncText}) - 클릭하여 설정`
+                ? `Supabase 클라우드 연동됨 (${lastSyncText}${realtimeStatus === 'connected' ? ' · 실시간 자동 동기화 활성' : ''}) - 클릭하여 설정`
                 : 'Supabase 미연동 (현재 로컬 저장 전용) - 클릭하여 클라우드 연동'
             }
           >
             <Button
               size="xs"
               variant={supabaseConnected ? 'light' : 'subtle'}
-              color={supabaseConnected ? 'teal' : 'gray'}
+              color={supabaseConnected ? (realtimeStatus === 'connected' ? 'teal' : 'blue') : 'gray'}
               leftSection={
                 isSyncing ? (
                   <IconRefresh size={14} className="spin-animation" />
@@ -189,7 +190,7 @@ function Shell() {
               {isSyncing
                 ? '동기화 중…'
                 : supabaseConnected
-                ? 'Supabase 연동됨'
+                ? (realtimeStatus === 'connected' ? '실시간 동기화됨' : 'Supabase 연동됨')
                 : '로컬 모드 (Supabase 연동)'}
             </Button>
           </Tooltip>

@@ -1,4 +1,4 @@
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { createClient, RealtimeChannel, SupabaseClient } from '@supabase/supabase-js';
 import { Note, NoteAttachment, Project } from './Note';
 import { CryptoService, VERIFIER_STORAGE_KEY } from './CryptoService';
 
@@ -20,6 +20,15 @@ export const DEFAULT_SUPABASE_CONFIG: SupabaseConfig = {
   autoSync: true,
   lastSyncedAt: null,
 };
+
+export type RealtimeStatus = 'connected' | 'connecting' | 'disconnected' | 'error';
+
+export type RealtimeChange =
+  | { type: 'note'; action: 'INSERT' | 'UPDATE'; note: Note }
+  | { type: 'note'; action: 'DELETE'; id: string }
+  | { type: 'project'; action: 'INSERT' | 'UPDATE'; project: Project }
+  | { type: 'project'; action: 'DELETE'; id: string }
+  | { type: 'sync_needed'; reason: string };
 
 export const SUPABASE_SETUP_SQL = `-- BullsNote용 Supabase 테이블 및 스토리지 생성 스크립트
 -- Supabase 대시보드 -> SQL Editor -> New Query에 붙여넣고 Run을 클릭하세요.
@@ -88,9 +97,31 @@ CREATE POLICY "Allow all for bullsnote-attachments" ON storage.objects
   FOR ALL TO anon, authenticated
   USING (bucket_id = 'bullsnote-attachments')
   WITH CHECK (bucket_id = 'bullsnote-attachments');
+
+-- 6. 다른 기기 간 실시간 자동 동기화(Realtime) 활성화
+-- Supabase에서 DB 변경 시 다른 기기에 실시간으로 브로드캐스트합니다.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables 
+    WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'bullsnote_projects'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE bullsnote_projects;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables 
+    WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'bullsnote_notes'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE bullsnote_notes;
+  END IF;
+END $$;
+
+ALTER TABLE bullsnote_projects REPLICA IDENTITY FULL;
+ALTER TABLE bullsnote_notes REPLICA IDENTITY FULL;
 `;
 
-interface DbProjectRow {
+export interface DbProjectRow {
   id: string;
   name: string;
   icon: string | null;
@@ -98,7 +129,7 @@ interface DbProjectRow {
   updated_at: number;
 }
 
-interface DbNoteRow {
+export interface DbNoteRow {
   id: string;
   title: string;
   project_id: string | null;
@@ -118,6 +149,12 @@ interface DbNoteRow {
 class SupabaseSyncManager {
   private client: SupabaseClient | null = null;
   private currentConfig: SupabaseConfig = { ...DEFAULT_SUPABASE_CONFIG };
+
+  // 실시간 동기화(Realtime) 채널 및 리스너 관리
+  private realtimeChannel: RealtimeChannel | null = null;
+  private realtimeListeners = new Set<(change: RealtimeChange) => void>();
+  private realtimeStatus: RealtimeStatus = 'disconnected';
+  private realtimeStatusListeners = new Set<(status: RealtimeStatus) => void>();
 
   constructor() {
     this.currentConfig = this.loadConfig();
@@ -147,20 +184,183 @@ class SupabaseSyncManager {
       url: (config.url || '').trim().replace(/\/+$/, ''),
       anonKey: (config.anonKey || '').trim(),
     };
+    const wasAutoSync = this.currentConfig.autoSync;
     this.currentConfig = cleanConfig;
     localStorage.setItem(SUPABASE_CONFIG_STORAGE_KEY, JSON.stringify(cleanConfig));
     this.initClient();
+    if (!cleanConfig.autoSync && wasAutoSync) {
+      this.teardownRealtime();
+    } else if (cleanConfig.autoSync && this.isConnected() && this.realtimeListeners.size > 0) {
+      this.ensureRealtimeSubscription();
+    }
   }
 
   public getConfig(): SupabaseConfig {
     return { ...this.currentConfig };
   }
 
+  public updateLastSyncedAt(timestamp = Date.now()): void {
+    this.currentConfig = { ...this.currentConfig, lastSyncedAt: timestamp };
+    try {
+      localStorage.setItem(SUPABASE_CONFIG_STORAGE_KEY, JSON.stringify(this.currentConfig));
+    } catch {}
+  }
+
   public isConnected(): boolean {
     return Boolean(this.client && this.currentConfig.enabled && this.currentConfig.url && this.currentConfig.anonKey);
   }
 
+  public getRealtimeStatus(): RealtimeStatus {
+    return this.realtimeStatus;
+  }
+
+  private setRealtimeStatus(status: RealtimeStatus): void {
+    if (this.realtimeStatus === status) return;
+    this.realtimeStatus = status;
+    for (const listener of this.realtimeStatusListeners) {
+      try {
+        listener(status);
+      } catch (err) {
+        console.error('RealtimeStatus 리스너 오류:', err);
+      }
+    }
+  }
+
+  public subscribeToRealtimeStatus(listener: (status: RealtimeStatus) => void): () => void {
+    this.realtimeStatusListeners.add(listener);
+    listener(this.realtimeStatus);
+    return () => {
+      this.realtimeStatusListeners.delete(listener);
+    };
+  }
+
+  public subscribeToRealtime(listener: (change: RealtimeChange) => void): () => void {
+    this.realtimeListeners.add(listener);
+    this.ensureRealtimeSubscription();
+    return () => {
+      this.realtimeListeners.delete(listener);
+      if (this.realtimeListeners.size === 0) {
+        this.teardownRealtime();
+      }
+    };
+  }
+
+  private notifyRealtimeListeners(change: RealtimeChange): void {
+    for (const listener of this.realtimeListeners) {
+      try {
+        listener(change);
+      } catch (err) {
+        console.error('Realtime 변경 리스너 오류:', err);
+      }
+    }
+  }
+
+  public teardownRealtime(): void {
+    if (this.realtimeChannel) {
+      try {
+        if (this.client) {
+          void this.client.removeChannel(this.realtimeChannel);
+        } else {
+          void this.realtimeChannel.unsubscribe();
+        }
+      } catch {}
+      this.realtimeChannel = null;
+    }
+    this.setRealtimeStatus('disconnected');
+  }
+
+  public ensureRealtimeSubscription(): void {
+    if (!this.isConnected() || !this.client || !this.currentConfig.autoSync) {
+      this.teardownRealtime();
+      return;
+    }
+
+    if (this.realtimeChannel) {
+      return;
+    }
+
+    this.setRealtimeStatus('connecting');
+
+    try {
+      const channel = this.client.channel('bullsnote-realtime-sync');
+
+      channel
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'bullsnote_notes' },
+          async (payload) => {
+            try {
+              const eventType = payload.eventType;
+              if (eventType === 'DELETE') {
+                const oldId = (payload.old as { id?: string })?.id;
+                if (oldId) {
+                  this.notifyRealtimeListeners({ type: 'note', action: 'DELETE', id: oldId });
+                }
+              } else if (eventType === 'INSERT' || eventType === 'UPDATE') {
+                const row = payload.new as DbNoteRow;
+                if (row && row.id) {
+                  if (row.id === '__bullsnote_security_verifier__') {
+                    if (row.content && CryptoService.isEncrypted(row.content)) {
+                      try {
+                        localStorage.setItem(VERIFIER_STORAGE_KEY, row.content);
+                      } catch {}
+                    }
+                    return;
+                  }
+                  const note = await this.rowToNote(row);
+                  this.notifyRealtimeListeners({ type: 'note', action: eventType, note });
+                }
+              }
+            } catch (err) {
+              console.warn('[Supabase Realtime] 노트 변경 처리 오류:', err);
+            }
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'bullsnote_projects' },
+          (payload) => {
+            try {
+              const eventType = payload.eventType;
+              if (eventType === 'DELETE') {
+                const oldId = (payload.old as { id?: string })?.id;
+                if (oldId) {
+                  this.notifyRealtimeListeners({ type: 'project', action: 'DELETE', id: oldId });
+                }
+              } else if (eventType === 'INSERT' || eventType === 'UPDATE') {
+                const row = payload.new as DbProjectRow;
+                if (row && row.id) {
+                  const project = this.rowToProject(row);
+                  this.notifyRealtimeListeners({ type: 'project', action: eventType, project });
+                }
+              }
+            } catch (err) {
+              console.warn('[Supabase Realtime] 프로젝트 변경 처리 오류:', err);
+            }
+          }
+        )
+        .subscribe((status, err) => {
+          if (status === 'SUBSCRIBED') {
+            this.setRealtimeStatus('connected');
+            // 재연결되거나 처음 연결될 때 누락된 변경사항이 있을 수 있으므로 sync_needed 알림
+            this.notifyRealtimeListeners({ type: 'sync_needed', reason: 'subscribed' });
+          } else if (status === 'TIMED_OUT' || status === 'CHANNEL_ERROR') {
+            this.setRealtimeStatus('error');
+            console.warn('[Supabase Realtime] 채널 상태 경고:', status, err);
+          } else if (status === 'CLOSED') {
+            this.setRealtimeStatus('disconnected');
+          }
+        });
+
+      this.realtimeChannel = channel;
+    } catch (err) {
+      console.error('[Supabase Realtime] 채널 초기화 실패:', err);
+      this.setRealtimeStatus('error');
+    }
+  }
+
   private initClient(): void {
+    this.teardownRealtime();
     const cleanUrl = (this.currentConfig.url || '').trim().replace(/\/+$/, '');
     const cleanKey = (this.currentConfig.anonKey || '').trim();
     if (this.currentConfig.enabled && cleanUrl && cleanKey) {
@@ -168,6 +368,9 @@ class SupabaseSyncManager {
         this.client = createClient(cleanUrl, cleanKey, {
           auth: { persistSession: false, autoRefreshToken: false },
         });
+        if (this.currentConfig.autoSync && this.realtimeListeners.size > 0) {
+          this.ensureRealtimeSubscription();
+        }
       } catch (err) {
         console.error('Supabase 클라이언트 초기화 실패:', err);
         this.client = null;
@@ -299,7 +502,7 @@ class SupabaseSyncManager {
     };
   }
 
-  private rowToProject(row: DbProjectRow): Project {
+  public rowToProject(row: DbProjectRow): Project {
     return {
       id: row.id,
       name: row.name,
@@ -309,7 +512,7 @@ class SupabaseSyncManager {
     };
   }
 
-  private async noteToRow(n: Note): Promise<DbNoteRow> {
+  public async noteToRow(n: Note): Promise<DbNoteRow> {
     let encryptedContent = n.content || '';
     // 언락 상태이고 평문인 경우에만 암호화 수행 (이미 암호문이거나 잠금 상태면 원본 그대로 보존)
     if (CryptoService.isUnlocked() && !CryptoService.isEncrypted(encryptedContent)) {
@@ -345,7 +548,7 @@ class SupabaseSyncManager {
     };
   }
 
-  private async rowToNote(row: DbNoteRow): Promise<Note> {
+  public async rowToNote(row: DbNoteRow): Promise<Note> {
     const rawContent = row.content || '';
     let content = rawContent;
     // 언락되어 있다면 복호화, 잠겨있다면 암호문 그대로 유지하여 데이터 보존! (절대 플레이스홀더 문자열로 덮어쓰지 않음)

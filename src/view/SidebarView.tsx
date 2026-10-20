@@ -92,6 +92,7 @@ export function SidebarView({ onOpenSupabaseModal }: SidebarViewProps) {
     chooseVault,
     resync,
     supabaseConnected,
+    realtimeStatus,
     isSyncing,
     syncWithSupabase,
     lastSyncedAt,
@@ -348,10 +349,35 @@ export function SidebarView({ onOpenSupabaseModal }: SidebarViewProps) {
             </Tooltip>
           </Group>
         </Group>
-        {supabaseConnected && lastSyncedAt && (
-          <Text size="10px" c="dimmed">
-            동기화: {new Date(lastSyncedAt).toLocaleTimeString()}
-          </Text>
+        {supabaseConnected && (
+          <Group gap={6} align="center">
+            {realtimeStatus === 'connected' ? (
+              <Group gap={4} align="center">
+                <span
+                  style={{
+                    display: 'inline-block',
+                    width: 6,
+                    height: 6,
+                    borderRadius: '50%',
+                    backgroundColor: '#2f9e44',
+                    boxShadow: '0 0 0 2px rgba(47, 158, 68, 0.25)',
+                  }}
+                />
+                <Text size="10px" c="teal" fw={500}>
+                  실시간 자동 동기화
+                </Text>
+              </Group>
+            ) : realtimeStatus === 'connecting' ? (
+              <Text size="10px" c="yellow">
+                실시간 연결 중…
+              </Text>
+            ) : null}
+            {lastSyncedAt && (
+              <Text size="10px" c="dimmed">
+                ({new Date(lastSyncedAt).toLocaleTimeString()})
+              </Text>
+            )}
+          </Group>
         )}
       </Stack>
 
