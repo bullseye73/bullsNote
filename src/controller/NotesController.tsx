@@ -35,6 +35,7 @@ import {
 import type { VaultApi } from '../electron';
 import { RealtimeStatus, SupabaseConfig, SupabaseService } from '../model/SupabaseService';
 import { CryptoService } from '../model/CryptoService';
+import { parseSearchQuery, searchNotes } from '../model/SearchService';
 
 function getVault(): VaultApi | null {
   return window.bullsNote?.vault ?? null;
@@ -79,6 +80,10 @@ export interface NotesState {
   selectedId: string | null;
   selected: Note | null;
   search: string;
+  searchTokens: string[];
+  searchScope: 'all' | 'current';
+  quickFilter: 'all' | 'favorite' | 'pinned' | 'reminder' | 'attachment';
+  quickSearchModalOpened: boolean;
   activeTag: string | null;
   showFavoriteOnly: boolean;
   tagCounts: Array<{ tag: string; count: number }>;
@@ -128,6 +133,10 @@ export interface NotesActions {
   outdent(id: string): void;
   restoreHistory(id: string, savedAt: number): void;
   setSearch(v: string): void;
+  setSearchScope(scope: 'all' | 'current'): void;
+  setQuickFilter(filter: 'all' | 'favorite' | 'pinned' | 'reminder' | 'attachment'): void;
+  openQuickSearchModal(): void;
+  closeQuickSearchModal(): void;
   setActiveTag(t: string | null): void;
   setShowFavoriteOnly(v: boolean): void;
   exportAll(): void;
@@ -208,6 +217,28 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const [vaultGen, setVaultGen] = useState(0);
   const vaultInitGenRef = useRef(-1);
   const [search, setSearch] = useState('');
+  const [searchScope, setSearchScopeState] = useState<'all' | 'current'>(() => {
+    try {
+      const saved = localStorage.getItem('bullsnote.search.scope');
+      if (saved === 'all' || saved === 'current') return saved;
+    } catch {}
+    return 'all';
+  });
+  const [quickFilter, setQuickFilter] = useState<'all' | 'favorite' | 'pinned' | 'reminder' | 'attachment'>('all');
+  const [quickSearchModalOpened, setQuickSearchModalOpened] = useState(false);
+
+  const setSearchScope = useCallback((scope: 'all' | 'current') => {
+    setSearchScopeState(scope);
+    try {
+      localStorage.setItem('bullsnote.search.scope', scope);
+    } catch {}
+  }, []);
+
+  const openQuickSearchModal = useCallback(() => setQuickSearchModalOpened(true), []);
+  const closeQuickSearchModal = useCallback(() => setQuickSearchModalOpened(false), []);
+
+  const searchTokens = useMemo(() => parseSearchQuery(search).tokens, [search]);
+
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [showFavoriteOnly, setShowFavoriteOnly] = useState(false);
   const [activeAlarmNote, setActiveAlarmNote] = useState<Note | null>(null);
@@ -924,6 +955,13 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       if (localSaveTimerRef.current) clearTimeout(localSaveTimerRef.current);
       void flushLocalSaveRef.current();
     }
+    // 타 프로젝트 노트 선택 시 프로젝트 자동 전환
+    if (id) {
+      const targetNote = notesRef.current.find((n) => n.id === id);
+      if (targetNote && (targetNote.projectId || DEFAULT_PROJECT_ID) !== selectedProjectIdRef.current) {
+        setSelectedProjectId(targetNote.projectId || DEFAULT_PROJECT_ID);
+      }
+    }
     setSelectedId(id);
   }, []);
 
@@ -1402,23 +1440,60 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     return [...map.entries()].map(([tag, count]) => ({ tag, count })).sort((a, b) => b.count - a.count);
   }, [currentProjectNotes]);
 
-  const isFiltering = search.trim() !== '' || activeTag !== null || showFavoriteOnly;
+  const isFiltering =
+    search.trim() !== '' ||
+    activeTag !== null ||
+    showFavoriteOnly ||
+    quickFilter !== 'all' ||
+    (searchScope === 'all' && search.trim() !== '');
 
   const flat = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return currentProjectNotes
+    // 1. 검색 쿼리가 입력된 경우 고도화된 검색 엔진(초성, 다중단어 AND, 연산자, 관련도 랭킹) 사용
+    if (search.trim() !== '') {
+      const searchResults = searchNotes(notes, search, projects, {
+        scope: searchScope,
+        selectedProjectId,
+      });
+
+      return searchResults
+        .map((r) => r.note)
+        .filter((n) => (showFavoriteOnly ? n.favorite : true))
+        .filter((n) => (activeTag ? n.tags.includes(activeTag) : true))
+        .filter((n) => {
+          if (quickFilter === 'favorite') return n.favorite;
+          if (quickFilter === 'pinned') return n.pinned;
+          if (quickFilter === 'reminder') return Boolean(n.reminder && !n.reminder.dismissed);
+          if (quickFilter === 'attachment') return Boolean(n.attachments && n.attachments.length > 0);
+          return true;
+        });
+    }
+
+    // 2. 검색 쿼리 없이 필터(즐겨찾기, 태그, 퀵필터)만 활성화된 경우
+    const pool = searchScope === 'all' && quickFilter !== 'all' ? notes : currentProjectNotes;
+
+    return pool
       .filter((n) => (showFavoriteOnly ? n.favorite : true))
       .filter((n) => (activeTag ? n.tags.includes(activeTag) : true))
       .filter((n) => {
-        if (!q) return true;
-        return (
-          n.title.toLowerCase().includes(q) ||
-          (!CryptoService.isEncrypted(n.content) && noteBodyText(n.content).toLowerCase().includes(q)) ||
-          n.tags.some((t) => t.includes(q))
-        );
+        if (quickFilter === 'favorite') return n.favorite;
+        if (quickFilter === 'pinned') return n.pinned;
+        if (quickFilter === 'reminder') return Boolean(n.reminder && !n.reminder.dismissed);
+        if (quickFilter === 'attachment') return Boolean(n.attachments && n.attachments.length > 0);
+        return true;
       })
       .sort(noteComparator);
-  }, [currentProjectNotes, search, activeTag, showFavoriteOnly, noteComparator]);
+  }, [
+    notes,
+    currentProjectNotes,
+    projects,
+    search,
+    searchScope,
+    selectedProjectId,
+    activeTag,
+    showFavoriteOnly,
+    quickFilter,
+    noteComparator,
+  ]);
 
   const tree = useMemo(
     () => buildTree(isFiltering ? flat : currentProjectNotes, noteComparator),
@@ -1688,6 +1763,14 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       selectedId,
       selected,
       search,
+      searchTokens,
+      searchScope,
+      setSearchScope,
+      quickFilter,
+      setQuickFilter,
+      quickSearchModalOpened,
+      openQuickSearchModal,
+      closeQuickSearchModal,
       activeTag,
       showFavoriteOnly,
       tagCounts,
@@ -1766,6 +1849,14 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       selectedId,
       selected,
       search,
+      searchTokens,
+      searchScope,
+      setSearchScope,
+      quickFilter,
+      setQuickFilter,
+      quickSearchModalOpened,
+      openQuickSearchModal,
+      closeQuickSearchModal,
       activeTag,
       showFavoriteOnly,
       tagCounts,

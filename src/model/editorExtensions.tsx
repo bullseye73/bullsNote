@@ -8,6 +8,7 @@ import React from 'react';
 import { IconHash, IconPlus } from '@tabler/icons-react';
 import { Note } from './Note';
 import { CODE_LANGUAGES } from './codeHighlight';
+import { findMatchRanges } from './SearchService';
 
 type AnyEditor = BlockNoteEditor<any, any, any>;
 
@@ -346,3 +347,141 @@ export function getHashtagSuggestions(
 
   return items;
 }
+
+export const searchHighlightPluginKey = new PluginKey<{
+  tokens: string[];
+  decorations: DecorationSet;
+  matchCount: number;
+}>('bullsnote-search-highlighter');
+
+let globalSearchTokens: string[] = [];
+
+/**
+ * 전역 또는 활성 검색 토큰 설정 (새로 생성되는 에디터 인스턴스 초기화에 사용)
+ */
+export function setGlobalSearchTokens(tokens: string[]) {
+  globalSearchTokens = Array.isArray(tokens)
+    ? tokens.map((t) => (typeof t === 'string' ? t.trim() : '')).filter(Boolean)
+    : [];
+}
+
+/**
+ * 전역 검색 토큰 조회
+ */
+export function getGlobalSearchTokens(): string[] {
+  return globalSearchTokens;
+}
+
+/**
+ * ProseMirror Node 트리를 순회하여 검색어(일반 단어 및 초성)와 일치하는 텍스트 위치에 데코레이션 생성
+ */
+export function buildSearchDecorations(
+  doc: any,
+  tokens: string[]
+): { decorations: DecorationSet; matchCount: number } {
+  if (!tokens || tokens.length === 0) {
+    return { decorations: DecorationSet.empty, matchCount: 0 };
+  }
+
+  const cleanTokens = tokens.map((t) => t.trim().toLowerCase()).filter(Boolean);
+  if (cleanTokens.length === 0) {
+    return { decorations: DecorationSet.empty, matchCount: 0 };
+  }
+
+  const decorations: Decoration[] = [];
+  let matchCount = 0;
+
+  try {
+    doc.descendants((node: any, pos: number) => {
+      if (!node.isText || !node.text) return;
+
+      const ranges = findMatchRanges(node.text, cleanTokens);
+      for (const [startOffset, endOffset] of ranges) {
+        const from = pos + startOffset;
+        const to = pos + endOffset;
+        if (from >= 0 && to <= doc.content.size && from < to) {
+          matchCount++;
+          decorations.push(
+            Decoration.inline(from, to, {
+              class: 'bn-search-highlight',
+              'data-search-token': node.text.slice(startOffset, endOffset),
+            })
+          );
+        }
+      }
+    });
+
+    decorations.sort((a, b) => a.from - b.from);
+    return {
+      decorations: DecorationSet.create(doc, decorations),
+      matchCount,
+    };
+  } catch (err) {
+    console.warn('검색 데코레이션 생성 실패:', err);
+    return { decorations: DecorationSet.empty, matchCount: 0 };
+  }
+}
+
+/**
+ * 5. 본문 내 검색어(및 초성) 실시간 인라인 데코레이션 하이라이트 플러그인
+ */
+export function createSearchHighlightPlugin() {
+  return new Plugin({
+    key: searchHighlightPluginKey,
+    state: {
+      init(_, instance) {
+        const initialTokens = getGlobalSearchTokens();
+        const { decorations, matchCount } = buildSearchDecorations(instance.doc, initialTokens);
+        return {
+          tokens: initialTokens,
+          decorations,
+          matchCount,
+        };
+      },
+      apply(tr, oldPluginState, _oldEditorState, newEditorState) {
+        const meta = tr.getMeta(searchHighlightPluginKey);
+        let tokens = oldPluginState?.tokens ?? [];
+        let tokensChanged = false;
+
+        if (meta && Array.isArray(meta.tokens)) {
+          tokens = meta.tokens.map((t: string) => (typeof t === 'string' ? t.trim() : '')).filter(Boolean);
+          tokensChanged = true;
+        }
+
+        // 검색 토큰이 변경되었거나 문서 내용이 변경된 경우 데코레이션 재연산
+        if (tokensChanged || tr.docChanged) {
+          if (!tokens || tokens.length === 0) {
+            return {
+              tokens: [],
+              decorations: DecorationSet.empty,
+              matchCount: 0,
+            };
+          }
+          const { decorations, matchCount } = buildSearchDecorations(newEditorState.doc, tokens);
+          return {
+            tokens,
+            decorations,
+            matchCount,
+          };
+        }
+
+        return oldPluginState;
+      },
+    },
+    props: {
+      decorations(state) {
+        return searchHighlightPluginKey.getState(state)?.decorations ?? DecorationSet.empty;
+      },
+    },
+  });
+}
+
+/**
+ * 6. 본문 검색어 하이라이트 확장 (BlockNote용)
+ */
+export const SearchHighlightExtension = createExtension(() => {
+  return {
+    key: 'bullsNoteSearchHighlight',
+    prosemirrorPlugins: [createSearchHighlightPlugin()],
+  };
+});

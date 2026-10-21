@@ -7,6 +7,7 @@ import {
   Drawer,
   Group,
   Menu,
+  Paper,
   PasswordInput,
   Stack,
   Text,
@@ -18,11 +19,14 @@ import {
 import {
   IconBell,
   IconCheck,
+  IconChevronDown,
+  IconChevronUp,
   IconCode,
   IconCopy,
   IconDownload,
   IconEye,
   IconFileTypePdf,
+  IconHash,
   IconHistory,
   IconLock,
   IconLockOpen,
@@ -30,8 +34,10 @@ import {
   IconPalette,
   IconPin,
   IconPrinter,
+  IconSearch,
   IconShare,
   IconStar,
+  IconX,
 } from '@tabler/icons-react';
 import { BlockNoteView } from '@blocknote/ariakit';
 import {
@@ -85,9 +91,11 @@ import {
 import {
   HashtagExtension,
   CodeShortcutsExtension,
+  SearchHighlightExtension,
+  searchHighlightPluginKey,
+  setGlobalSearchTokens,
   getHashtagSuggestions,
 } from '../model/editorExtensions';
-import { IconHash } from '@tabler/icons-react';
 
 type AnyEditor = BlockNoteEditor<any, any, any>;
 
@@ -121,6 +129,8 @@ function BlockEditor({
     supabaseConfig,
     openSupabaseModal,
     addAttachment,
+    searchTokens,
+    setSearch,
   } = useNotes();
   const scheme = useComputedColorScheme('light', { getInitialValueInEffect: true });
   const [datePickerOpen, setDatePickerOpen] = useState(false);
@@ -222,7 +232,12 @@ function BlockEditor({
   );
 
   const extensions = useMemo(
-    () => [createSyntaxExtension(), HashtagExtension(), CodeShortcutsExtension()],
+    () => [
+      createSyntaxExtension(),
+      HashtagExtension(),
+      CodeShortcutsExtension(),
+      SearchHighlightExtension(),
+    ],
     []
   );
 
@@ -469,6 +484,119 @@ function BlockEditor({
     onEditorInit?.(editor);
   }, [editor, onEditorInit]);
 
+  const [matchCount, setMatchCount] = useState(0);
+  const [activeMatchIndex, setActiveMatchIndex] = useState(0);
+
+  // 검색 토큰 변경 시 ProseMirror 플러그인에 동기화
+  useEffect(() => {
+    setGlobalSearchTokens(searchTokens);
+    try {
+      const view = (editor as any)._tiptapEditor?.view;
+      if (view && !view.isDestroyed) {
+        const tr = view.state.tr.setMeta(searchHighlightPluginKey, { tokens: searchTokens });
+        view.dispatch(tr);
+      }
+    } catch {
+      // 에디터 마운트 이전 등 무시
+    }
+  }, [searchTokens, editor]);
+
+  // 검색 일치 항목 개수 및 활성 데코레이션 갱신 & 최초 일치 위치 스크롤
+  useEffect(() => {
+    if (!searchTokens || searchTokens.length === 0) {
+      setMatchCount(0);
+      setActiveMatchIndex(0);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      const container = scrollContainerRef.current;
+      if (!container) return;
+      const elements = container.querySelectorAll<HTMLElement>('.bn-search-highlight');
+      setMatchCount(elements.length);
+
+      if (elements.length > 0) {
+        elements.forEach((el, idx) => {
+          if (idx === 0) {
+            el.classList.add('bn-search-highlight-active');
+          } else {
+            el.classList.remove('bn-search-highlight-active');
+          }
+        });
+        setActiveMatchIndex(0);
+
+        // 사용자가 에디터 내부를 직접 타이핑 중이 아닌 경우 최초 일치 위치로 스크롤
+        if (!container.contains(document.activeElement)) {
+          elements[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      } else {
+        setActiveMatchIndex(0);
+      }
+    }, 60);
+
+    return () => clearTimeout(timer);
+  }, [searchTokens, note.id, editor]);
+
+  // 다음 일치 항목으로 이동
+  const handleNextMatch = useCallback(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const elements = container.querySelectorAll<HTMLElement>('.bn-search-highlight');
+    if (elements.length === 0) return;
+
+    elements.forEach((el) => el.classList.remove('bn-search-highlight-active'));
+    const nextIdx = (activeMatchIndex + 1) % elements.length;
+    setActiveMatchIndex(nextIdx);
+    const target = elements[nextIdx];
+    if (target) {
+      target.classList.add('bn-search-highlight-active');
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [activeMatchIndex]);
+
+  // 이전 일치 항목으로 이동
+  const handlePrevMatch = useCallback(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const elements = container.querySelectorAll<HTMLElement>('.bn-search-highlight');
+    if (elements.length === 0) return;
+
+    elements.forEach((el) => el.classList.remove('bn-search-highlight-active'));
+    const prevIdx = (activeMatchIndex - 1 + elements.length) % elements.length;
+    setActiveMatchIndex(prevIdx);
+    const target = elements[prevIdx];
+    if (target) {
+      target.classList.add('bn-search-highlight-active');
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [activeMatchIndex]);
+
+  // 키보드 단축키 (F3 / Cmd+G / Ctrl+G: 다음, Shift+F3 / Cmd+Shift+G: 이전, Esc: 닫기)
+  useEffect(() => {
+    if (!searchTokens || searchTokens.length === 0) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (
+        (e.key === 'F3' && !e.shiftKey) ||
+        ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'g' && !e.shiftKey)
+      ) {
+        e.preventDefault();
+        handleNextMatch();
+      } else if (
+        (e.key === 'F3' && e.shiftKey) ||
+        ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'g' && e.shiftKey)
+      ) {
+        e.preventDefault();
+        handlePrevMatch();
+      } else if (e.key === 'Escape' && !e.metaKey && !e.ctrlKey) {
+        setSearch('');
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [searchTokens, handleNextMatch, handlePrevMatch, setSearch]);
+
   return (
     <Stack gap={4} style={{ flex: 1, minHeight: 0 }}>
       {/* 슬래시 메뉴용 숨겨진 파일 선택 인풋 */}
@@ -486,6 +614,87 @@ function BlockEditor({
           onInsertToday={handleInsertToday}
         />
       </div>
+
+      {/* 본문 검색 키워드 하이라이트 네비게이터 바 */}
+      {searchTokens.length > 0 && (
+        <Paper
+          className="no-print"
+          px="sm"
+          py={6}
+          radius="sm"
+          withBorder
+          style={{
+            backgroundColor: scheme === 'dark' ? 'rgba(245, 159, 0, 0.12)' : 'rgba(255, 249, 219, 0.95)',
+            borderColor: scheme === 'dark' ? 'rgba(245, 159, 0, 0.35)' : 'rgba(245, 159, 0, 0.4)',
+            marginBottom: 2,
+          }}
+        >
+          <Group justify="space-between" align="center" wrap="nowrap">
+            <Group gap="xs" wrap="nowrap" style={{ overflow: 'hidden' }}>
+              <IconSearch size={15} color="var(--mantine-color-yellow-6)" />
+              <Text size="xs" fw={700} c={scheme === 'dark' ? 'yellow.2' : 'dark.6'}>
+                본문 검색어 강조:
+              </Text>
+              <Group gap={4} wrap="nowrap" style={{ overflow: 'hidden' }}>
+                {searchTokens.map((t, i) => (
+                  <Badge key={i} size="xs" variant="filled" color="yellow">
+                    {t}
+                  </Badge>
+                ))}
+              </Group>
+              <Badge
+                size="xs"
+                variant="light"
+                color={matchCount > 0 ? 'yellow' : 'gray'}
+              >
+                {matchCount > 0
+                  ? `본문 일치 ${activeMatchIndex + 1} / ${matchCount}건`
+                  : '본문 일치 없음 (제목/태그 등 일치)'}
+              </Badge>
+            </Group>
+
+            <Group gap={4} wrap="nowrap">
+              {matchCount > 0 && (
+                <>
+                  <Tooltip label="이전 일치 위치로 이동 (Shift+F3, Cmd+Shift+G)">
+                    <ActionIcon
+                      size="sm"
+                      variant="subtle"
+                      color="yellow"
+                      onClick={handlePrevMatch}
+                      aria-label="이전 일치 위치"
+                    >
+                      <IconChevronUp size={15} />
+                    </ActionIcon>
+                  </Tooltip>
+                  <Tooltip label="다음 일치 위치로 이동 (F3, Cmd+G)">
+                    <ActionIcon
+                      size="sm"
+                      variant="subtle"
+                      color="yellow"
+                      onClick={handleNextMatch}
+                      aria-label="다음 일치 위치"
+                    >
+                      <IconChevronDown size={15} />
+                    </ActionIcon>
+                  </Tooltip>
+                </>
+              )}
+              <Tooltip label="검색 하이라이트 닫기 (Esc)">
+                <ActionIcon
+                  size="sm"
+                  variant="subtle"
+                  color="gray"
+                  onClick={() => setSearch('')}
+                  aria-label="검색 하이라이트 닫기"
+                >
+                  <IconX size={15} />
+                </ActionIcon>
+              </Tooltip>
+            </Group>
+          </Group>
+        </Paper>
+      )}
       <div
         style={{
           flex: 1,

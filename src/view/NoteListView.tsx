@@ -18,6 +18,8 @@ import { PastelColorConfig, PASTEL_COLORS, getPastelConfig, TreeNode, getPathTit
 import { noteBodyText } from '../model/HashtagService';
 import { useNotes } from '../controller/NotesController';
 import { CryptoService } from '../model/CryptoService';
+import { getSearchSnippet } from '../model/SearchService';
+import { HighlightText } from './HighlightText';
 
 function excerpt(content: string): string {
   if (CryptoService.isEncrypted(content) || CryptoService.isCorruptedPlaceholder(content)) {
@@ -387,7 +389,18 @@ function TreeRow({
 }
 
 export function NoteListView() {
-  const { tree, flat, isFiltering, selectedId, select, setActiveTag, notes } = useNotes();
+  const {
+    tree,
+    flat,
+    isFiltering,
+    selectedId,
+    select,
+    setActiveTag,
+    notes,
+    projects,
+    searchTokens,
+    searchScope,
+  } = useNotes();
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
   const toggle = (id: string) =>
@@ -413,6 +426,9 @@ export function NoteListView() {
             const active = n.id === selectedId;
             const path = getPathTitles(notes, n.id);
             const cfg = getPastelConfig(n.color);
+            const proj = projects.find((p) => p.id === (n.projectId || 'default'));
+            const snippet = getSearchSnippet(n.content, searchTokens);
+
             return (
               <Card
                 key={n.id}
@@ -428,19 +444,27 @@ export function NoteListView() {
                 onClick={() => select(n.id)}
                 p="xs"
               >
-                {path.length > 1 && (
-                  <Text
-                    size="xs"
-                    c={active ? undefined : 'dimmed'}
-                    style={{ color: active ? cfg.dimmedColor : undefined }}
-                    truncate
-                  >
-                    {path.slice(0, -1).join(' / ')} /
-                  </Text>
-                )}
+                <Group justify="space-between" align="center" wrap="nowrap" mb={2}>
+                  {/* 전체 검색 시 프로젝트 배지 표시 */}
+                  {searchScope === 'all' && proj && (
+                    <Badge size="xs" variant="light" color="gray" style={{ flexShrink: 0 }}>
+                      {proj.icon || '📁'} {proj.name}
+                    </Badge>
+                  )}
+                  {path.length > 1 && (
+                    <Text
+                      size="xs"
+                      c={active ? undefined : 'dimmed'}
+                      style={{ color: active ? cfg.dimmedColor : undefined }}
+                      truncate
+                    >
+                      {path.slice(0, -1).join(' / ')} /
+                    </Text>
+                  )}
+                </Group>
                 <Group justify="space-between" align="center" wrap="nowrap">
                   <Text fw={700} truncate size="sm" style={{ color: active ? cfg.textColor : undefined, flex: 1 }}>
-                    {n.title || '제목 없음'}
+                    <HighlightText text={n.title || '제목 없음'} tokens={searchTokens} />
                   </Text>
                   {n.reminder && !n.reminder.dismissed && (
                     <Tooltip
@@ -468,7 +492,7 @@ export function NoteListView() {
                   lineClamp={2}
                   mt={2}
                 >
-                  {excerpt(n.content) || '내용 없음'}
+                  <HighlightText text={snippet} tokens={searchTokens} />
                 </Text>
                 <Group gap={4} mt={4}>
                   {n.tags.map((t) => (
@@ -487,7 +511,7 @@ export function NoteListView() {
                         setActiveTag(t);
                       }}
                     >
-                      #{t}
+                      #<HighlightText text={t} tokens={searchTokens} />
                     </Badge>
                   ))}
                 </Group>

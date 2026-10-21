@@ -8,6 +8,7 @@ import {
   ColorSchemeScript,
   Divider,
   Group,
+  Kbd,
   MantineProvider,
   Tooltip,
   createTheme,
@@ -25,6 +26,7 @@ import {
   IconLockOpen,
   IconPlus,
   IconRefresh,
+  IconSearch,
   IconShieldLock,
 } from '@tabler/icons-react';
 import { NotesProvider, useNotes } from './controller/NotesController';
@@ -35,6 +37,7 @@ import { SidebarView } from './view/SidebarView';
 import { AlarmModal } from './view/AlarmModal';
 import { SupabaseSettingsModal } from './view/SupabaseSettingsModal';
 import { SecurityModal } from './view/SecurityModal';
+import { QuickSearchModal } from './view/QuickSearchModal';
 import { SortMenu } from './view/SortMenu';
 import { ResizeSplitter, useResizable } from './view/ResizeSplitter';
 
@@ -94,6 +97,9 @@ function Shell() {
     supabaseModalOpened,
     openSupabaseModal,
     closeSupabaseModal,
+    quickSearchModalOpened,
+    openQuickSearchModal,
+    closeQuickSearchModal,
   } = useNotes();
 
   // 사이드바(프로젝트) 및 노트 목록 동적 너비 리사이징 (localStorage 영구 보존)
@@ -111,7 +117,10 @@ function Shell() {
     storageKey: 'bullsnote.list.width',
   });
 
-  useHotkeys([['ctrl+N', (e) => { e.preventDefault(); create(null); }]]);
+  useHotkeys([
+    ['ctrl+N', (e) => { e.preventDefault(); create(null); }],
+    ['mod+K', (e) => { e.preventDefault(); openQuickSearchModal(); }],
+  ]);
 
   useEffect(() => {
     document.title = `BullsNote v${APP_VERSION}`;
@@ -165,6 +174,19 @@ function Shell() {
         </Group>
 
         <Group gap="xs">
+          {/* 전역 퀵 검색 (Cmd+K) 버튼 */}
+          <Tooltip label="전역 퀵 검색 열기 (⌘K / Ctrl+K)">
+            <Button
+              size="xs"
+              variant="default"
+              leftSection={<IconSearch size={14} color="var(--mantine-color-blue-6)" />}
+              rightSection={<Kbd size="xs">⌘K</Kbd>}
+              onClick={openQuickSearchModal}
+            >
+              빠른 검색
+            </Button>
+          </Tooltip>
+
           <Tooltip
             label={
               supabaseConnected
@@ -271,6 +293,7 @@ function Shell() {
       </AppShell.Main>
       <SupabaseSettingsModal opened={supabaseModalOpened} onClose={closeSupabaseModal} />
       <SecurityModal opened={securityModalOpened} onClose={closeSecurityModal} />
+      <QuickSearchModal opened={quickSearchModalOpened} onClose={closeQuickSearchModal} />
     </AppShell>
   );
 }

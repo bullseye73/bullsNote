@@ -21,6 +21,7 @@ import {
   IconCloud,
   IconCloudCheck,
   IconCloudOff,
+  IconCommand,
   IconDots,
   IconFolder,
   IconPencil,
@@ -30,6 +31,7 @@ import {
   IconSettings,
   IconStar,
   IconTrash,
+  IconX,
 } from '@tabler/icons-react';
 import { useState } from 'react';
 import { useNotes } from '../controller/NotesController';
@@ -79,6 +81,11 @@ export function SidebarView({ onOpenSupabaseModal }: SidebarViewProps) {
     notes,
     search,
     setSearch,
+    searchScope,
+    setSearchScope,
+    quickFilter,
+    setQuickFilter,
+    openQuickSearchModal,
     tagCounts,
     activeTag,
     setActiveTag,
@@ -147,12 +154,93 @@ export function SidebarView({ onOpenSupabaseModal }: SidebarViewProps) {
         </Tooltip>
       </Group>
 
-      <TextInput
-        placeholder="검색 (제목/본문/태그)"
-        leftSection={<IconSearch size={14} />}
-        value={search}
-        onChange={(e) => setSearch(e.currentTarget.value)}
-      />
+      {/* 고도화된 검색 바 및 퀵 필터 칩 */}
+      <div>
+        <TextInput
+          placeholder={searchScope === 'all' ? '전체 검색 (제목/본문/태그)' : '현재 프로젝트 검색'}
+          leftSection={<IconSearch size={14} />}
+          rightSection={
+            <Group gap={2} wrap="nowrap" mr={4}>
+              {search ? (
+                <ActionIcon size="xs" variant="subtle" color="gray" onClick={() => setSearch('')} aria-label="검색어 지우기">
+                  <IconX size={12} />
+                </ActionIcon>
+              ) : (
+                <Tooltip label="전역 퀵 검색 (⌘K / Ctrl+K)">
+                  <ActionIcon size="xs" variant="light" color="blue" onClick={openQuickSearchModal} aria-label="퀵 검색">
+                    <IconCommand size={12} />
+                  </ActionIcon>
+                </Tooltip>
+              )}
+            </Group>
+          }
+          value={search}
+          onChange={(e) => setSearch(e.currentTarget.value)}
+        />
+
+        {/* 퀵 필터 및 범위 토글 칩 */}
+        <Group gap={4} mt={6} wrap="wrap">
+          <Tooltip label={searchScope === 'all' ? '현재: 모든 프로젝트 검색 중 (클릭하여 현재 프로젝트만)' : '현재: 선택된 프로젝트만 검색 중 (클릭하여 전체 검색)'}>
+            <Button
+              size="compact-xs"
+              variant={searchScope === 'all' ? 'filled' : 'light'}
+              color="blue"
+              onClick={() => setSearchScope(searchScope === 'all' ? 'current' : 'all')}
+              styles={{ root: { fontSize: 10, paddingLeft: 6, paddingRight: 6 } }}
+            >
+              {searchScope === 'all' ? '🌐 전체' : '📁 현재'}
+            </Button>
+          </Tooltip>
+
+          <Tooltip label="즐겨찾기 필터">
+            <Button
+              size="compact-xs"
+              variant={quickFilter === 'favorite' ? 'filled' : 'subtle'}
+              color={quickFilter === 'favorite' ? 'yellow' : 'gray'}
+              onClick={() => setQuickFilter(quickFilter === 'favorite' ? 'all' : 'favorite')}
+              styles={{ root: { fontSize: 10, paddingLeft: 6, paddingRight: 6 } }}
+            >
+              ⭐
+            </Button>
+          </Tooltip>
+
+          <Tooltip label="고정된 노트 필터">
+            <Button
+              size="compact-xs"
+              variant={quickFilter === 'pinned' ? 'filled' : 'subtle'}
+              color={quickFilter === 'pinned' ? 'blue' : 'gray'}
+              onClick={() => setQuickFilter(quickFilter === 'pinned' ? 'all' : 'pinned')}
+              styles={{ root: { fontSize: 10, paddingLeft: 6, paddingRight: 6 } }}
+            >
+              📌
+            </Button>
+          </Tooltip>
+
+          <Tooltip label="알림 설정된 노트 필터">
+            <Button
+              size="compact-xs"
+              variant={quickFilter === 'reminder' ? 'filled' : 'subtle'}
+              color={quickFilter === 'reminder' ? 'red' : 'gray'}
+              onClick={() => setQuickFilter(quickFilter === 'reminder' ? 'all' : 'reminder')}
+              styles={{ root: { fontSize: 10, paddingLeft: 6, paddingRight: 6 } }}
+            >
+              ⏰
+            </Button>
+          </Tooltip>
+
+          <Tooltip label="첨부파일 있는 노트 필터">
+            <Button
+              size="compact-xs"
+              variant={quickFilter === 'attachment' ? 'filled' : 'subtle'}
+              color={quickFilter === 'attachment' ? 'teal' : 'gray'}
+              onClick={() => setQuickFilter(quickFilter === 'attachment' ? 'all' : 'attachment')}
+              styles={{ root: { fontSize: 10, paddingLeft: 6, paddingRight: 6 } }}
+            >
+              📎
+            </Button>
+          </Tooltip>
+        </Group>
+      </div>
 
       {/* 프로젝트 목록 섹션 */}
       <Group justify="space-between" mt={4} px={4}>
