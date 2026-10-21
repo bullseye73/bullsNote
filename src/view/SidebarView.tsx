@@ -11,6 +11,7 @@ import {
   ScrollArea,
   SimpleGrid,
   Stack,
+  Tabs,
   Text,
   TextInput,
   Tooltip,
@@ -18,12 +19,14 @@ import {
 import { useDisclosure } from '@mantine/hooks';
 import {
   IconAlertCircle,
+  IconCalendar,
   IconCloud,
   IconCloudCheck,
   IconCloudOff,
   IconCommand,
   IconDots,
   IconFolder,
+  IconHash,
   IconPencil,
   IconPlus,
   IconRefresh,
@@ -38,6 +41,7 @@ import { useNotes } from '../controller/NotesController';
 import { Project } from '../model/Note';
 import { APP_VERSION } from '../model/version';
 import { SortMenu } from './SortMenu';
+import { MiniCalendar } from './MiniCalendar';
 
 const POPULAR_ICONS = [
   '📁',
@@ -327,33 +331,65 @@ export function SidebarView({ onOpenSupabaseModal }: SidebarViewProps) {
         onClick={() => setShowFavoriteOnly(!showFavoriteOnly)}
       />
 
-      <Divider label="해시태그" />
-      <ScrollArea style={{ flex: 1 }} type="auto">
-        <Stack gap={2}>
-          {tagCounts.length === 0 && (
-            <Text size="sm" c="dimmed">
-              본문에 #태그를 입력하면 자동 수집됩니다.
-            </Text>
-          )}
-          {tagCounts.map(({ tag, count }) => (
-            <NavLink
-              key={tag}
-              label={`#${tag}`}
-              description={`${count}개`}
-              active={activeTag === tag}
-              onClick={() => setActiveTag(activeTag === tag ? null : tag)}
-              rightSection={
+      <Divider my={4} />
+      <Tabs
+        defaultValue="calendar"
+        variant="pills"
+        radius="sm"
+        style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}
+      >
+        <Tabs.List grow mb={4}>
+          <Tabs.Tab value="calendar" leftSection={<IconCalendar size={13} />}>
+            달력
+          </Tabs.Tab>
+          <Tabs.Tab
+            value="tags"
+            leftSection={<IconHash size={13} />}
+            rightSection={
+              tagCounts.length > 0 ? (
                 <Badge size="xs" variant="light">
-                  {count}
+                  {tagCounts.length}
                 </Badge>
-              }
-            />
-          ))}
-          {activeTag && (
-            <NavLink label="태그 필터 해제" onClick={() => setActiveTag(null)} color="red" />
-          )}
-        </Stack>
-      </ScrollArea>
+              ) : undefined
+            }
+          >
+            태그
+          </Tabs.Tab>
+        </Tabs.List>
+
+        <Tabs.Panel value="calendar" style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+          <MiniCalendar />
+        </Tabs.Panel>
+
+        <Tabs.Panel value="tags" style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+          <ScrollArea h="100%" type="auto">
+            <Stack gap={2}>
+              {tagCounts.length === 0 && (
+                <Text size="sm" c="dimmed">
+                  본문에 #태그를 입력하면 자동 수집됩니다.
+                </Text>
+              )}
+              {tagCounts.map(({ tag, count }) => (
+                <NavLink
+                  key={tag}
+                  label={`#${tag}`}
+                  description={`${count}개`}
+                  active={activeTag === tag}
+                  onClick={() => setActiveTag(activeTag === tag ? null : tag)}
+                  rightSection={
+                    <Badge size="xs" variant="light">
+                      {count}
+                    </Badge>
+                  }
+                />
+              ))}
+              {activeTag && (
+                <NavLink label="태그 필터 해제" onClick={() => setActiveTag(null)} color="red" />
+              )}
+            </Stack>
+          </ScrollArea>
+        </Tabs.Panel>
+      </Tabs>
 
       <Divider />
       {vaultMode ? (

@@ -36,6 +36,7 @@ import type { VaultApi } from '../electron';
 import { RealtimeStatus, SupabaseConfig, SupabaseService } from '../model/SupabaseService';
 import { CryptoService } from '../model/CryptoService';
 import { parseSearchQuery, searchNotes } from '../model/SearchService';
+import { formatDateIso } from '../model/dateUtils';
 
 function getVault(): VaultApi | null {
   return window.bullsNote?.vault ?? null;
@@ -85,6 +86,7 @@ export interface NotesState {
   quickFilter: 'all' | 'favorite' | 'pinned' | 'reminder' | 'attachment';
   quickSearchModalOpened: boolean;
   activeTag: string | null;
+  selectedDate: string | null;
   showFavoriteOnly: boolean;
   tagCounts: Array<{ tag: string; count: number }>;
   /** 검색/필터 중이면 평탄 리스트, 아니면 트리 */
@@ -138,6 +140,8 @@ export interface NotesActions {
   openQuickSearchModal(): void;
   closeQuickSearchModal(): void;
   setActiveTag(t: string | null): void;
+  setSelectedDate(date: string | null): void;
+  openOrCreateDailyNote(dateStr?: string): string;
   setShowFavoriteOnly(v: boolean): void;
   exportAll(): void;
   importFromFile(file: File): Promise<void>;
@@ -240,6 +244,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const searchTokens = useMemo(() => parseSearchQuery(search).tokens, [search]);
 
   const [activeTag, setActiveTag] = useState<string | null>(null);
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [showFavoriteOnly, setShowFavoriteOnly] = useState(false);
   const [activeAlarmNote, setActiveAlarmNote] = useState<Note | null>(null);
   const triggeredAlarmsRef = useRef<Set<string>>(new Set());
@@ -974,6 +979,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     (id: string) => {
       setSelectedProjectId(id);
       setActiveTag(null);
+      setSelectedDate(null);
       const pNotes = notes.filter((n) => (n.projectId || DEFAULT_PROJECT_ID) === id);
       setSelectedId(pNotes[0]?.id ?? null);
     },
@@ -1108,6 +1114,95 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       });
     },
     [selectedProjectId, queueNoteSync],
+  );
+
+  const openOrCreateDailyNote = useCallback(
+    (targetDateStr?: string): string => {
+      const todayStr = formatDateIso(new Date());
+      const dateStr = targetDateStr || todayStr;
+      const monthStr = dateStr.slice(0, 7); // e.g. "2026-10"
+
+      // 1. "Daily Note" 프로젝트 찾기 (또는 생성)
+      let dailyProj = projects.find(
+        (p) =>
+          p.name.trim().toLowerCase() === 'daily note' ||
+          p.name.trim().toLowerCase() === 'daily notes' ||
+          p.name.trim() === '데일리 노트'
+      );
+      let dailyProjId = dailyProj?.id;
+
+      if (!dailyProj) {
+        dailyProjId = createProjectId();
+        const newProj: Project = {
+          id: dailyProjId,
+          name: 'Daily Note',
+          icon: '📅',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        };
+        setProjects((prev) => [...prev, newProj]);
+        queueProjectSync(newProj);
+        dailyProj = newProj;
+      }
+
+      // 2. YYYY-MM 부모 노트 찾기 (또는 생성)
+      let monthNote = notes.find(
+        (n) =>
+          (n.projectId || DEFAULT_PROJECT_ID) === dailyProjId &&
+          n.parentId === null &&
+          n.title.trim() === monthStr
+      );
+
+      let currentNotes = notes;
+
+      if (!monthNote) {
+        const newMonthNote = createEmptyNote({
+          title: monthStr,
+          projectId: dailyProjId,
+          parentId: null,
+          color: 'purple',
+        });
+        monthNote = newMonthNote;
+        currentNotes = [newMonthNote, ...currentNotes];
+        setNotes((prev) => [newMonthNote, ...prev]);
+        queueNoteSync(newMonthNote);
+      }
+
+      // 3. YYYY-MM-DD 데일리 노트 찾기 (또는 생성)
+      const dayNote = currentNotes.find(
+        (n) =>
+          (n.projectId || DEFAULT_PROJECT_ID) === dailyProjId &&
+          n.title.trim() === dateStr
+      );
+
+      if (dayNote) {
+        setSelectedProjectId(dailyProjId!);
+        setSelectedDate(null);
+        select(dayNote.id);
+        return dayNote.id;
+      }
+
+      // 새로 생성 (타겟 날짜의 정오를 생성 시각으로 지정)
+      const targetDate = new Date(`${dateStr}T12:00:00`);
+      const noteCreatedAt = isNaN(targetDate.getTime()) ? Date.now() : targetDate.getTime();
+
+      const newDayNote = createEmptyNote({
+        title: dateStr,
+        projectId: dailyProjId,
+        parentId: monthNote.id,
+        color: 'blue',
+        createdAt: noteCreatedAt,
+        updatedAt: Date.now(),
+      });
+
+      setNotes((prev) => [newDayNote, ...prev]);
+      setSelectedProjectId(dailyProjId!);
+      setSelectedDate(null);
+      select(newDayNote.id);
+      queueNoteSync(newDayNote);
+      return newDayNote.id;
+    },
+    [projects, notes, select, queueProjectSync, queueNoteSync],
   );
 
   const remove = useCallback(
@@ -1443,6 +1538,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const isFiltering =
     search.trim() !== '' ||
     activeTag !== null ||
+    selectedDate !== null ||
     showFavoriteOnly ||
     quickFilter !== 'all' ||
     (searchScope === 'all' && search.trim() !== '');
@@ -1460,6 +1556,10 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         .filter((n) => (showFavoriteOnly ? n.favorite : true))
         .filter((n) => (activeTag ? n.tags.includes(activeTag) : true))
         .filter((n) => {
+          if (!selectedDate) return true;
+          return formatDateIso(new Date(n.createdAt || 0)) === selectedDate;
+        })
+        .filter((n) => {
           if (quickFilter === 'favorite') return n.favorite;
           if (quickFilter === 'pinned') return n.pinned;
           if (quickFilter === 'reminder') return Boolean(n.reminder && !n.reminder.dismissed);
@@ -1468,12 +1568,18 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         });
     }
 
-    // 2. 검색 쿼리 없이 필터(즐겨찾기, 태그, 퀵필터)만 활성화된 경우
-    const pool = searchScope === 'all' && quickFilter !== 'all' ? notes : currentProjectNotes;
+    // 2. 검색 쿼리 없이 필터(즐겨찾기, 태그, 날짜, 퀵필터)만 활성화된 경우
+    const isDateFiltered = selectedDate !== null;
+    const isQuickFiltered = quickFilter !== 'all';
+    const pool = (searchScope === 'all' && (isQuickFiltered || isDateFiltered)) ? notes : currentProjectNotes;
 
     return pool
       .filter((n) => (showFavoriteOnly ? n.favorite : true))
       .filter((n) => (activeTag ? n.tags.includes(activeTag) : true))
+      .filter((n) => {
+        if (!selectedDate) return true;
+        return formatDateIso(new Date(n.createdAt || 0)) === selectedDate;
+      })
       .filter((n) => {
         if (quickFilter === 'favorite') return n.favorite;
         if (quickFilter === 'pinned') return n.pinned;
@@ -1490,6 +1596,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     searchScope,
     selectedProjectId,
     activeTag,
+    selectedDate,
     showFavoriteOnly,
     quickFilter,
     noteComparator,
@@ -1772,6 +1879,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       openQuickSearchModal,
       closeQuickSearchModal,
       activeTag,
+      selectedDate,
+      setSelectedDate,
+      openOrCreateDailyNote,
       showFavoriteOnly,
       tagCounts,
       tree,
@@ -1921,6 +2031,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       closeSupabaseModal,
       addAttachment,
       removeAttachment,
+      selectedDate,
+      openOrCreateDailyNote,
     ],
   );
 

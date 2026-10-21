@@ -1,5 +1,16 @@
-// VIEW: 트리형 노트 목록 (필터 중에는 평탄 + 경로 표시)
-import { ActionIcon, Badge, Card, Group, Menu, ScrollArea, Stack, Text, Tooltip } from '@mantine/core';
+import {
+  ActionIcon,
+  Badge,
+  Button,
+  Card,
+  Group,
+  Menu,
+  Paper,
+  ScrollArea,
+  Stack,
+  Text,
+  Tooltip,
+} from '@mantine/core';
 import {
   IconChevronDown,
   IconChevronRight,
@@ -8,10 +19,13 @@ import {
   IconIndentDecrease,
   IconIndentIncrease,
   IconBellRinging,
+  IconCalendar,
+  IconCalendarEvent,
   IconPin,
   IconPlus,
   IconStar,
   IconTrash,
+  IconX,
 } from '@tabler/icons-react';
 import { useState } from 'react';
 import { PastelColorConfig, PASTEL_COLORS, getPastelConfig, TreeNode, getPathTitles } from '../model/Note';
@@ -396,6 +410,9 @@ export function NoteListView() {
     selectedId,
     select,
     setActiveTag,
+    selectedDate,
+    setSelectedDate,
+    openOrCreateDailyNote,
     notes,
     projects,
     searchTokens,
@@ -413,6 +430,33 @@ export function NoteListView() {
 
   if (isFiltering) {
     if (flat.length === 0) {
+      if (selectedDate) {
+        return (
+          <Stack align="center" justify="center" h="100%" gap="sm" p="xl">
+            <IconCalendar size={36} color="var(--mantine-color-blue-5)" style={{ opacity: 0.6 }} />
+            <Text fw={600} size="sm">
+              {selectedDate}에 작성된 노트가 없습니다.
+            </Text>
+            <Button
+              size="xs"
+              variant="light"
+              color="blue"
+              leftSection={<IconCalendarEvent size={14} />}
+              onClick={() => openOrCreateDailyNote(selectedDate)}
+            >
+              {selectedDate} 데일리 노트 작성하기
+            </Button>
+            <Button
+              size="compact-xs"
+              variant="subtle"
+              color="gray"
+              onClick={() => setSelectedDate(null)}
+            >
+              날짜 필터 해제
+            </Button>
+          </Stack>
+        );
+      }
       return (
         <Stack align="center" justify="center" h="100%" gap="xs" p="xl">
           <Text c="dimmed">조건에 맞는 노트가 없습니다.</Text>
@@ -422,6 +466,53 @@ export function NoteListView() {
     return (
       <ScrollArea h="100%" type="auto">
         <Stack gap="xs" p="sm">
+          {selectedDate && (
+            <Paper
+              p="xs"
+              withBorder
+              radius="sm"
+              style={{
+                backgroundColor: 'var(--mantine-color-blue-light)',
+                borderColor: 'var(--mantine-color-blue-4)',
+              }}
+            >
+              <Group justify="space-between" align="center" wrap="nowrap">
+                <Group gap={6} wrap="nowrap" style={{ overflow: 'hidden' }}>
+                  <IconCalendar size={14} color="var(--mantine-color-blue-6)" />
+                  <Text size="xs" fw={700} truncate>
+                    {selectedDate} 작성된 노트
+                  </Text>
+                  <Badge size="xs" variant="filled" color="blue">
+                    {flat.length}개
+                  </Badge>
+                </Group>
+                <Group gap={2} wrap="nowrap">
+                  <Tooltip label="해당 날짜 데일리 노트 열기 (Daily Note 프로젝트)">
+                    <ActionIcon
+                      size="xs"
+                      variant="light"
+                      color="blue"
+                      onClick={() => openOrCreateDailyNote(selectedDate)}
+                      aria-label="데일리 노트 열기"
+                    >
+                      <IconCalendarEvent size={12} />
+                    </ActionIcon>
+                  </Tooltip>
+                  <Tooltip label="날짜 필터 해제">
+                    <ActionIcon
+                      size="xs"
+                      variant="subtle"
+                      color="gray"
+                      onClick={() => setSelectedDate(null)}
+                      aria-label="날짜 필터 해제"
+                    >
+                      <IconX size={12} />
+                    </ActionIcon>
+                  </Tooltip>
+                </Group>
+              </Group>
+            </Paper>
+          )}
           {flat.map((n) => {
             const active = n.id === selectedId;
             const path = getPathTitles(notes, n.id);
