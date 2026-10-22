@@ -32,6 +32,7 @@ import {
   IconRefresh,
   IconSearch,
   IconSettings,
+  IconSparkles,
   IconStar,
   IconTrash,
   IconX,
@@ -90,6 +91,7 @@ export function SidebarView({ onOpenSupabaseModal }: SidebarViewProps) {
     quickFilter,
     setQuickFilter,
     openQuickSearchModal,
+    openGeminiModal,
     tagCounts,
     activeTag,
     setActiveTag,
@@ -151,11 +153,18 @@ export function SidebarView({ onOpenSupabaseModal }: SidebarViewProps) {
             v{APP_VERSION}
           </Badge>
         </Group>
-        <Tooltip label="현재 프로젝트에 새 노트 (Ctrl+N)">
-          <ActionIcon color="blue" variant="filled" onClick={() => create()} aria-label="새 노트">
-            <IconPlus size={16} />
-          </ActionIcon>
-        </Tooltip>
+        <Group gap={6} align="center">
+          <Tooltip label="Gemini AI 어시스턴트 (Cmd+J / Ctrl+J)">
+            <ActionIcon color="violet" variant="light" onClick={() => openGeminiModal('clipboard')} aria-label="Gemini AI">
+              <IconSparkles size={16} />
+            </ActionIcon>
+          </Tooltip>
+          <Tooltip label="현재 프로젝트에 새 노트 (Ctrl+N)">
+            <ActionIcon color="blue" variant="filled" onClick={() => create()} aria-label="새 노트">
+              <IconPlus size={16} />
+            </ActionIcon>
+          </Tooltip>
+        </Group>
       </Group>
 
       {/* 고도화된 검색 바 및 퀵 필터 칩 */}

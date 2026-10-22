@@ -28,6 +28,7 @@ import {
   IconRefresh,
   IconSearch,
   IconShieldLock,
+  IconSparkles,
 } from '@tabler/icons-react';
 import { NotesProvider, useNotes } from './controller/NotesController';
 import { ErrorBoundary } from './view/ErrorBoundary';
@@ -38,6 +39,7 @@ import { AlarmModal } from './view/AlarmModal';
 import { SupabaseSettingsModal } from './view/SupabaseSettingsModal';
 import { SecurityModal } from './view/SecurityModal';
 import { QuickSearchModal } from './view/QuickSearchModal';
+import { GeminiAiModal } from './view/GeminiAiModal';
 import { SortMenu } from './view/SortMenu';
 import { ResizeSplitter, useResizable } from './view/ResizeSplitter';
 
@@ -100,6 +102,10 @@ function Shell() {
     quickSearchModalOpened,
     openQuickSearchModal,
     closeQuickSearchModal,
+    geminiModalOpened,
+    geminiModalTab,
+    openGeminiModal,
+    closeGeminiModal,
   } = useNotes();
 
   // 사이드바(프로젝트) 및 노트 목록 동적 너비 리사이징 (localStorage 영구 보존)
@@ -120,6 +126,7 @@ function Shell() {
   useHotkeys([
     ['ctrl+N', (e) => { e.preventDefault(); create(null); }],
     ['mod+K', (e) => { e.preventDefault(); openQuickSearchModal(); }],
+    ['mod+J', (e) => { e.preventDefault(); openGeminiModal('clipboard'); }],
   ]);
 
   useEffect(() => {
@@ -184,6 +191,20 @@ function Shell() {
               onClick={openQuickSearchModal}
             >
               빠른 검색
+            </Button>
+          </Tooltip>
+
+          {/* Gemini AI 어시스턴트 (Cmd+J) 버튼 */}
+          <Tooltip label="Gemini AI 어시스턴트 열기 (⌘J / Ctrl+J)">
+            <Button
+              size="xs"
+              variant="light"
+              color="violet"
+              leftSection={<IconSparkles size={14} />}
+              rightSection={<Kbd size="xs">⌘J</Kbd>}
+              onClick={() => openGeminiModal('clipboard')}
+            >
+              Gemini AI
             </Button>
           </Tooltip>
 
@@ -294,6 +315,7 @@ function Shell() {
       <SupabaseSettingsModal opened={supabaseModalOpened} onClose={closeSupabaseModal} />
       <SecurityModal opened={securityModalOpened} onClose={closeSecurityModal} />
       <QuickSearchModal opened={quickSearchModalOpened} onClose={closeQuickSearchModal} />
+      <GeminiAiModal opened={geminiModalOpened} onClose={closeGeminiModal} initialTab={geminiModalTab} />
     </AppShell>
   );
 }

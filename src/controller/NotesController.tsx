@@ -37,6 +37,7 @@ import { RealtimeStatus, SupabaseConfig, SupabaseService } from '../model/Supaba
 import { CryptoService } from '../model/CryptoService';
 import { parseSearchQuery, searchNotes } from '../model/SearchService';
 import { formatDateIso } from '../model/dateUtils';
+import { GeminiService } from '../model/GeminiService';
 
 function getVault(): VaultApi | null {
   return window.bullsNote?.vault ?? null;
@@ -114,6 +115,8 @@ export interface NotesState {
   isUnlocked: boolean;
   securityModalOpened: boolean;
   supabaseModalOpened: boolean;
+  geminiModalOpened: boolean;
+  geminiModalTab: 'clipboard' | 'prompt' | 'settings';
 }
 
 export interface NotesActions {
@@ -169,6 +172,11 @@ export interface NotesActions {
   closeSupabaseModal(): void;
   addAttachment(noteId: string, attachment: NoteAttachment): void;
   removeAttachment(noteId: string, attachmentId: string): Promise<void>;
+  /** Gemini AI 액션 */
+  openGeminiModal(tab?: 'clipboard' | 'prompt' | 'settings'): void;
+  closeGeminiModal(): void;
+  createNoteFromGemini(params: { title?: string; markdown: string; prompt?: string }): Promise<string>;
+  createNoteFromClipboard(): Promise<{ success: boolean; noteId?: string; error?: string }>;
 }
 
 const Ctx = createContext<(NotesState & NotesActions) | null>(null);
@@ -1858,6 +1866,93 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     [notes, mutate]
   );
 
+  const [geminiModalOpened, setGeminiModalOpened] = useState(false);
+  const [geminiModalTab, setGeminiModalTab] = useState<'clipboard' | 'prompt' | 'settings'>('clipboard');
+
+  const openGeminiModal = useCallback((tab: 'clipboard' | 'prompt' | 'settings' = 'clipboard') => {
+    setGeminiModalTab(tab);
+    setGeminiModalOpened(true);
+  }, []);
+
+  const closeGeminiModal = useCallback(() => {
+    setGeminiModalOpened(false);
+  }, []);
+
+  const createNoteFromGemini = useCallback(
+    async (params: { title?: string; markdown: string; prompt?: string }): Promise<string> => {
+      const headless = await getHeadless();
+      const extracted = GeminiService.extractTitleAndContent(params.markdown);
+      const noteTitle = params.title?.trim() || extracted.title || 'Gemini AI 노트';
+      const bodyMarkdown = extracted.markdownBody;
+
+      // 마크다운을 BlockNote 블록으로 파싱
+      const blocks = await headless.toBlocks(bodyMarkdown);
+      const contentJson = JSON.stringify(blocks);
+
+      // 1. "Gemini AI" 프로젝트 찾기 (또는 자동 생성)
+      let geminiProj = projects.find(
+        (p) =>
+          p.name.trim().toLowerCase() === 'gemini ai' ||
+          p.name.trim().toLowerCase() === 'ai notes' ||
+          p.name.trim() === 'Gemini AI'
+      );
+      let geminiProjId = geminiProj?.id;
+
+      if (!geminiProj) {
+        geminiProjId = createProjectId();
+        const newProj: Project = {
+          id: geminiProjId,
+          name: 'Gemini AI',
+          icon: '✨',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        };
+        setProjects((prev) => [...prev, newProj]);
+        queueProjectSync(newProj);
+        geminiProj = newProj;
+      }
+
+      // 2. 태그 추출 및 기본 태그 결합
+      const autoTags = extractHashtagsFromText(bodyMarkdown);
+      const combinedTags = Array.from(new Set(['gemini', 'ai', ...autoTags]));
+
+      // 3. 새 노트 생성
+      const newNote = createEmptyNote({
+        title: noteTitle,
+        projectId: geminiProjId,
+        parentId: null,
+        color: 'purple',
+      });
+      newNote.content = contentJson;
+      newNote.tags = combinedTags;
+
+      setNotes((prev) => [newNote, ...prev]);
+      queueNoteSync(newNote);
+
+      // 프로젝트 및 노트 선택 전환
+      setSelectedProjectId(geminiProjId!);
+      setSelectedDate(null);
+      select(newNote.id);
+
+      return newNote.id;
+    },
+    [projects, queueProjectSync, queueNoteSync, select]
+  );
+
+  const createNoteFromClipboard = useCallback(async (): Promise<{ success: boolean; noteId?: string; error?: string }> => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!text || !text.trim()) {
+        return { success: false, error: '클립보드에 복사된 텍스트가 없습니다.' };
+      }
+      const noteId = await createNoteFromGemini({ markdown: text });
+      return { success: true, noteId };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { success: false, error: `클립보드 접근 실패: ${msg}` };
+    }
+  }, [createNoteFromGemini]);
+
   const selected = useMemo(() => notes.find((n) => n.id === selectedId) ?? null, [notes, selectedId]);
 
   const value = useMemo(
@@ -1949,6 +2044,12 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       closeSupabaseModal,
       addAttachment,
       removeAttachment,
+      geminiModalOpened,
+      geminiModalTab,
+      openGeminiModal,
+      closeGeminiModal,
+      createNoteFromGemini,
+      createNoteFromClipboard,
     }),
     [
       projects,
@@ -2033,6 +2134,12 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       removeAttachment,
       selectedDate,
       openOrCreateDailyNote,
+      geminiModalOpened,
+      geminiModalTab,
+      openGeminiModal,
+      closeGeminiModal,
+      createNoteFromGemini,
+      createNoteFromClipboard,
     ],
   );
 

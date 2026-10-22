@@ -28,9 +28,16 @@ import {
   IconTerminal,
   IconTextSize,
   IconUnderline,
+  IconSparkles,
+  IconWand,
+  IconPencilCheck,
+  IconChecklist,
+  IconWriting,
+  IconLanguage,
 } from '@tabler/icons-react';
 import type { BlockNoteEditor } from '@blocknote/core';
 import { useState } from 'react';
+import { AI_ACTIONS_META, AiActionType } from '../model/GeminiService';
 
 type AnyEditor = BlockNoteEditor<any, any, any>;
 
@@ -105,10 +112,12 @@ export function EditorToolbar({
   editor,
   onOpenDatePicker,
   onInsertToday,
+  onTriggerAi,
 }: {
   editor: AnyEditor;
   onOpenDatePicker?: () => void;
   onInsertToday?: () => void;
+  onTriggerAi?: (action: AiActionType) => void;
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -388,6 +397,45 @@ export function EditorToolbar({
       <Tool label={copied ? '복사됨!' : 'Markdown으로 복사'} onClick={() => void copyMarkdown()}>
         <IconClipboard size={16} />
       </Tool>
+
+      <Divider orientation="vertical" />
+
+      {/* Gemini AI 어시스턴트 드롭다운 메뉴 */}
+      <Menu position="bottom-end" withArrow shadow="md" withinPortal>
+        <Menu.Target>
+          <Tooltip label="Gemini AI 어시스턴트 (요약, 서식 정리, 교정, 할 일 추출)">
+            <ActionIcon
+              variant="light"
+              color="violet"
+              size="md"
+              onMouseDown={keepSelection}
+              aria-label="AI 어시스턴트"
+              style={{ width: 'auto', padding: '0 8px' }}
+            >
+              <Group gap={4} wrap="nowrap">
+                <IconSparkles size={16} />
+                <span style={{ fontSize: 12, fontWeight: 700 }}>AI 보조</span>
+                <IconChevronDown size={11} style={{ opacity: 0.7 }} />
+              </Group>
+            </ActionIcon>
+          </Tooltip>
+        </Menu.Target>
+        <Menu.Dropdown onMouseDown={keepSelection}>
+          <Menu.Label>Gemini AI 작업</Menu.Label>
+          {AI_ACTIONS_META.map((meta) => (
+            <Menu.Item
+              key={meta.type}
+              leftSection={<span style={{ fontSize: 15 }}>{meta.icon}</span>}
+              onClick={() => onTriggerAi?.(meta.type)}
+            >
+              <div>
+                <span style={{ fontWeight: 600 }}>{meta.label}</span>
+                <div style={{ fontSize: 11, opacity: 0.7 }}>{meta.description}</div>
+              </div>
+            </Menu.Item>
+          ))}
+        </Menu.Dropdown>
+      </Menu>
     </Group>
   );
 }

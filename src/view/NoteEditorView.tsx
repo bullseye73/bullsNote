@@ -70,9 +70,12 @@ import { ReminderPopover } from './ReminderPopover';
 import { DatePickerModal } from './DatePickerModal';
 import { PrintPreviewModal } from './PrintPreviewModal';
 import { NoteTableOfContents } from './NoteTableOfContents';
+import { EditorAiModal } from './EditorAiModal';
 import { formatDateIso } from '../model/dateUtils';
 import { getDateAtSuggestions, getDateSlashMenuItems } from '../model/dateSuggestions';
 import { getCombinedAtSuggestions, getNoteSlashMenuItems } from '../model/noteSuggestions';
+import { getAiSlashMenuItems } from '../model/aiSlashMenu';
+import { AiActionType } from '../model/GeminiService';
 import { NoteBacklinksView } from './NoteBacklinksView';
 import { NoteAttachmentsView } from './NoteAttachmentsView';
 import { SupabaseService } from '../model/SupabaseService';
@@ -597,6 +600,57 @@ function BlockEditor({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [searchTokens, handleNextMatch, handlePrevMatch, setSearch]);
 
+  const [aiModalOpened, setAiModalOpened] = useState(false);
+  const [aiModalAction, setAiModalAction] = useState<AiActionType>('summarize');
+  const [currentMarkdownForAi, setCurrentMarkdownForAi] = useState('');
+
+  const handleTriggerAi = useCallback(
+    (action: AiActionType) => {
+      if (!editor) return;
+      try {
+        const md = editor.blocksToMarkdownLossy(editor.document);
+        setCurrentMarkdownForAi(md);
+      } catch {
+        setCurrentMarkdownForAi('');
+      }
+      setAiModalAction(action);
+      setAiModalOpened(true);
+    },
+    [editor]
+  );
+
+  const handleApplyAiResult = useCallback(
+    async (resultMarkdown: string, placement: 'top' | 'bottom' | 'replace') => {
+      if (!editor) return;
+      try {
+        const newBlocks = await editor.tryParseMarkdownToBlocks(resultMarkdown);
+        if (!Array.isArray(newBlocks) || newBlocks.length === 0) return;
+
+        if (placement === 'replace') {
+          editor.replaceBlocks(editor.document, newBlocks as never);
+        } else if (placement === 'top') {
+          const firstBlock = editor.document[0];
+          if (firstBlock) {
+            editor.insertBlocks(newBlocks as never, firstBlock, 'before');
+          } else {
+            editor.replaceBlocks(editor.document, newBlocks as never);
+          }
+        } else if (placement === 'bottom') {
+          const lastBlock = editor.document[editor.document.length - 1];
+          if (lastBlock) {
+            editor.insertBlocks(newBlocks as never, lastBlock, 'after');
+          } else {
+            editor.replaceBlocks(editor.document, newBlocks as never);
+          }
+        }
+        editor.focus();
+      } catch (err) {
+        console.error('Failed to apply AI result to blocks:', err);
+      }
+    },
+    [editor]
+  );
+
   return (
     <Stack gap={4} style={{ flex: 1, minHeight: 0 }}>
       {/* 슬래시 메뉴용 숨겨진 파일 선택 인풋 */}
@@ -612,6 +666,7 @@ function BlockEditor({
           editor={editor}
           onOpenDatePicker={() => handleOpenDatePicker()}
           onInsertToday={handleInsertToday}
+          onTriggerAi={handleTriggerAi}
         />
       </div>
 
@@ -800,11 +855,12 @@ function BlockEditor({
                 )
               }
             />
-            {/* 노트 링크, 파일 첨부 및 날짜가 포함된 / 슬래시 명령어 메뉴 */}
+            {/* 노트 링크, 파일 첨부, AI 및 날짜가 포함된 / 슬래시 명령어 메뉴 */}
             <SuggestionMenuController
               triggerCharacter="/"
               shouldOpen={(e) => !e.selection.$from.parent.type.isInGroup('tableContent')}
               getItems={async (query) => {
+                const aiSlashItems = getAiSlashMenuItems(editor, handleTriggerAi);
                 const defaultSlashItems = getDefaultReactSlashMenuItems(editor);
                 const dateSlashItems = getDateSlashMenuItems(editor, () => handleOpenDatePicker());
                 const noteSlashItems = getNoteSlashMenuItems(
@@ -814,7 +870,7 @@ function BlockEditor({
                   handleAttachFromSlash
                 );
                 return filterSuggestionItems(
-                  [...noteSlashItems, ...dateSlashItems, ...defaultSlashItems],
+                  [...aiSlashItems, ...noteSlashItems, ...dateSlashItems, ...defaultSlashItems],
                   query
                 );
               }}
@@ -860,6 +916,14 @@ function BlockEditor({
         initialDate={datePickerInitialDate}
         onClose={() => setDatePickerOpen(false)}
         onInsert={handleDatePicked}
+      />
+
+      <EditorAiModal
+        opened={aiModalOpened}
+        onClose={() => setAiModalOpened(false)}
+        initialAction={aiModalAction}
+        currentContentMarkdown={currentMarkdownForAi}
+        onApplyResult={handleApplyAiResult}
       />
     </Stack>
   );
