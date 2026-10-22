@@ -43,6 +43,7 @@ import { Project } from '../model/Note';
 import { APP_VERSION } from '../model/version';
 import { SortMenu } from './SortMenu';
 import { MiniCalendar } from './MiniCalendar';
+import { HorizontalResizeSplitter, useResizableHeight } from './ResizeSplitter';
 
 const POPULAR_ICONS = [
   '📁',
@@ -110,6 +111,14 @@ export function SidebarView({ onOpenSupabaseModal }: SidebarViewProps) {
     syncWithSupabase,
     lastSyncedAt,
   } = useNotes();
+
+  // 프로젝트 영역 높이 동적 조절 (기본 180px, 최소 70px, 최대 500px, localStorage 영속 저장)
+  const projectSection = useResizableHeight({
+    initialHeight: 180,
+    minHeight: 70,
+    maxHeight: 500,
+    storageKey: 'bullsnote.sidebar.projectHeight',
+  });
 
   // 프로젝트 생성/수정 모달 상태
   const [modalOpened, { open: openModal, close: closeModal }] = useDisclosure(false);
@@ -275,7 +284,7 @@ export function SidebarView({ onOpenSupabaseModal }: SidebarViewProps) {
         </Group>
       </Group>
 
-      <ScrollArea.Autosize mah={180} type="auto">
+      <ScrollArea style={{ height: projectSection.height }} type="auto">
         <Stack gap={2}>
           {sortedProjects.map((proj) => {
             const count = notes.filter((n) => (n.projectId || 'default') === proj.id).length;
@@ -331,7 +340,7 @@ export function SidebarView({ onOpenSupabaseModal }: SidebarViewProps) {
             );
           })}
         </Stack>
-      </ScrollArea.Autosize>
+      </ScrollArea>
 
       <NavLink
         label="즐겨찾기"
@@ -340,7 +349,14 @@ export function SidebarView({ onOpenSupabaseModal }: SidebarViewProps) {
         onClick={() => setShowFavoriteOnly(!showFavoriteOnly)}
       />
 
-      <Divider my={4} />
+      {/* 프로젝트 영역과 달력/태그 영역 사이 수직 리사이즈 스플리터 */}
+      <div style={{ padding: '2px 0' }}>
+        <HorizontalResizeSplitter
+          onMouseDown={projectSection.startResize}
+          onDoubleClick={projectSection.resetHeight}
+          title="마우스 드래그로 프로젝트와 달력 영역의 높이를 조절합니다 (더블클릭 시 기본값 복원)"
+        />
+      </div>
       <Tabs
         defaultValue="calendar"
         variant="pills"
