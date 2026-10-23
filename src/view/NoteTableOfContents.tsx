@@ -61,7 +61,7 @@ interface NoteTableOfContentsProps {
 }
 
 export function NoteTableOfContents({ editor, scrollContainerRef }: NoteTableOfContentsProps) {
-  const scheme = useComputedColorScheme('light', { getInitialValueInEffect: true });
+  const scheme = useComputedColorScheme('light');
   const isDark = scheme === 'dark';
 
   // 로컬 스토리지에 펼침/접힘 상태 기억

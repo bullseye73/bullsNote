@@ -1,4 +1,4 @@
-const { app, BrowserWindow, nativeImage, shell, ipcMain, Notification, Menu, MenuItem, dialog } = require('electron');
+const { app, BrowserWindow, nativeImage, shell, ipcMain, Notification, Menu, MenuItem, dialog, nativeTheme } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const packageJson = require('../package.json');
@@ -68,13 +68,14 @@ function setupAppMenu() {
 function createWindow() {
   const iconPath = path.join(__dirname, 'assets', 'icon.png');
   const appVersion = packageJson.version || '1.1.1';
+  const isDark = nativeTheme.shouldUseDarkColors;
   const win = new BrowserWindow({
     title: `BullsNote v${appVersion}`,
     width: 1280,
     height: 800,
     minWidth: 900,
     minHeight: 600,
-    backgroundColor: '#ffffff',
+    backgroundColor: isDark ? '#1a1b1e' : '#ffffff',
     icon: nativeImage.createFromPath(iconPath),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),

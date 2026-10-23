@@ -33,7 +33,7 @@ export function MiniCalendar() {
     openOrCreateDailyNote,
   } = useNotes();
 
-  const scheme = useComputedColorScheme('light', { getInitialValueInEffect: true });
+  const scheme = useComputedColorScheme('light');
   const isDark = scheme === 'dark';
 
   // 현재 표시 중인 연도와 월 (0-11)

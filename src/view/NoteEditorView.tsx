@@ -135,7 +135,7 @@ function BlockEditor({
     searchTokens,
     setSearch,
   } = useNotes();
-  const scheme = useComputedColorScheme('light', { getInitialValueInEffect: true });
+  const scheme = useComputedColorScheme('light');
   const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [datePickerInitialDate, setDatePickerInitialDate] = useState<Date | undefined>(undefined);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -757,6 +757,7 @@ function BlockEditor({
           position: 'relative',
           display: 'flex',
           flexDirection: 'column',
+          backgroundColor: 'var(--mantine-color-body)',
         }}
       >
         {/* 우측 상단 고정 목차 (TOC) */}
@@ -764,7 +765,13 @@ function BlockEditor({
 
         <div
           ref={scrollContainerRef}
-          style={{ flex: 1, minHeight: 0, overflow: 'auto', paddingBottom: 280 }}
+          style={{
+            flex: 1,
+            minHeight: 0,
+            overflow: 'auto',
+            paddingBottom: 280,
+            backgroundColor: 'var(--mantine-color-body)',
+          }}
           onClick={(e) => {
             if (e.target === e.currentTarget) {
               editor.focus();
@@ -1095,7 +1102,17 @@ export function NoteEditorView() {
   const editorKey = `${selected.id}`;
 
   return (
-    <Stack gap="xs" p="md" h="100%" className="note-editor-stack" style={{ overflow: 'hidden' }}>
+    <Stack
+      gap="xs"
+      p="md"
+      h="100%"
+      className="note-editor-stack"
+      style={{
+        overflow: 'hidden',
+        backgroundColor: 'var(--mantine-color-body)',
+        color: 'var(--mantine-color-text)',
+      }}
+    >
       {/* 인쇄 시에만 표시되는 인쇄 전용 헤더 (A4 문서용 깔끔한 레이아웃) */}
       <div className="print-only" style={{ marginBottom: 20, paddingBottom: 12, borderBottom: '2px solid #222' }}>
         <h1 style={{ fontSize: '24pt', fontWeight: 800, margin: '0 0 10px 0', color: '#111' }}>
@@ -1521,7 +1538,15 @@ export function NoteEditorView() {
           </Stack>
         </div>
       ) : (
-        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            backgroundColor: 'var(--mantine-color-body)',
+          }}
+        >
           <ErrorBoundary
             title="에디터를 표시하지 못했습니다"
             onResetNote={() =>

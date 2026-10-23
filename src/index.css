@@ -28,6 +28,24 @@
   background-color: var(--mantine-color-default-hover);
 }
 
+html,
+body,
+#root {
+  background-color: var(--mantine-color-body);
+  color: var(--mantine-color-text);
+}
+
+.note-editor-wrapper,
+.note-editor-stack {
+  background-color: var(--mantine-color-body);
+}
+
+/* BlockNote 에디터 배경색이 고정 흰색(#ffffff) 대신 Mantine 테마/노트 본문 배경색을 투명하게 상속받도록 보정 */
+.bn-container,
+.bn-editor {
+  background-color: transparent !important;
+}
+
 /* ==========================================================================
    글로벌 슬림 오버레이 스크롤바 (필요한 경우에만 얇고 깔끔하게 표시)
    ========================================================================== */
