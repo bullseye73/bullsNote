@@ -4,6 +4,7 @@ import {
   Badge,
   Card,
   Chip,
+  Code,
   Divider,
   Group,
   Kbd,
@@ -13,6 +14,7 @@ import {
   Text,
   TextInput,
   Tooltip,
+  useComputedColorScheme,
 } from '@mantine/core';
 import {
   IconAlertCircle,
@@ -40,6 +42,9 @@ interface QuickSearchModalProps {
 }
 
 export function QuickSearchModal({ opened, onClose }: QuickSearchModalProps) {
+  const scheme = useComputedColorScheme('light');
+  const isDark = scheme === 'dark';
+
   const {
     notes,
     projects,
@@ -150,8 +155,14 @@ export function QuickSearchModal({ opened, onClose }: QuickSearchModalProps) {
       styles={{
         content: {
           overflow: 'hidden',
-          borderRadius: 12,
-          boxShadow: '0 20px 40px rgba(0, 0, 0, 0.22)',
+          borderRadius: 14,
+          border: isDark
+            ? '1px solid var(--mantine-color-dark-4)'
+            : '1px solid var(--mantine-color-default-border)',
+          boxShadow: isDark
+            ? '0 24px 50px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(255, 255, 255, 0.08)'
+            : '0 20px 40px rgba(0, 0, 0, 0.16)',
+          backgroundColor: isDark ? 'var(--mantine-color-dark-7)' : 'var(--mantine-color-body)',
         },
         body: {
           padding: 0,
@@ -160,7 +171,13 @@ export function QuickSearchModal({ opened, onClose }: QuickSearchModalProps) {
     >
       <Stack gap={0}>
         {/* 상단 검색 입력란 */}
-        <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--mantine-color-default-border)' }}>
+        <div
+          style={{
+            padding: '14px 16px',
+            borderBottom: '1px solid var(--mantine-color-default-border)',
+            backgroundColor: isDark ? 'var(--mantine-color-dark-7)' : 'var(--mantine-color-body)',
+          }}
+        >
           <TextInput
             ref={inputRef}
             size="md"
@@ -249,8 +266,16 @@ export function QuickSearchModal({ opened, onClose }: QuickSearchModalProps) {
           </Group>
         </div>
 
-        {/* 결과 카운트 안내 헤더 */}
-        <Group justify="space-between" px="md" py={6} bg="var(--mantine-color-gray-0)" style={{ borderBottom: '1px solid var(--mantine-color-default-border)' }}>
+        {/* 결과 카운트 안내 헤더 (최근 수정된 노트 안내 영역) */}
+        <Group
+          justify="space-between"
+          px="md"
+          py={7}
+          style={{
+            backgroundColor: isDark ? 'rgba(255, 255, 255, 0.035)' : 'var(--mantine-color-gray-0)',
+            borderBottom: '1px solid var(--mantine-color-default-border)',
+          }}
+        >
           <Text size="xs" c="dimmed" fw={600}>
             {effectiveQuery ? `검색 결과: ${results.length}건` : `최근 수정된 노트 (${results.length}건)`}
           </Text>
@@ -260,7 +285,7 @@ export function QuickSearchModal({ opened, onClose }: QuickSearchModalProps) {
                 매칭 키워드:
               </Text>
               {parsed.tokens.map((t, idx) => (
-                <Badge key={idx} size="xs" variant="light" color="blue">
+                <Badge key={idx} size="xs" variant={isDark ? 'filled' : 'light'} color="blue">
                   {t}
                 </Badge>
               ))}
@@ -277,17 +302,31 @@ export function QuickSearchModal({ opened, onClose }: QuickSearchModalProps) {
                 일치하는 노트를 찾을 수 없습니다.
               </Text>
               <Text size="xs" c="dimmed" ta="center" style={{ maxWidth: 360 }}>
-                💡 팁: 초성 검색(예: &apos;ㅎㅇ&apos;), 연산자(<code>tag:기획</code>, <code>is:fav</code>, <code>project:업무</code>)를 활용해보세요.
+                💡 팁: 초성 검색(예: &apos;ㅎㅇ&apos;), 연산자(<Code>tag:기획</Code>, <Code>is:fav</Code>, <Code>project:업무</Code>)를 활용해보세요.
               </Text>
             </Stack>
           ) : (
-            <Stack gap={2} p="xs">
+            <Stack gap={3} p="xs">
               {results.map((item, index) => {
                 const note = item.note;
                 const isSelected = index === selectedIndex;
                 const cfg = getPastelConfig(note.color);
                 const proj = projects.find((p) => p.id === (note.projectId || 'default'));
                 const path = getPathTitles(notes, note.id);
+
+                const cardBg = isSelected
+                  ? isDark
+                    ? 'rgba(34, 139, 230, 0.16)'
+                    : cfg.bg || 'var(--mantine-color-blue-light)'
+                  : isDark
+                  ? 'var(--mantine-color-dark-6)'
+                  : 'var(--mantine-color-body)';
+
+                const cardBorderColor = isSelected
+                  ? cfg.border
+                  : isDark
+                  ? 'var(--mantine-color-dark-4)'
+                  : 'var(--mantine-color-default-border)';
 
                 return (
                   <Card
@@ -299,21 +338,26 @@ export function QuickSearchModal({ opened, onClose }: QuickSearchModalProps) {
                     p="xs"
                     radius="sm"
                     withBorder
+                    className="quick-search-card"
+                    data-selected={isSelected}
                     onClick={() => handleSelectNote(note.id)}
                     style={{
                       cursor: 'pointer',
                       borderLeft: isSelected ? `5px solid ${cfg.border}` : `3px solid ${cfg.border}`,
-                      backgroundColor: isSelected
-                        ? cfg.bg || 'var(--mantine-color-blue-light)'
-                        : undefined,
-                      borderColor: isSelected ? cfg.border : 'var(--mantine-color-default-border)',
+                      backgroundColor: cardBg,
+                      borderColor: cardBorderColor,
                       transition: 'all 0.12s ease',
                     }}
                   >
                     <Group justify="space-between" wrap="nowrap" gap="xs">
                       <Group gap={6} wrap="nowrap" style={{ minWidth: 0, flex: 1 }}>
                         {/* 프로젝트 배지 */}
-                        <Badge size="xs" variant="light" color="gray" style={{ flexShrink: 0 }}>
+                        <Badge
+                          size="xs"
+                          variant={isDark ? 'outline' : 'light'}
+                          color={isDark ? 'gray.5' : 'gray'}
+                          style={{ flexShrink: 0 }}
+                        >
                           {proj?.icon || '📁'} {proj?.name || '기본 프로젝트'}
                         </Badge>
 
@@ -325,7 +369,19 @@ export function QuickSearchModal({ opened, onClose }: QuickSearchModalProps) {
                         )}
 
                         {/* 노트 제목 (하이라이트 포함) */}
-                        <Text size="sm" fw={700} truncate style={{ flex: 1, color: isSelected ? cfg.textColor : undefined }}>
+                        <Text
+                          size="sm"
+                          fw={700}
+                          truncate
+                          style={{
+                            flex: 1,
+                            color: isSelected
+                              ? isDark
+                                ? 'var(--mantine-color-white)'
+                                : cfg.textColor
+                              : undefined,
+                          }}
+                        >
                           <HighlightText text={note.title || '제목 없음'} tokens={parsed.tokens} />
                         </Text>
                       </Group>
@@ -356,7 +412,12 @@ export function QuickSearchModal({ opened, onClose }: QuickSearchModalProps) {
                     {note.tags.length > 0 && (
                       <Group gap={4} mt={6}>
                         {note.tags.slice(0, 4).map((tag, tIdx) => (
-                          <Badge key={tIdx} size="xs" variant="outline" color="gray">
+                          <Badge
+                            key={tIdx}
+                            size="xs"
+                            variant={isDark ? 'filled' : 'outline'}
+                            color={isDark ? 'dark.4' : 'gray'}
+                          >
                             #<HighlightText text={tag} tokens={parsed.tokens} />
                           </Badge>
                         ))}
@@ -374,8 +435,16 @@ export function QuickSearchModal({ opened, onClose }: QuickSearchModalProps) {
           )}
         </ScrollArea.Autosize>
 
-        {/* 하단 단축키 가이드 풋터 */}
-        <Group justify="space-between" px="md" py={8} bg="var(--mantine-color-gray-1)" style={{ borderTop: '1px solid var(--mantine-color-default-border)' }}>
+        {/* 하단 단축키 가이드 풋터 (키 안내 레이어) */}
+        <Group
+          justify="space-between"
+          px="md"
+          py={9}
+          style={{
+            backgroundColor: isDark ? 'var(--mantine-color-dark-8)' : 'var(--mantine-color-gray-1)',
+            borderTop: '1px solid var(--mantine-color-default-border)',
+          }}
+        >
           <Group gap={12}>
             <Group gap={4}>
               <Kbd size="xs">↑</Kbd>

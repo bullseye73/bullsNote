@@ -28,6 +28,15 @@
   background-color: var(--mantine-color-default-hover);
 }
 
+/* Quick Search Spotlight Modal card hover and smooth transition */
+.quick-search-card {
+  transition: transform 0.12s ease, background-color 0.12s ease, border-color 0.12s ease !important;
+}
+.quick-search-card:hover:not([data-selected="true"]) {
+  transform: translateX(2px);
+  background-color: var(--mantine-color-default-hover) !important;
+}
+
 html,
 body,
 #root {
