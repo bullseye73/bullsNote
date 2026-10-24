@@ -30,6 +30,7 @@ import {
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNotes } from '../controller/NotesController';
 import { getPastelConfig, getPathTitles } from '../model/Note';
+import { SHORTCUTS } from '../model/shortcutUtils';
 import { parseSearchQuery, searchNotes } from '../model/SearchService';
 import { HighlightText } from './HighlightText';
 
@@ -398,7 +399,7 @@ export function QuickSearchModal({ opened, onClose }: QuickSearchModalProps) {
           </Group>
 
           <Text size="xs" c="dimmed">
-            전역 단축키: <Kbd size="xs">⌘K</Kbd> 또는 <Kbd size="xs">Ctrl+K</Kbd>
+            전역 단축키: <Kbd size="xs">{SHORTCUTS.quickSearch}</Kbd>
           </Text>
         </Group>
       </Stack>

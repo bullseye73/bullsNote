@@ -41,6 +41,7 @@ import { useState } from 'react';
 import { useNotes } from '../controller/NotesController';
 import { Project } from '../model/Note';
 import { APP_VERSION } from '../model/version';
+import { SHORTCUTS } from '../model/shortcutUtils';
 import { SortMenu } from './SortMenu';
 import { MiniCalendar } from './MiniCalendar';
 import { HorizontalResizeSplitter, useResizableHeight } from './ResizeSplitter';
@@ -163,12 +164,12 @@ export function SidebarView({ onOpenSupabaseModal }: SidebarViewProps) {
           </Badge>
         </Group>
         <Group gap={6} align="center">
-          <Tooltip label="Gemini AI 어시스턴트 (Cmd+J / Ctrl+J)">
+          <Tooltip label={`Gemini AI 어시스턴트 (${SHORTCUTS.geminiAiText})`}>
             <ActionIcon color="violet" variant="light" onClick={() => openGeminiModal('clipboard')} aria-label="Gemini AI">
               <IconSparkles size={16} />
             </ActionIcon>
           </Tooltip>
-          <Tooltip label="현재 프로젝트에 새 노트 (Ctrl+N)">
+          <Tooltip label={`현재 프로젝트에 새 노트 (${SHORTCUTS.newNote})`}>
             <ActionIcon color="blue" variant="filled" onClick={() => create()} aria-label="새 노트">
               <IconPlus size={16} />
             </ActionIcon>
@@ -188,7 +189,7 @@ export function SidebarView({ onOpenSupabaseModal }: SidebarViewProps) {
                   <IconX size={12} />
                 </ActionIcon>
               ) : (
-                <Tooltip label="전역 퀵 검색 (⌘K / Ctrl+K)">
+                <Tooltip label={`전역 퀵 검색 (${SHORTCUTS.quickSearch})`}>
                   <ActionIcon size="xs" variant="light" color="blue" onClick={openQuickSearchModal} aria-label="퀵 검색">
                     <IconCommand size={12} />
                   </ActionIcon>

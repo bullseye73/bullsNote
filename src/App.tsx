@@ -16,6 +16,7 @@ import {
 import '@mantine/core/styles.css';
 import './index.css';
 import { APP_VERSION } from './model/version';
+import { SHORTCUTS } from './model/shortcutUtils';
 import { useDisclosure, useHotkeys } from '@mantine/hooks';
 import {
   IconCloudCheck,
@@ -67,7 +68,7 @@ function ListPanel() {
             targetName="노트"
             size="xs"
           />
-          <Tooltip label="최상위 새 노트 (Ctrl+N)">
+          <Tooltip label={`최상위 새 노트 (${SHORTCUTS.newNote})`}>
             <ActionIcon size="sm" color="green" variant="light" onClick={() => create(null)} aria-label="새 노트">
               <IconPlus size={14} />
             </ActionIcon>
@@ -124,7 +125,7 @@ function Shell() {
   });
 
   useHotkeys([
-    ['ctrl+N', (e) => { e.preventDefault(); create(null); }],
+    ['mod+N', (e) => { e.preventDefault(); create(null); }],
     ['mod+K', (e) => { e.preventDefault(); openQuickSearchModal(); }],
     ['mod+J', (e) => { e.preventDefault(); openGeminiModal('clipboard'); }],
   ]);
@@ -181,27 +182,27 @@ function Shell() {
         </Group>
 
         <Group gap="xs">
-          {/* 전역 퀵 검색 (Cmd+K) 버튼 */}
-          <Tooltip label="전역 퀵 검색 열기 (⌘K / Ctrl+K)">
+          {/* 전역 퀵 검색 버튼 */}
+          <Tooltip label={`전역 퀵 검색 열기 (${SHORTCUTS.quickSearch})`}>
             <Button
               size="xs"
               variant="default"
               leftSection={<IconSearch size={14} color="var(--mantine-color-blue-6)" />}
-              rightSection={<Kbd size="xs">⌘K</Kbd>}
+              rightSection={<Kbd size="xs">{SHORTCUTS.quickSearch}</Kbd>}
               onClick={openQuickSearchModal}
             >
               빠른 검색
             </Button>
           </Tooltip>
 
-          {/* Gemini AI 어시스턴트 (Cmd+J) 버튼 */}
-          <Tooltip label="Gemini AI 어시스턴트 열기 (⌘J / Ctrl+J)">
+          {/* Gemini AI 어시스턴트 버튼 */}
+          <Tooltip label={`Gemini AI 어시스턴트 열기 (${SHORTCUTS.geminiAi})`}>
             <Button
               size="xs"
               variant="light"
               color="violet"
               leftSection={<IconSparkles size={14} />}
-              rightSection={<Kbd size="xs">⌘J</Kbd>}
+              rightSection={<Kbd size="xs">{SHORTCUTS.geminiAi}</Kbd>}
               onClick={() => openGeminiModal('clipboard')}
             >
               Gemini AI

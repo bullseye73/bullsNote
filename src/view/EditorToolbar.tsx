@@ -38,6 +38,7 @@ import {
 import type { BlockNoteEditor } from '@blocknote/core';
 import { useState } from 'react';
 import { AI_ACTIONS_META, AiActionType } from '../model/GeminiService';
+import { SHORTCUTS } from '../model/shortcutUtils';
 
 type AnyEditor = BlockNoteEditor<any, any, any>;
 
@@ -178,36 +179,36 @@ export function EditorToolbar({
       onMouseDown={keepSelection}
     >
       {/* 실행 취소 / 다시 실행 */}
-      <Tool label="실행 취소 (Ctrl+Z)" onClick={() => editor.undo()}>
+      <Tool label={`실행 취소 (${SHORTCUTS.undo})`} onClick={() => editor.undo()}>
         <IconArrowBackUp size={16} />
       </Tool>
-      <Tool label="다시 실행 (Ctrl+Y)" onClick={() => editor.redo()}>
+      <Tool label={`다시 실행 (${SHORTCUTS.redo})`} onClick={() => editor.redo()}>
         <IconArrowForwardUp size={16} />
       </Tool>
 
       <Divider orientation="vertical" />
 
       {/* 기본 인라인 서식 */}
-      <Tool label="굵게 (Ctrl+B)" onClick={() => editor.toggleStyles({ bold: true })}>
+      <Tool label={`굵게 (${SHORTCUTS.bold})`} onClick={() => editor.toggleStyles({ bold: true })}>
         <IconBold size={16} />
       </Tool>
-      <Tool label="기울임 (Ctrl+I)" onClick={() => editor.toggleStyles({ italic: true })}>
+      <Tool label={`기울임 (${SHORTCUTS.italic})`} onClick={() => editor.toggleStyles({ italic: true })}>
         <IconItalic size={16} />
       </Tool>
-      <Tool label="밑줄 (Ctrl+U)" onClick={() => editor.toggleStyles({ underline: true })}>
+      <Tool label={`밑줄 (${SHORTCUTS.underline})`} onClick={() => editor.toggleStyles({ underline: true })}>
         <IconUnderline size={16} />
       </Tool>
       <Tool label="취소선" onClick={() => editor.toggleStyles({ strike: true })}>
         <IconStrikethrough size={16} />
       </Tool>
       <Tool
-        label="싱글라인 인라인 코드 (Ctrl+` 또는 Ctrl+E, `코드`)"
+        label={`싱글라인 인라인 코드 (${SHORTCUTS.inlineCode}, \`코드\`)`}
         onClick={() => editor.toggleStyles({ code: true })}
       >
         <IconCode size={16} />
       </Tool>
       <Tool
-        label="멀티라인 코드 블록 (``` + Enter 또는 Ctrl+Alt+C)"
+        label={`멀티라인 코드 블록 (\`\`\` + Enter 또는 ${SHORTCUTS.codeBlock})`}
         onClick={toggleOrInsertCodeBlock}
       >
         <IconTerminal size={16} />
@@ -379,13 +380,13 @@ export function EditorToolbar({
           leftSection={<IconCalendar size={15} />}
           onClick={onInsertToday}
         >
-          오늘 날짜 삽입 (Ctrl+;)
+          오늘 날짜 삽입 ({SHORTCUTS.insertDate})
         </Menu.Item>
       </DropdownTool>
 
       {/* 빠른 오늘 날짜 삽입 단축 버튼 */}
       <Tool
-        label="오늘 날짜 바로 삽입 (단축키: Ctrl+; / @오늘)"
+        label={`오늘 날짜 바로 삽입 (단축키: ${SHORTCUTS.insertDate} / @오늘)`}
         onClick={() => onInsertToday?.()}
       >
         <IconCalendar size={16} />

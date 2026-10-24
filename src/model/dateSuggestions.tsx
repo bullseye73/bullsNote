@@ -20,6 +20,7 @@ import {
   getYesterday,
   parseDynamicDate,
 } from './dateUtils';
+import { SHORTCUTS } from './shortcutUtils';
 
 type AnyEditor = BlockNoteEditor<any, any, any>;
 
@@ -52,7 +53,7 @@ export function getDateAtSuggestions(
     {
       title: `오늘 (${formatDateIso(today)})`,
       subtext: `오늘 날짜 (${formatDateWithWeekday(today)})`,
-      badge: 'Ctrl+;',
+      badge: SHORTCUTS.insertDateBadge,
       aliases: ['오늘', 'today', 'now', '현재'],
       group: '날짜',
       icon: <IconCalendar size={18} color="var(--mantine-color-teal-5)" />,
@@ -155,7 +156,7 @@ export function getDateSlashMenuItems(
     {
       title: `오늘 날짜 (${formatDateIso(today)})`,
       subtext: `오늘 날짜 삽입 (${formatDateWithWeekday(today)})`,
-      badge: 'Ctrl+;',
+      badge: SHORTCUTS.insertDateBadge,
       aliases: ['오늘', 'today', '날짜', '현재'],
       group: '날짜 삽입',
       icon: <IconCalendar size={18} color="var(--mantine-color-teal-5)" />,

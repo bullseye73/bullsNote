@@ -76,6 +76,7 @@ import { getDateAtSuggestions, getDateSlashMenuItems } from '../model/dateSugges
 import { getCombinedAtSuggestions, getNoteSlashMenuItems } from '../model/noteSuggestions';
 import { getAiSlashMenuItems } from '../model/aiSlashMenu';
 import { AiActionType } from '../model/GeminiService';
+import { SHORTCUTS } from '../model/shortcutUtils';
 import { NoteBacklinksView } from './NoteBacklinksView';
 import { NoteAttachmentsView } from './NoteAttachmentsView';
 import { SupabaseService } from '../model/SupabaseService';
@@ -711,7 +712,7 @@ function BlockEditor({
             <Group gap={4} wrap="nowrap">
               {matchCount > 0 && (
                 <>
-                  <Tooltip label="이전 일치 위치로 이동 (Shift+F3, Cmd+Shift+G)">
+                  <Tooltip label={`이전 일치 위치로 이동 (${SHORTCUTS.findPrev})`}>
                     <ActionIcon
                       size="sm"
                       variant="subtle"
@@ -722,7 +723,7 @@ function BlockEditor({
                       <IconChevronUp size={15} />
                     </ActionIcon>
                   </Tooltip>
-                  <Tooltip label="다음 일치 위치로 이동 (F3, Cmd+G)">
+                  <Tooltip label={`다음 일치 위치로 이동 (${SHORTCUTS.findNext})`}>
                     <ActionIcon
                       size="sm"
                       variant="subtle"
@@ -1227,7 +1228,7 @@ export function NoteEditorView() {
             )}
 
             {/* 인쇄 및 미리보기 버튼 */}
-            <Tooltip label={isNoteLocked ? '잠긴 상태에서는 인쇄할 수 없습니다' : '인쇄 및 미리보기 (Ctrl+P / Cmd+P)'}>
+            <Tooltip label={isNoteLocked ? '잠긴 상태에서는 인쇄할 수 없습니다' : `인쇄 및 미리보기 (${SHORTCUTS.print})`}>
               <ActionIcon
                 size="lg"
                 variant="light"

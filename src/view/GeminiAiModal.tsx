@@ -35,6 +35,7 @@ import {
 import React, { useEffect, useState } from 'react';
 import { useNotes } from '../controller/NotesController';
 import { DEFAULT_GEMINI_MODELS, GeminiConfig, GeminiService } from '../model/GeminiService';
+import { SHORTCUTS } from '../model/shortcutUtils';
 
 interface GeminiAiModalProps {
   opened: boolean;
@@ -368,7 +369,7 @@ export function GeminiAiModal({ opened, onClose, initialTab = 'clipboard' }: Gem
                   질문 또는 요청사항
                 </Text>
                 <Group gap={4}>
-                  <Kbd size="xs">Cmd</Kbd>
+                  <Kbd size="xs">{SHORTCUTS.geminiRunKey}</Kbd>
                   <Text size="xs" c="dimmed">+</Text>
                   <Kbd size="xs">Enter</Kbd>
                   <Text size="xs" c="dimmed">로 즉시 실행</Text>
