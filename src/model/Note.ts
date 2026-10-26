@@ -286,6 +286,16 @@ export interface NoteAttachment {
   createdAt: number;
 }
 
+export type TodoStatus = 'todo' | 'doing' | 'done' | 'drop';
+
+export interface TodoMeta {
+  sourceNoteId?: string;
+  sourceBlockId?: string;
+  status: TodoStatus;
+  completedAt?: number | null;
+  droppedAt?: number | null;
+}
+
 export interface Note {
   id: string;
   title: string;
@@ -307,6 +317,10 @@ export interface Note {
   history: NoteSnapshot[];
   /** 첨부 파일 목록 (Supabase Storage 등) */
   attachments?: NoteAttachment[];
+  /** 할일 관리 메타데이터 (할일 항목일 경우) */
+  todoMeta?: TodoMeta;
+  /** 시스템 관리 상위 그룹 여부 ('todo' | 'doing' | 'done' | 'drop') */
+  systemGroupType?: TodoStatus;
   createdAt: number;
   updatedAt: number;
 }
@@ -378,8 +392,28 @@ export function compareProjects(a: Project, b: Project, opt?: SortOption): numbe
   return 0;
 }
 
+const SYSTEM_GROUP_ORDER: Record<string, number> = {
+  todo: 1,
+  doing: 2,
+  done: 3,
+  drop: 4,
+};
+
+function compareSystemGroups(a: Note, b: Note): number | null {
+  const orderA = a.systemGroupType ? SYSTEM_GROUP_ORDER[a.systemGroupType] ?? 99 : null;
+  const orderB = b.systemGroupType ? SYSTEM_GROUP_ORDER[b.systemGroupType] ?? 99 : null;
+  if (orderA !== null && orderB !== null) return orderA - orderB;
+  if (orderA !== null) return -1;
+  if (orderB !== null) return 1;
+  return null;
+}
+
 export function compareNotesWithOption(a: Note, b: Note, opt?: SortOption): number {
   if (!a || !b) return 0;
+  // 할일 시스템 그룹은 항상 To Do -> Doing -> Done -> Drop 고정 순서로 최상단 정렬
+  const sysDiff = compareSystemGroups(a, b);
+  if (sysDiff !== null) return sysDiff;
+
   // 핀 고정 노트는 항상 최우선 정렬 유지
   if (Boolean(a.pinned) !== Boolean(b.pinned)) return a.pinned ? -1 : 1;
 
@@ -405,25 +439,51 @@ export function compareNotesWithOption(a: Note, b: Note, opt?: SortOption): numb
 }
 
 function sortNotes(a: Note, b: Note): number {
+  const sysDiff = compareSystemGroups(a, b);
+  if (sysDiff !== null) return sysDiff;
   if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
   return b.updatedAt - a.updatedAt;
 }
 
-/** 평탄 리스트 -> 트리 (형제 정렬: sortFn 기준, 기본값은 핀 우선+수정일 내림차순) */
+/** 평탄 리스트 -> 트리 (사이클 방어 + 형제 정렬) */
 export function buildTree(notes: Note[], sortFn: (a: Note, b: Note) => number = sortNotes): TreeNode[] {
   const byId = new Map<string, TreeNode>();
   for (const n of notes) byId.set(n.id, { note: n, children: [] });
+
+  // 사이클 방어: 부모 체인을 따라 올라가며 사이클 검사
+  const isAncestor = (ancestorId: string, startPid: string | null): boolean => {
+    let cur = startPid;
+    const seen = new Set<string>();
+    while (cur && byId.has(cur)) {
+      if (cur === ancestorId) return true;
+      if (seen.has(cur)) return true; // 사이클 발견
+      seen.add(cur);
+      cur = byId.get(cur)?.note.parentId ?? null;
+    }
+    return false;
+  };
+
   const roots: TreeNode[] = [];
   for (const node of byId.values()) {
     const pid = node.note.parentId;
     const parent = pid ? byId.get(pid) : undefined;
-    // 끊어진 parentId(필터 등으로 부모가 없을 때)는 루트로 취급
-    if (parent && parent.note.id !== node.note.id) parent.children.push(node);
-    else roots.push(node);
+    // 끊어진 parentId 또는 사이클이 감지되면 안전하게 루트로 취급
+    if (parent && parent.note.id !== node.note.id && !isAncestor(node.note.id, pid)) {
+      parent.children.push(node);
+    } else {
+      roots.push(node);
+    }
   }
+
+  const visitedSort = new Set<string>();
   const sortRec = (list: TreeNode[]) => {
     list.sort((a, b) => sortFn(a.note, b.note));
-    for (const c of list) sortRec(c.children);
+    for (const c of list) {
+      if (!visitedSort.has(c.note.id)) {
+        visitedSort.add(c.note.id);
+        sortRec(c.children);
+      }
+    }
   };
   sortRec(roots);
   return roots;

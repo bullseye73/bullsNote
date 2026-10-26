@@ -34,13 +34,29 @@ import { useNotes } from '../controller/NotesController';
 import { CryptoService } from '../model/CryptoService';
 import { getSearchSnippet } from '../model/SearchService';
 import { HighlightText } from './HighlightText';
+import { formatDateTimeIso } from '../model/dateUtils';
+import { isSystemGroupNote } from '../model/TodoService';
 
-function excerpt(content: string): string {
+function cleanExcerpt(content: string, title?: string): string {
+  if (!content) return '';
   if (CryptoService.isEncrypted(content) || CryptoService.isCorruptedPlaceholder(content)) {
-    return '🔒 암호화된 노트입니다.';
+    return '🔒 암호화된 노트';
   }
-  const t = noteBodyText(content);
-  return t.length > 120 ? `${t.slice(0, 120)}…` : t;
+  let t = noteBodyText(content);
+  // 할일 템플릿 메타 헤더 안내 텍스트들 및 장식 제거
+  t = t
+    .replace(/📌\s*원본\s*노트:[^\n]*/g, '')
+    .replace(/⏰\s*작성\s*일시:[^\n]*/g, '')
+    .replace(/📝\s*세부\s*내용\s*및\s*작업\s*메모/g, '')
+    .replace(/💡\s*작업\s*세부\s*내용\s*및\s*진행\s*메모[^\n]*/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // 제목과 동일한 텍스트만 남아있으면 제거 (추가 메모가 없는 경우)
+  if (title && t.trim() === title.trim()) {
+    return '';
+  }
+  return t;
 }
 
 function RowActions({
@@ -78,9 +94,12 @@ function RowActions({
     note &&
     ((!isUnlocked && (isMasterSet || CryptoService.isEncrypted(note.content))) ||
       CryptoService.isEncrypted(note.content));
+  const isSystemGroup = isSystemGroupNote(note);
+
   const descendantCount = (() => {
     let c = 0;
     const stack = [id];
+    const visited = new Set<string>([id]);
     const kids = new Map<string, string[]>();
     for (const n of notes) {
       if (!n.parentId) continue;
@@ -89,8 +108,11 @@ function RowActions({
     while (stack.length > 0) {
       const cur = stack.pop()!;
       for (const k of kids.get(cur) ?? []) {
-        c += 1;
-        stack.push(k);
+        if (!visited.has(k)) {
+          visited.add(k);
+          c += 1;
+          stack.push(k);
+        }
       }
     }
     return c;
@@ -114,42 +136,42 @@ function RowActions({
         </ActionIcon>
       </Tooltip>
       {/* 이동: 들여쓰기 */}
-      <Tooltip label={isNoteLocked ? '잠긴 상태에서는 이동할 수 없습니다' : '들여쓰기 (이전 형제의 자식으로)'}>
+      <Tooltip label={isSystemGroup ? '시스템 그룹 노트는 이동할 수 없습니다' : isNoteLocked ? '잠긴 상태에서는 이동할 수 없습니다' : '들여쓰기 (이전 형제의 자식으로)'}>
         <ActionIcon
           size="sm"
           variant="subtle"
-          disabled={!hasPrevSibling || isNoteLocked}
+          disabled={isSystemGroup || !hasPrevSibling || isNoteLocked}
           onClick={() => indent(id)}
           aria-label="들여쓰기"
           style={{
-            color: active ? (hasPrevSibling && !isNoteLocked ? colorCfg.iconColor : 'rgba(0,0,0,0.25)') : undefined,
+            color: active ? (!isSystemGroup && hasPrevSibling && !isNoteLocked ? colorCfg.iconColor : 'rgba(0,0,0,0.25)') : undefined,
           }}
         >
           <IconIndentIncrease size={14} />
         </ActionIcon>
       </Tooltip>
       {/* 이동: 내어쓰기 */}
-      <Tooltip label={isNoteLocked ? '잠긴 상태에서는 이동할 수 없습니다' : '내어쓰기 (부모와 같은 레벨로)'}>
+      <Tooltip label={isSystemGroup ? '시스템 그룹 노트는 이동할 수 없습니다' : isNoteLocked ? '잠긴 상태에서는 이동할 수 없습니다' : '내어쓰기 (부모와 같은 레벨로)'}>
         <ActionIcon
           size="sm"
           variant="subtle"
-          disabled={!hasParent || isNoteLocked}
+          disabled={isSystemGroup || !hasParent || isNoteLocked}
           onClick={() => outdent(id)}
           aria-label="내어쓰기"
           style={{
-            color: active ? (hasParent && !isNoteLocked ? colorCfg.iconColor : 'rgba(0,0,0,0.25)') : undefined,
+            color: active ? (!isSystemGroup && hasParent && !isNoteLocked ? colorCfg.iconColor : 'rgba(0,0,0,0.25)') : undefined,
           }}
         >
           <IconIndentDecrease size={14} />
         </ActionIcon>
       </Tooltip>
       {/* 상태: 상단 고정 */}
-      <Tooltip label={isNoteLocked ? '잠긴 상태에서는 변경할 수 없습니다' : (note.pinned ? '핀 해제' : '상단 고정')}>
+      <Tooltip label={isSystemGroup ? '시스템 그룹은 항상 상단에 고정됩니다' : isNoteLocked ? '잠긴 상태에서는 변경할 수 없습니다' : (note.pinned ? '핀 해제' : '상단 고정')}>
         <ActionIcon
           size="sm"
           variant={note.pinned ? 'filled' : 'subtle'}
           color={note.pinned ? 'blue' : undefined}
-          disabled={isNoteLocked}
+          disabled={isSystemGroup || isNoteLocked}
           onClick={() => togglePin(id)}
           aria-label="핀"
           style={{
@@ -161,12 +183,12 @@ function RowActions({
         </ActionIcon>
       </Tooltip>
       {/* 상태: 즐겨찾기 */}
-      <Tooltip label={isNoteLocked ? '잠긴 상태에서는 변경할 수 없습니다' : (note.favorite ? '즐겨찾기 해제' : '즐겨찾기 등록')}>
+      <Tooltip label={isSystemGroup ? '시스템 그룹은 즐겨찾기 대상이 아닙니다' : isNoteLocked ? '잠긴 상태에서는 변경할 수 없습니다' : (note.favorite ? '즐겨찾기 해제' : '즐겨찾기 등록')}>
         <ActionIcon
           size="sm"
           variant={note.favorite ? 'filled' : 'subtle'}
           color={note.favorite ? 'yellow' : undefined}
-          disabled={isNoteLocked}
+          disabled={isSystemGroup || isNoteLocked}
           onClick={() => toggleFavorite(id)}
           aria-label="즐겨찾기"
           style={{
@@ -192,34 +214,41 @@ function RowActions({
           </ActionIcon>
         </Menu.Target>
         <Menu.Dropdown>
-          <Menu.Label>노트 색상 변경</Menu.Label>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(8, 1fr)', gap: 6, padding: '6px 8px', minWidth: 260 }}>
-            {Object.values(PASTEL_COLORS).map((c) => {
-              const isCurrent = (note.color || 'blue') === c.id;
-              return (
-                <Tooltip key={c.id} label={c.name} position="top" withArrow>
-                  <ActionIcon
-                    size="sm"
-                    radius="xl"
-                    onClick={() => updateColor(id, c.id)}
-                    style={{
-                      backgroundColor: c.bg,
-                      border: `2px solid ${c.border}`,
-                      boxShadow: isCurrent ? `0 0 0 2px ${c.textColor}` : undefined,
-                      transform: isCurrent ? 'scale(1.2)' : 'none',
-                      transition: 'all 0.15s ease',
-                    }}
-                  />
-                </Tooltip>
-              );
-            })}
-          </div>
-          <Menu.Divider />
+          {!isSystemGroup && (
+            <>
+              <Menu.Label>노트 색상 변경</Menu.Label>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(8, 1fr)', gap: 6, padding: '6px 8px', minWidth: 260 }}>
+                {Object.values(PASTEL_COLORS).map((c) => {
+                  const isCurrent = (note.color || 'blue') === c.id;
+                  return (
+                    <Tooltip key={c.id} label={c.name} position="top" withArrow>
+                      <ActionIcon
+                        size="sm"
+                        radius="xl"
+                        onClick={() => updateColor(id, c.id)}
+                        style={{
+                          backgroundColor: c.bg,
+                          border: `2px solid ${c.border}`,
+                          boxShadow: isCurrent ? `0 0 0 2px ${c.textColor}` : undefined,
+                          transform: isCurrent ? 'scale(1.2)' : 'none',
+                          transition: 'all 0.15s ease',
+                        }}
+                      />
+                    </Tooltip>
+                  );
+                })}
+              </div>
+              <Menu.Divider />
+            </>
+          )}
           <Menu.Label>노트 관리</Menu.Label>
-          <Menu.Item leftSection={<IconCopy size={14} />} onClick={() => duplicate(id)}>
-            복제
-          </Menu.Item>
-          {projects.length > 1 && (
+          {!isSystemGroup && (
+            <Menu.Item leftSection={<IconCopy size={14} />} onClick={() => duplicate(id)}>
+              복제
+            </Menu.Item>
+          )}
+          {/* 시스템 그룹 노트인 경우 이동/삭제 차단 */}
+          {!isSystemGroup && projects.length > 1 && (
             <>
               <Menu.Divider />
               <Menu.Label>프로젝트 이동</Menu.Label>
@@ -236,19 +265,23 @@ function RowActions({
                 ))}
             </>
           )}
-          <Menu.Divider />
-          <Menu.Item
-            color="red"
-            leftSection={<IconTrash size={14} />}
-            onClick={() => {
-              const msg = hasChildren
-                ? `"${note.title}"과 하위 ${descendantCount}개 노트를 모두 삭제할까요?`
-                : `"${note.title}" 노트를 삭제할까요?`;
-              if (confirm(msg)) remove(id);
-            }}
-          >
-            삭제{hasChildren ? ` (하위 ${descendantCount}개 포함)` : ''}
-          </Menu.Item>
+          {!isSystemGroup && (
+            <>
+              <Menu.Divider />
+              <Menu.Item
+                color="red"
+                leftSection={<IconTrash size={14} />}
+                onClick={() => {
+                  const msg = hasChildren
+                    ? `"${note.title}"과 하위 ${descendantCount}개 노트를 모두 삭제할까요?`
+                    : `"${note.title}" 노트를 삭제할까요?`;
+                  if (confirm(msg)) remove(id);
+                }}
+              >
+                삭제{hasChildren ? ` (하위 ${descendantCount}개 포함)` : ''}
+              </Menu.Item>
+            </>
+          )}
         </Menu.Dropdown>
       </Menu>
     </Group>
@@ -282,19 +315,21 @@ function TreeRow({
         className={active ? 'active-pastel-card' : 'inactive-note-card'}
         style={{
           cursor: 'pointer',
-          marginLeft: depth * 16,
+          marginLeft: depth * 14,
           borderColor: active ? cfg.border : undefined,
           borderLeft: active ? `5px solid ${cfg.border}` : `4px solid ${cfg.border}`,
           background: active ? cfg.bg : undefined,
         }}
         onClick={() => select(n.id)}
-        p="xs"
+        py={6}
+        px="xs"
       >
+        {/* 1줄: 펼치기/접기 + 제목 + 상태/알람/자식수 뱃지 + 액션 버튼 */}
         <Group justify="space-between" wrap="nowrap" gap={4}>
-          <Group gap={2} wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
+          <Group gap={4} wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
             {node.children.length > 0 ? (
               <ActionIcon
-                size="sm"
+                size="xs"
                 variant="subtle"
                 onClick={(e) => {
                   e.stopPropagation();
@@ -303,16 +338,22 @@ function TreeRow({
                 aria-label={isCollapsed ? '펼치기' : '접기'}
                 style={{
                   color: active ? cfg.iconColor : undefined,
+                  flexShrink: 0,
                 }}
               >
-                {isCollapsed ? <IconChevronRight size={14} /> : <IconChevronDown size={14} />}
+                {isCollapsed ? <IconChevronRight size={13} /> : <IconChevronDown size={13} />}
               </ActionIcon>
             ) : (
-              <span style={{ width: 22, flexShrink: 0 }} />
+              <span style={{ width: 18, flexShrink: 0 }} />
             )}
-            <Text fw={700} truncate size="sm" style={{ color: active ? cfg.textColor : undefined }}>
+            <Text fw={600} truncate size="sm" style={{ color: active ? cfg.textColor : undefined, minWidth: 0 }}>
               {n.title || '제목 없음'}
             </Text>
+            {n.systemGroupType && (
+              <Badge size="xs" variant="light" color={n.color || 'blue'} style={{ flexShrink: 0 }}>
+                그룹
+              </Badge>
+            )}
             {n.reminder && !n.reminder.dismissed && (
               <Tooltip
                 label={`알람: ${new Date(n.reminder.targetAt).toLocaleString('ko-KR', {
@@ -355,36 +396,51 @@ function TreeRow({
             colorCfg={cfg}
           />
         </Group>
-        <Text
-          size="xs"
-          lineClamp={2}
-          mt={2}
-          pl={24}
-          c={active ? undefined : 'dimmed'}
-          style={{ color: active ? cfg.dimmedColor : undefined }}
-        >
-          {excerpt(n.content) || '내용 없음'}
-        </Text>
-        <Group gap={4} mt={4} pl={24}>
-          {n.tags.map((t) => (
-            <Badge
-              key={t}
+
+        {/* 2줄: 작성일시와 상세 내용만 정제하여 1줄로 컴팩트하게 표시 */}
+        <Group gap={6} wrap="nowrap" mt={3} pl={22} style={{ minWidth: 0, overflow: 'hidden' }}>
+          {n.systemGroupType ? (
+            <Text
               size="xs"
-              variant={active ? 'filled' : 'light'}
-              style={{
-                cursor: 'pointer',
-                backgroundColor: active ? cfg.badgeBg : undefined,
-                color: active ? cfg.badgeColor : undefined,
-                border: 'none',
-              }}
-              onClick={(e) => {
-                e.stopPropagation();
-                setActiveTag(t);
-              }}
+              truncate
+              c={active ? undefined : 'dimmed'}
+              style={{ color: active ? cfg.dimmedColor : undefined }}
             >
-              #{t}
-            </Badge>
-          ))}
+              {cleanExcerpt(n.content, n.title) || `${n.title} 그룹`}
+            </Text>
+          ) : (
+            <>
+              <Text
+                size="xs"
+                style={{
+                  fontSize: 11,
+                  flexShrink: 0,
+                  color: active ? cfg.dimmedColor : 'var(--mantine-color-dimmed)',
+                }}
+              >
+                ⏰ {formatDateTimeIso(new Date(n.createdAt))}
+              </Text>
+              {(() => {
+                const detail = cleanExcerpt(n.content, n.title);
+                if (!detail) return null;
+                return (
+                  <>
+                    <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
+                      ·
+                    </Text>
+                    <Text
+                      size="xs"
+                      truncate
+                      c={active ? undefined : 'dimmed'}
+                      style={{ color: active ? cfg.dimmedColor : undefined, minWidth: 0, flex: 1 }}
+                    >
+                      {detail}
+                    </Text>
+                  </>
+                );
+              })()}
+            </>
+          )}
         </Group>
       </Card>
       {!isCollapsed &&
@@ -533,30 +589,21 @@ export function NoteListView() {
                   background: active ? cfg.bg : undefined,
                 }}
                 onClick={() => select(n.id)}
-                p="xs"
+                py={6}
+                px="xs"
               >
-                <Group justify="space-between" align="center" wrap="nowrap" mb={2}>
-                  {/* 전체 검색 시 프로젝트 배지 표시 */}
-                  {searchScope === 'all' && proj && (
-                    <Badge size="xs" variant="light" color="gray" style={{ flexShrink: 0 }}>
-                      {proj.icon || '📁'} {proj.name}
-                    </Badge>
-                  )}
-                  {path.length > 1 && (
-                    <Text
-                      size="xs"
-                      c={active ? undefined : 'dimmed'}
-                      style={{ color: active ? cfg.dimmedColor : undefined }}
-                      truncate
-                    >
-                      {path.slice(0, -1).join(' / ')} /
+                {/* 1줄: 제목 + 프로젝트/알람 배지 */}
+                <Group justify="space-between" align="center" wrap="nowrap" gap={4}>
+                  <Group gap={6} wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
+                    {searchScope === 'all' && proj && (
+                      <Badge size="xs" variant="light" color="gray" style={{ flexShrink: 0 }}>
+                        {proj.icon || '📁'} {proj.name}
+                      </Badge>
+                    )}
+                    <Text fw={600} truncate size="sm" style={{ color: active ? cfg.textColor : undefined, minWidth: 0 }}>
+                      <HighlightText text={n.title || '제목 없음'} tokens={searchTokens} />
                     </Text>
-                  )}
-                </Group>
-                <Group justify="space-between" align="center" wrap="nowrap">
-                  <Text fw={700} truncate size="sm" style={{ color: active ? cfg.textColor : undefined, flex: 1 }}>
-                    <HighlightText text={n.title || '제목 없음'} tokens={searchTokens} />
-                  </Text>
+                  </Group>
                   {n.reminder && !n.reminder.dismissed && (
                     <Tooltip
                       label={`알람: ${new Date(n.reminder.targetAt).toLocaleString('ko-KR', {
@@ -576,35 +623,38 @@ export function NoteListView() {
                     </Tooltip>
                   )}
                 </Group>
-                <Text
-                  size="xs"
-                  c={active ? undefined : 'dimmed'}
-                  style={{ color: active ? cfg.dimmedColor : undefined }}
-                  lineClamp={2}
-                  mt={2}
-                >
-                  <HighlightText text={snippet} tokens={searchTokens} />
-                </Text>
-                <Group gap={4} mt={4}>
-                  {n.tags.map((t) => (
-                    <Badge
-                      key={t}
-                      size="xs"
-                      variant={active ? 'filled' : 'light'}
-                      style={{
-                        cursor: 'pointer',
-                        backgroundColor: active ? cfg.badgeBg : undefined,
-                        color: active ? cfg.badgeColor : undefined,
-                        border: 'none',
-                      }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setActiveTag(t);
-                      }}
-                    >
-                      #<HighlightText text={t} tokens={searchTokens} />
-                    </Badge>
-                  ))}
+
+                {/* 2줄: 작성일시와 상세내용/스니펫만 1줄로 표시 */}
+                <Group gap={6} wrap="nowrap" mt={3} style={{ minWidth: 0, overflow: 'hidden' }}>
+                  <Text
+                    size="xs"
+                    style={{
+                      fontSize: 11,
+                      flexShrink: 0,
+                      color: active ? cfg.dimmedColor : 'var(--mantine-color-dimmed)',
+                    }}
+                  >
+                    ⏰ {formatDateTimeIso(new Date(n.createdAt))}
+                  </Text>
+                  {(() => {
+                    const detail = snippet || cleanExcerpt(n.content, n.title);
+                    if (!detail) return null;
+                    return (
+                      <>
+                        <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
+                          ·
+                        </Text>
+                        <Text
+                          size="xs"
+                          truncate
+                          c={active ? undefined : 'dimmed'}
+                          style={{ color: active ? cfg.dimmedColor : undefined, minWidth: 0, flex: 1 }}
+                        >
+                          <HighlightText text={detail} tokens={searchTokens} />
+                        </Text>
+                      </>
+                    );
+                  })()}
                 </Group>
               </Card>
             );

@@ -20,7 +20,18 @@ import {
   compareProjects,
   compareNotesWithOption,
   markAttachmentDeletedInContent,
+  TodoStatus,
 } from '../model/Note';
+import {
+  TODO_PROJECT_ID,
+  ensureTodoProjectAndGroups,
+  createTodoNotes,
+  syncTodoStatusToSourceNote,
+  syncSourceChecklistToTodoNotes,
+  GROUP_ID_TO_STATUS,
+  STATUS_TO_GROUP_ID,
+  isSystemGroupNote,
+} from '../model/TodoService';
 import { playChimeSound } from '../model/sound';
 import { NoteRepository, seedNotes } from '../model/NoteRepository';
 import { extractHashtags, extractHashtagsFromText, isBlocksJson, noteBodyText, parseBlocks } from '../model/HashtagService';
@@ -177,6 +188,12 @@ export interface NotesActions {
   closeGeminiModal(): void;
   createNoteFromGemini(params: { title?: string; markdown: string; prompt?: string }): Promise<string>;
   createNoteFromClipboard(): Promise<{ success: boolean; noteId?: string; error?: string }>;
+  /** 할일 관리 액션 */
+  createTodosFromChecklist(
+    sourceNote: Note,
+    items: Array<{ id?: string; text: string; checked?: boolean }>
+  ): { createdCount: number; duplicateCount: number };
+  changeTodoStatus(todoNoteId: string, newStatus: TodoStatus): void;
 }
 
 const Ctx = createContext<(NotesState & NotesActions) | null>(null);
@@ -197,7 +214,10 @@ function withHistory(note: Note, force = false): Note {
 
 export function NotesProvider({ children }: { children: React.ReactNode }) {
   const [projects, setProjects] = useState<Project[]>(() => {
-    return NoteRepository.loadProjects();
+    const list = NoteRepository.loadProjects();
+    const loadedNotes = NoteRepository.load();
+    const { projects: ensured } = ensureTodoProjectAndGroups(list, loadedNotes);
+    return ensured;
   });
   const [selectedProjectId, setSelectedProjectId] = useState<string>(() => {
     const list = NoteRepository.loadProjects();
@@ -205,11 +225,13 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   });
 
   const [notes, setNotes] = useState<Note[]>(() => {
-    const loaded = NoteRepository.load();
-    if (loaded.length > 0) return loaded.sort(sortNotes);
-    const seed = seedNotes();
-    NoteRepository.save(seed);
-    return seed;
+    let loaded = NoteRepository.load();
+    if (loaded.length === 0) {
+      loaded = seedNotes();
+    }
+    const currentProjects = NoteRepository.loadProjects();
+    const { notes: ensured } = ensureTodoProjectAndGroups(currentProjects, loaded);
+    return ensured.sort(sortNotes);
   });
 
   const [selectedId, setSelectedId] = useState<string | null>(notes[0]?.id ?? null);
@@ -1036,6 +1058,10 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   const deleteProject = useCallback(
     (id: string) => {
+      if (id === TODO_PROJECT_ID) {
+        alert('할일관리 프로젝트는 기본 시스템 프로젝트이므로 삭제할 수 없습니다.');
+        return;
+      }
       setProjects((prev) => {
         if (prev.length <= 1) {
           alert('최소 1개의 프로젝트는 유지되어야 합니다.');
@@ -1215,6 +1241,11 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   const remove = useCallback(
     (id: string) => {
+      const target = notes.find((n) => n.id === id);
+      if (target?.systemGroupType) {
+        alert(`'${target.title}' 그룹은 할일 관리의 필수 상위 그룹이므로 삭제할 수 없습니다.`);
+        return;
+      }
       setNotes((prev) => {
         const doomed = getDescendantIds(prev, id);
         const next = prev.filter((n) => !doomed.has(n.id));
@@ -1263,18 +1294,35 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   const updateContent = useCallback(
     (id: string, content: string) => {
-      setNotes((prev) =>
-        prev.map((n) => {
+      setNotes((prev) => {
+        let updatedTarget: Note | undefined;
+        const nextList = prev.map((n) => {
           if (n.id === id) {
             // 내용 변경이 없으면 updatedAt 갱신, 히스토리 스냅샷 및 동기화 스킵
             if (n.content === content) return n;
             const updated = { ...refreshTags(withHistory(n), n.title, content), updatedAt: Date.now() };
             queueNoteSync(updated);
+            updatedTarget = updated;
             return updated;
           }
           return n;
-        }),
-      );
+        });
+
+        // 일반 노트의 체크리스트 항목이 체크/해제되었을 때, 연결된 할일 노트의 상태를 자동 동기화
+        if (updatedTarget && updatedTarget.projectId !== TODO_PROJECT_ID) {
+          const syncRes = syncSourceChecklistToTodoNotes(updatedTarget, content, nextList);
+          if (syncRes.changed) {
+            syncRes.updatedNotes.forEach((n) => {
+              if (n.projectId === TODO_PROJECT_ID && n.todoMeta?.sourceNoteId === id) {
+                queueNoteSync(n);
+              }
+            });
+            return syncRes.updatedNotes;
+          }
+        }
+
+        return nextList;
+      });
     },
     [refreshTags, queueNoteSync],
   );
@@ -1381,9 +1429,20 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     setActiveAlarmNote(null);
   }, []);
 
-  const togglePin = useCallback((id: string) => mutate(id, (n) => ({ ...n, pinned: !n.pinned })), [mutate]);
+  const togglePin = useCallback(
+    (id: string) =>
+      mutate(id, (n) => {
+        if (isSystemGroupNote(n)) return n;
+        return { ...n, pinned: !n.pinned };
+      }),
+    [mutate],
+  );
   const toggleFavorite = useCallback(
-    (id: string) => mutate(id, (n) => ({ ...n, favorite: !n.favorite })),
+    (id: string) =>
+      mutate(id, (n) => {
+        if (isSystemGroupNote(n)) return n;
+        return { ...n, favorite: !n.favorite };
+      }),
     [mutate],
   );
 
@@ -1394,6 +1453,23 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         // 사이클 방지: 자손을 부모로 지정 불가
         if (parentId && getDescendantIds(prev, id).has(parentId)) return prev;
         if (parentId && !prev.some((n) => n.id === parentId)) return prev;
+
+        const targetNote = prev.find((n) => n.id === id);
+        // 시스템 그룹 노트 자체는 부모를 변경할 수 없음
+        if (isSystemGroupNote(targetNote)) return prev;
+
+        // 할일 노트를 다른 할일 그룹(To Do, Doing, Done, Drop)으로 이동하는 경우 상태 동기화 처리
+        if (targetNote && targetNote.projectId === TODO_PROJECT_ID && parentId && GROUP_ID_TO_STATUS[parentId]) {
+          const newStatus = GROUP_ID_TO_STATUS[parentId];
+          if (targetNote.parentId === parentId && targetNote.todoMeta?.status === newStatus) return prev;
+          const syncRes = syncTodoStatusToSourceNote(targetNote, newStatus, prev);
+          syncRes.updatedNotes.forEach((n) => {
+            if (n.id === id || n.id === targetNote.todoMeta?.sourceNoteId) {
+              queueNoteSync(n);
+            }
+          });
+          return syncRes.updatedNotes;
+        }
 
         const parentColor = parentId ? prev.find((n) => n.id === parentId)?.color : null;
         const targetIds = parentColor ? getDescendantIds(prev, id) : null;
@@ -1427,6 +1503,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       setNotes((prev) => {
         const target = prev.find((n) => n.id === id);
         if (!target) return prev;
+        if (isSystemGroupNote(target)) return prev;
         const siblings = prev
           .filter(
             (n) =>
@@ -1457,6 +1534,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       setNotes((prev) => {
         const target = prev.find((n) => n.id === id);
         if (!target || !target.parentId) return prev;
+        if (isSystemGroupNote(target)) return prev;
         const parent = prev.find((n) => n.id === target.parentId);
         const grandParent = parent?.parentId ?? null;
         return prev.map((n) => {
@@ -1579,7 +1657,11 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     // 2. 검색 쿼리 없이 필터(즐겨찾기, 태그, 날짜, 퀵필터)만 활성화된 경우
     const isDateFiltered = selectedDate !== null;
     const isQuickFiltered = quickFilter !== 'all';
-    const pool = (searchScope === 'all' && (isQuickFiltered || isDateFiltered)) ? notes : currentProjectNotes;
+    const isFavFiltered = showFavoriteOnly;
+    const pool =
+      (searchScope === 'all' && (isQuickFiltered || isDateFiltered)) || isFavFiltered
+        ? notes
+        : currentProjectNotes;
 
     return pool
       .filter((n) => (showFavoriteOnly ? n.favorite : true))
@@ -1953,6 +2035,58 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     }
   }, [createNoteFromGemini]);
 
+  const createTodosFromChecklist = useCallback(
+    (sourceNote: Note, items: Array<{ id?: string; text: string; checked?: boolean }>) => {
+      // 1. 할일관리 프로젝트 및 상위 그룹 보장
+      const ensured = ensureTodoProjectAndGroups(projectsRef.current, notesRef.current);
+      if (ensured.created) {
+        setProjects(ensured.projects);
+        ensured.projects.forEach((p) => queueProjectSync(p));
+        ensured.notes.forEach((n) => {
+          if (n.systemGroupType) queueNoteSync(n);
+        });
+      }
+
+      // 2. 할일 노트들 생성
+      const { newNotes, duplicateCount } = createTodoNotes(sourceNote, items, ensured.notes);
+      if (newNotes.length > 0) {
+        setNotes((prev) => {
+          // ensured notes 중 새로 추가된 그룹 노트들도 포함
+          const existingIds = new Set(prev.map((n) => n.id));
+          const missingGroupNotes = ensured.notes.filter((n) => !existingIds.has(n.id));
+          return [...newNotes, ...missingGroupNotes, ...prev];
+        });
+        newNotes.forEach((n) => queueNoteSync(n));
+      }
+      return { createdCount: newNotes.length, duplicateCount };
+    },
+    [queueProjectSync, queueNoteSync],
+  );
+
+  const changeTodoStatus = useCallback(
+    (todoNoteId: string, newStatus: TodoStatus) => {
+      setNotes((prev) => {
+        const todoNote = prev.find((n) => n.id === todoNoteId);
+        if (!todoNote) return prev;
+        // 시스템 그룹 노트(Doing, To Do, Done, Drop)는 상태를 변경할 수 없음
+        if (isSystemGroupNote(todoNote)) return prev;
+        // 이미 해당 상태이면 불필요한 재연산 방지
+        const currentStatus = todoNote.todoMeta?.status || GROUP_ID_TO_STATUS[todoNote.parentId || ''] || 'todo';
+        if (currentStatus === newStatus && todoNote.parentId === STATUS_TO_GROUP_ID[newStatus]) return prev;
+
+        const { updatedNotes } = syncTodoStatusToSourceNote(todoNote, newStatus, prev);
+        const updated = updatedNotes.find((n) => n.id === todoNoteId);
+        if (updated) queueNoteSync(updated);
+        if (todoNote.todoMeta?.sourceNoteId) {
+          const updatedSource = updatedNotes.find((n) => n.id === todoNote.todoMeta?.sourceNoteId);
+          if (updatedSource) queueNoteSync(updatedSource);
+        }
+        return updatedNotes;
+      });
+    },
+    [queueNoteSync],
+  );
+
   const selected = useMemo(() => notes.find((n) => n.id === selectedId) ?? null, [notes, selectedId]);
 
   const value = useMemo(
@@ -2050,6 +2184,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       closeGeminiModal,
       createNoteFromGemini,
       createNoteFromClipboard,
+      createTodosFromChecklist,
+      changeTodoStatus,
     }),
     [
       projects,
@@ -2140,6 +2276,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       closeGeminiModal,
       createNoteFromGemini,
       createNoteFromClipboard,
+      createTodosFromChecklist,
+      changeTodoStatus,
     ],
   );
 

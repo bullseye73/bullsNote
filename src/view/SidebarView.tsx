@@ -37,9 +37,10 @@ import {
   IconTrash,
   IconX,
 } from '@tabler/icons-react';
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { useNotes } from '../controller/NotesController';
 import { Project } from '../model/Note';
+import { TODO_PROJECT_ID } from '../model/TodoService';
 import { APP_VERSION } from '../model/version';
 import { SHORTCUTS } from '../model/shortcutUtils';
 import { SortMenu } from './SortMenu';
@@ -97,6 +98,8 @@ export function SidebarView({ onOpenSupabaseModal }: SidebarViewProps) {
     tagCounts,
     activeTag,
     setActiveTag,
+    selectedDate,
+    setSelectedDate,
     create,
     showFavoriteOnly,
     setShowFavoriteOnly,
@@ -112,6 +115,14 @@ export function SidebarView({ onOpenSupabaseModal }: SidebarViewProps) {
     syncWithSupabase,
     lastSyncedAt,
   } = useNotes();
+
+  // 모든 검색/태그/날짜/퀵필터 조건을 일괄 초기화하여 대상 목록을 온전히 표시
+  const resetAllFilters = useCallback(() => {
+    setSearch('');
+    setActiveTag(null);
+    setSelectedDate(null);
+    setQuickFilter('all');
+  }, [setSearch, setActiveTag, setSelectedDate, setQuickFilter]);
 
   // 프로젝트 영역 높이 동적 조절 (기본 180px, 최소 70px, 최대 500px, localStorage 영속 저장)
   const projectSection = useResizableHeight({
@@ -164,6 +175,18 @@ export function SidebarView({ onOpenSupabaseModal }: SidebarViewProps) {
           </Badge>
         </Group>
         <Group gap={6} align="center">
+          {onOpenSupabaseModal && (
+            <Tooltip label={supabaseConnected ? 'Supabase 클라우드 동기화 설정' : 'Supabase 클라우드 연동'}>
+              <ActionIcon
+                color={supabaseConnected ? 'teal' : 'gray'}
+                variant="light"
+                onClick={onOpenSupabaseModal}
+                aria-label="클라우드 설정"
+              >
+                {supabaseConnected ? <IconCloudCheck size={16} /> : <IconCloud size={16} />}
+              </ActionIcon>
+            </Tooltip>
+          )}
           <Tooltip label={`Gemini AI 어시스턴트 (${SHORTCUTS.geminiAiText})`}>
             <ActionIcon color="violet" variant="light" onClick={() => openGeminiModal('clipboard')} aria-label="Gemini AI">
               <IconSparkles size={16} />
@@ -262,93 +285,150 @@ export function SidebarView({ onOpenSupabaseModal }: SidebarViewProps) {
               📎
             </Button>
           </Tooltip>
+          <Tooltip label="할일 관리 (할일 프로젝트로 바로 이동)">
+            <Button
+              size="compact-xs"
+              variant={selectedProjectId === TODO_PROJECT_ID && !showFavoriteOnly ? 'filled' : 'subtle'}
+              color={selectedProjectId === TODO_PROJECT_ID && !showFavoriteOnly ? 'blue' : 'gray'}
+              onClick={() => {
+                setShowFavoriteOnly(false);
+                resetAllFilters();
+                selectProject(TODO_PROJECT_ID);
+              }}
+              styles={{ root: { fontSize: 10, paddingLeft: 6, paddingRight: 6 } }}
+            >
+              📋
+            </Button>
+          </Tooltip>
         </Group>
       </div>
 
       {/* 프로젝트 목록 섹션 */}
-      <Group justify="space-between" mt={4} px={4}>
-        <Text size="xs" fw={700} c="dimmed">
-          프로젝트 ({projects.length})
-        </Text>
-        <Group gap={4}>
-          <SortMenu
-            sortOption={projectSortOption}
-            onChange={setProjectSortOption}
-            targetName="프로젝트"
-            size="xs"
-          />
-          <Tooltip label="새 프로젝트 만들기">
-            <ActionIcon size="xs" variant="light" color="blue" onClick={startCreateProject} aria-label="새 프로젝트">
-              <IconPlus size={13} />
-            </ActionIcon>
-          </Tooltip>
-        </Group>
-      </Group>
+      {(() => {
+        const regularProjects = sortedProjects.filter((p) => p.id !== TODO_PROJECT_ID);
+        return (
+          <>
+            <Group justify="space-between" mt={4} px={4}>
+              <Text size="xs" fw={700} c="dimmed">
+                프로젝트 ({regularProjects.length})
+              </Text>
+              <Group gap={4}>
+                <SortMenu
+                  sortOption={projectSortOption}
+                  onChange={setProjectSortOption}
+                  targetName="프로젝트"
+                  size="xs"
+                />
+                <Tooltip label="새 프로젝트 만들기">
+                  <ActionIcon size="xs" variant="light" color="blue" onClick={startCreateProject} aria-label="새 프로젝트">
+                    <IconPlus size={13} />
+                  </ActionIcon>
+                </Tooltip>
+              </Group>
+            </Group>
 
-      <ScrollArea style={{ height: projectSection.height }} type="auto">
-        <Stack gap={2}>
-          {sortedProjects.map((proj) => {
-            const count = notes.filter((n) => (n.projectId || 'default') === proj.id).length;
-            const isSelected = proj.id === selectedProjectId;
-            return (
-              <NavLink
-                key={proj.id}
-                label={proj.name}
-                leftSection={<span style={{ fontSize: 16 }}>{proj.icon || '📁'}</span>}
-                active={isSelected}
-                onClick={() => selectProject(proj.id)}
-                rightSection={
-                  <Group gap={2} wrap="nowrap" onClick={(e) => e.stopPropagation()}>
-                    <Badge size="xs" variant={isSelected ? 'filled' : 'light'} color={isSelected ? 'blue' : 'gray'}>
-                      {count}
-                    </Badge>
-                    <Menu position="bottom-end" withArrow shadow="md" withinPortal>
-                      <Menu.Target>
-                        <ActionIcon size="xs" variant="subtle" color="gray" aria-label="프로젝트 옵션">
-                          <IconDots size={13} />
-                        </ActionIcon>
-                      </Menu.Target>
-                      <Menu.Dropdown>
-                        <Menu.Item leftSection={<IconPencil size={14} />} onClick={() => startEditProject(proj)}>
-                          이름 및 아이콘 수정
-                        </Menu.Item>
-                        <Menu.Divider />
-                        <Menu.Item
-                          color="red"
-                          leftSection={<IconTrash size={14} />}
-                          disabled={projects.length <= 1}
-                          onClick={() => {
-                            if (projects.length <= 1) {
-                              alert('최소 1개의 프로젝트는 유지되어야 합니다.');
-                              return;
-                            }
-                            const msg =
-                              count > 0
-                                ? `"${proj.name}" 프로젝트와 소속된 ${count}개의 노트를 모두 삭제할까요?`
-                                : `"${proj.name}" 프로젝트를 삭제할까요?`;
-                            if (confirm(msg)) {
-                              deleteProject(proj.id);
-                            }
-                          }}
-                        >
-                          프로젝트 삭제
-                        </Menu.Item>
-                      </Menu.Dropdown>
-                    </Menu>
-                  </Group>
-                }
-              />
-            );
-          })}
-        </Stack>
-      </ScrollArea>
+            <ScrollArea style={{ height: projectSection.height }} type="auto">
+              <Stack gap={2}>
+                {regularProjects.map((proj) => {
+                  const count = notes.filter((n) => (n.projectId || 'default') === proj.id).length;
+                  const isSelected = proj.id === selectedProjectId && !showFavoriteOnly;
+                  return (
+                    <NavLink
+                      key={proj.id}
+                      label={proj.name}
+                      leftSection={<span style={{ fontSize: 16 }}>{proj.icon || '📁'}</span>}
+                      active={isSelected}
+                      onClick={() => {
+                        setShowFavoriteOnly(false);
+                        resetAllFilters();
+                        selectProject(proj.id);
+                      }}
+                      rightSection={
+                        <Group gap={2} wrap="nowrap" onClick={(e) => e.stopPropagation()}>
+                          <Badge size="xs" variant={isSelected ? 'filled' : 'light'} color={isSelected ? 'blue' : 'gray'}>
+                            {count}
+                          </Badge>
+                          <Menu position="bottom-end" withArrow shadow="md" withinPortal>
+                            <Menu.Target>
+                              <ActionIcon size="xs" variant="subtle" color="gray" aria-label="프로젝트 옵션">
+                                <IconDots size={13} />
+                              </ActionIcon>
+                            </Menu.Target>
+                            <Menu.Dropdown>
+                              <Menu.Item leftSection={<IconPencil size={14} />} onClick={() => startEditProject(proj)}>
+                                이름 및 아이콘 수정
+                              </Menu.Item>
+                              <Menu.Divider />
+                              <Menu.Item
+                                color="red"
+                                leftSection={<IconTrash size={14} />}
+                                disabled={projects.length <= 1}
+                                onClick={() => {
+                                  if (projects.length <= 1) {
+                                    alert('최소 1개의 프로젝트는 유지되어야 합니다.');
+                                    return;
+                                  }
+                                  const msg =
+                                    count > 0
+                                      ? `"${proj.name}" 프로젝트와 소속된 ${count}개의 노트를 모두 삭제할까요?`
+                                      : `"${proj.name}" 프로젝트를 삭제할까요?`;
+                                  if (confirm(msg)) {
+                                    deleteProject(proj.id);
+                                  }
+                                }}
+                              >
+                                프로젝트 삭제
+                              </Menu.Item>
+                            </Menu.Dropdown>
+                          </Menu>
+                        </Group>
+                      }
+                    />
+                  );
+                })}
+              </Stack>
+            </ScrollArea>
+          </>
+        );
+      })()}
 
-      <NavLink
-        label="즐겨찾기"
-        leftSection={<IconStar size={15} />}
-        active={showFavoriteOnly}
-        onClick={() => setShowFavoriteOnly(!showFavoriteOnly)}
-      />
+      {/* 즐겨찾기 & 할일관리 고정 시스템 내비게이션 (즐겨찾기와 동일한 UX) */}
+      <Stack gap={2}>
+        <NavLink
+          label="즐겨찾기"
+          leftSection={<IconStar size={16} color="var(--mantine-color-yellow-5)" />}
+          active={showFavoriteOnly}
+          onClick={() => {
+            const next = !showFavoriteOnly;
+            setShowFavoriteOnly(next);
+            if (next) {
+              resetAllFilters();
+            }
+          }}
+          rightSection={
+            <Badge size="xs" variant={showFavoriteOnly ? 'filled' : 'light'} color="yellow">
+              {notes.filter((n) => n.favorite).length}
+            </Badge>
+          }
+          style={{ borderRadius: 6 }}
+        />
+        <NavLink
+          label="할일관리"
+          leftSection={<span style={{ fontSize: 16 }}>📋</span>}
+          active={selectedProjectId === TODO_PROJECT_ID && !showFavoriteOnly}
+          onClick={() => {
+            setShowFavoriteOnly(false);
+            resetAllFilters();
+            selectProject(TODO_PROJECT_ID);
+          }}
+          rightSection={
+            <Badge size="xs" variant={selectedProjectId === TODO_PROJECT_ID && !showFavoriteOnly ? 'filled' : 'light'} color="blue">
+              {notes.filter((n) => n.projectId === TODO_PROJECT_ID && !n.systemGroupType).length}
+            </Badge>
+          }
+          style={{ borderRadius: 6 }}
+        />
+      </Stack>
 
       {/* 프로젝트 영역과 달력/태그 영역 사이 수직 리사이즈 스플리터 */}
       <div style={{ padding: '2px 0' }}>
@@ -417,119 +497,40 @@ export function SidebarView({ onOpenSupabaseModal }: SidebarViewProps) {
         </Tabs.Panel>
       </Tabs>
 
-      <Divider />
       {vaultMode ? (
-        <Stack gap={2}>
-          <Group gap={4} wrap="nowrap">
-            <IconFolder size={14} style={{ flexShrink: 0 }} />
-            <Text size="xs" c="dimmed" truncate title={vaultPath}>
-              {vaultPath || '저장 폴더 확인 중…'}
-            </Text>
-          </Group>
-          <Group gap={4}>
-            <Tooltip label="저장 폴더 변경 (OneDrive/Dropbox 안 폴더를 지정하면 기기 간 동기화)">
-              <ActionIcon size="sm" variant="light" onClick={() => void chooseVault()} aria-label="저장 폴더 변경">
-                <IconFolder size={14} />
-              </ActionIcon>
-            </Tooltip>
-            <Tooltip label="지금 외부 변경 확인">
-              <ActionIcon size="sm" variant="light" onClick={() => void resync()} aria-label="지금 동기화">
-                <IconRefresh size={14} />
-              </ActionIcon>
-            </Tooltip>
-          </Group>
-          {vaultError && (
-            <Text size="xs" c="red">
-              {vaultError}
-            </Text>
-          )}
-        </Stack>
-      ) : (
-        <Stack gap={4}>
-          <Text size="xs" c="dimmed">
-            브라우저 모드: localStorage 저장 (Electron 앱에서 파일 저장 지원)
-          </Text>
-          {storageError && (
-            <Text size="xs" c="red" fw={600} style={{ wordBreak: 'break-all' }}>
-              {storageError}
-            </Text>
-          )}
-        </Stack>
-      )}
-
-      {/* Supabase 클라우드 동기화 섹션 */}
-      <Divider />
-      <Stack gap={4}>
-        <Group justify="space-between" wrap="nowrap">
-          <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
-            {supabaseConnected ? (
-              <IconCloudCheck size={16} color="#2f9e44" style={{ flexShrink: 0 }} />
-            ) : (
-              <IconCloudOff size={16} color="#868e96" style={{ flexShrink: 0 }} />
-            )}
-            <Text size="xs" fw={600} truncate c={supabaseConnected ? 'teal' : 'dimmed'}>
-              {supabaseConnected ? 'Supabase 클라우드' : '로컬 저장 전용'}
-            </Text>
-          </Group>
-          <Group gap={4}>
-            {supabaseConnected && (
-              <Tooltip label="지금 동기화">
-                <ActionIcon
-                  size="xs"
-                  variant="light"
-                  color="teal"
-                  loading={isSyncing}
-                  onClick={() => void syncWithSupabase()}
-                  aria-label="지금 동기화"
-                >
-                  <IconRefresh size={12} />
+        <>
+          <Divider />
+          <Stack gap={2}>
+            <Group gap={4} wrap="nowrap">
+              <IconFolder size={14} style={{ flexShrink: 0 }} />
+              <Text size="xs" c="dimmed" truncate title={vaultPath}>
+                {vaultPath || '저장 폴더 확인 중…'}
+              </Text>
+            </Group>
+            <Group gap={4}>
+              <Tooltip label="저장 폴더 변경 (OneDrive/Dropbox 안 폴더를 지정하면 기기 간 동기화)">
+                <ActionIcon size="sm" variant="light" onClick={() => void chooseVault()} aria-label="저장 폴더 변경">
+                  <IconFolder size={14} />
                 </ActionIcon>
               </Tooltip>
-            )}
-            <Tooltip label="Supabase 연동 설정">
-              <ActionIcon
-                size="xs"
-                variant="light"
-                color="blue"
-                onClick={onOpenSupabaseModal}
-                aria-label="Supabase 설정"
-              >
-                <IconSettings size={12} />
-              </ActionIcon>
-            </Tooltip>
-          </Group>
-        </Group>
-        {supabaseConnected && (
-          <Group gap={6} align="center">
-            {realtimeStatus === 'connected' ? (
-              <Group gap={4} align="center">
-                <span
-                  style={{
-                    display: 'inline-block',
-                    width: 6,
-                    height: 6,
-                    borderRadius: '50%',
-                    backgroundColor: '#2f9e44',
-                    boxShadow: '0 0 0 2px rgba(47, 158, 68, 0.25)',
-                  }}
-                />
-                <Text size="10px" c="teal" fw={500}>
-                  실시간 자동 동기화
-                </Text>
-              </Group>
-            ) : realtimeStatus === 'connecting' ? (
-              <Text size="10px" c="yellow">
-                실시간 연결 중…
-              </Text>
-            ) : null}
-            {lastSyncedAt && (
-              <Text size="10px" c="dimmed">
-                ({new Date(lastSyncedAt).toLocaleTimeString()})
+              <Tooltip label="지금 외부 변경 확인">
+                <ActionIcon size="sm" variant="light" onClick={() => void resync()} aria-label="지금 동기화">
+                  <IconRefresh size={14} />
+                </ActionIcon>
+              </Tooltip>
+            </Group>
+            {vaultError && (
+              <Text size="xs" c="red">
+                {vaultError}
               </Text>
             )}
-          </Group>
-        )}
-      </Stack>
+          </Stack>
+        </>
+      ) : storageError ? (
+        <Text size="xs" c="red" fw={600} style={{ wordBreak: 'break-all' }}>
+          {storageError}
+        </Text>
+      ) : null}
 
 
 

@@ -27,16 +27,21 @@ import {
   IconPlayerPlay,
   IconReplace,
   IconSparkles,
+  IconChecklist,
   IconX,
 } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
 import { AI_ACTIONS_META, AiActionType, GeminiService } from '../model/GeminiService';
+import { extractChecklistFromMarkdown } from '../model/TodoService';
+import { useNotes } from '../controller/NotesController';
+import { Note } from '../model/Note';
 
 export interface EditorAiModalProps {
   opened: boolean;
   onClose: () => void;
   initialAction?: AiActionType;
   currentContentMarkdown: string;
+  currentNote?: Note;
   onApplyResult: (resultMarkdown: string, placement: 'top' | 'bottom' | 'replace') => void;
 }
 
@@ -45,6 +50,7 @@ export function EditorAiModal({
   onClose,
   initialAction = 'summarize',
   currentContentMarkdown,
+  currentNote,
   onApplyResult,
 }: EditorAiModalProps) {
   const [selectedAction, setSelectedAction] = useState<AiActionType>(initialAction);
@@ -53,6 +59,30 @@ export function EditorAiModal({
   const [error, setError] = useState<string | null>(null);
   const [resultText, setResultText] = useState('');
   const [copied, setCopied] = useState(false);
+  const [todoSuccessMessage, setTodoSuccessMessage] = useState<string | null>(null);
+
+  const { createTodosFromChecklist } = useNotes();
+
+  const handleRegisterAsTodo = (alsoInsertBottom: boolean) => {
+    if (!resultText || !currentNote) return;
+    const checklist = extractChecklistFromMarkdown(resultText);
+    if (checklist.length === 0) {
+      setError('추출된 결과에서 체크리스트(- [ ]) 항목을 찾을 수 없습니다.');
+      return;
+    }
+    const { createdCount, duplicateCount } = createTodosFromChecklist(currentNote, checklist);
+    let msg = `총 ${createdCount}개의 할일이 '할일관리' 프로젝트(To Do)에 등록되었습니다!`;
+    if (duplicateCount > 0) {
+      msg += ` (이미 등록된 ${duplicateCount}개 항목 제외)`;
+    }
+    setTodoSuccessMessage(msg);
+    if (alsoInsertBottom) {
+      onApplyResult(resultText, 'bottom');
+      setTimeout(() => {
+        onClose();
+      }, 900);
+    }
+  };
 
   useEffect(() => {
     if (opened) {
@@ -61,6 +91,7 @@ export function EditorAiModal({
       setResultText('');
       setCopied(false);
       setCustomInstruction('');
+      setTodoSuccessMessage(null);
 
       // 내용이 있고 자유 요청이 아니면 바로 자동 실행 시작 (편의성 극대화)
       if (currentContentMarkdown.trim() && initialAction !== 'custom') {
@@ -267,6 +298,51 @@ export function EditorAiModal({
                 {resultText}
               </Text>
             </ScrollArea.Autosize>
+
+            {/* 할일(Action Items) 추출 또는 체크리스트 포함 시: 할일 프로젝트 등록 카드 */}
+            {(selectedAction === 'action_items' || /\[[ xX]\]/.test(resultText)) && (
+              <Card withBorder radius="md" p="sm" bg="var(--mantine-color-blue-light)">
+                <Group justify="space-between" wrap="wrap" gap="xs">
+                  <div>
+                    <Group gap={6}>
+                      <IconChecklist size={18} color="var(--mantine-color-blue-filled)" />
+                      <Text size="xs" fw={700} c="blue">
+                        할일관리 프로젝트 연동
+                      </Text>
+                    </Group>
+                    <Text size="xs" c="dimmed">
+                      추출된 항목들을 '할일관리' 프로젝트의 To Do 그룹에 개별 할일 노트로 등록합니다.
+                    </Text>
+                  </div>
+                  <Group gap="xs">
+                    <Button
+                      size="xs"
+                      color="blue"
+                      variant="light"
+                      leftSection={<IconChecklist size={14} />}
+                      onClick={() => handleRegisterAsTodo(false)}
+                    >
+                      할일 프로젝트에만 등록
+                    </Button>
+                    <Button
+                      size="xs"
+                      color="blue"
+                      variant="filled"
+                      leftSection={<IconChecklist size={14} />}
+                      onClick={() => handleRegisterAsTodo(true)}
+                    >
+                      할일 등록 + 노트 하단 추가
+                    </Button>
+                  </Group>
+                </Group>
+              </Card>
+            )}
+
+            {todoSuccessMessage && (
+              <Alert color="teal" title="할일 등록 완료" icon={<IconCheck size={16} />}>
+                {todoSuccessMessage}
+              </Alert>
+            )}
 
             {/* 적용 버튼 바 */}
             <Group justify="space-between" mt="md" wrap="wrap">

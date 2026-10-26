@@ -1,8 +1,8 @@
-// VIEW: BlockNote 블록 에디터 (표/코드/이미지 지원) + 히스토리 복원
 import {
   ActionIcon,
   Badge,
   Button,
+  Chip,
   Divider,
   Drawer,
   Group,
@@ -17,8 +17,10 @@ import {
   useComputedColorScheme,
 } from '@mantine/core';
 import {
+  IconArrowLeft,
   IconBell,
   IconCheck,
+  IconChecklist,
   IconChevronDown,
   IconChevronUp,
   IconCode,
@@ -39,6 +41,13 @@ import {
   IconStar,
   IconX,
 } from '@tabler/icons-react';
+import {
+  TODO_PROJECT_ID,
+  TODO_GROUPS,
+  GROUP_ID_TO_STATUS,
+  extractChecklistFromBlocks,
+} from '../model/TodoService';
+import { TodoStatus } from '../model/Note';
 import { BlockNoteView } from '@blocknote/ariakit';
 import {
   SuggestionMenuController,
@@ -135,6 +144,8 @@ function BlockEditor({
     addAttachment,
     searchTokens,
     setSearch,
+    changeTodoStatus,
+    createTodosFromChecklist,
   } = useNotes();
   const scheme = useComputedColorScheme('light');
   const [datePickerOpen, setDatePickerOpen] = useState(false);
@@ -671,6 +682,64 @@ function BlockEditor({
         />
       </div>
 
+      {/* 할일 항목인 경우 상단 원클릭 상태 전환 칩 바 */}
+      {note.projectId === TODO_PROJECT_ID && !note.systemGroupType && (
+        <Paper
+          className="no-print"
+          px="md"
+          py={6}
+          radius="sm"
+          withBorder
+          style={{
+            backgroundColor: scheme === 'dark' ? 'rgba(34, 139, 230, 0.12)' : 'rgba(231, 245, 255, 0.75)',
+            borderColor: scheme === 'dark' ? 'rgba(34, 139, 230, 0.3)' : 'rgba(51, 154, 240, 0.35)',
+            marginBottom: 2,
+          }}
+        >
+          <Group justify="space-between" align="center" wrap="wrap">
+            <Group gap="xs" wrap="wrap">
+              <Badge color="blue" variant="filled" size="sm">
+                할일 항목
+              </Badge>
+              <Text size="xs" fw={600} c="dimmed">
+                상태 변경:
+              </Text>
+              <Group gap={6}>
+                {TODO_GROUPS.map((g) => {
+                  const currentStatus: TodoStatus =
+                    note.todoMeta?.status || (GROUP_ID_TO_STATUS[note.parentId || ''] as TodoStatus) || 'todo';
+                  const isCurrent = currentStatus === g.status;
+                  return (
+                    <Chip
+                      key={g.status}
+                      size="xs"
+                      checked={isCurrent}
+                      color={g.color}
+                      variant={isCurrent ? 'filled' : 'outline'}
+                      onClick={() => changeTodoStatus(note.id, g.status)}
+                    >
+                      {g.title}
+                    </Chip>
+                  );
+                })}
+              </Group>
+            </Group>
+
+            {note.todoMeta?.sourceNoteId && (
+              <Button
+                size="compact-xs"
+                variant="subtle"
+                color="blue"
+                leftSection={<IconArrowLeft size={13} />}
+                onClick={() => select(note.todoMeta!.sourceNoteId!)}
+              >
+                원본 노트로 이동
+              </Button>
+            )}
+          </Group>
+        </Paper>
+      )}
+
       {/* 본문 검색 키워드 하이라이트 네비게이터 바 */}
       {searchTokens.length > 0 && (
         <Paper
@@ -877,8 +946,38 @@ function BlockEditor({
                   note,
                   handleAttachFromSlash
                 );
+
+                const todoExportSlashItem = {
+                  title: '할일 프로젝트로 내보내기',
+                  subtext: '현재 노트의 체크리스트 항목들을 할일관리 프로젝트(To Do)로 등록합니다',
+                  badge: '할일',
+                  aliases: ['할일등록', 'todo-export', '할일', 'todo', '체크리스트', 'actions'],
+                  group: '할일 관리',
+                  icon: <IconChecklist size={18} color="var(--mantine-color-blue-5)" />,
+                  onItemClick: () => {
+                    const blocks = editor.document;
+                    const items = extractChecklistFromBlocks(blocks);
+                    if (items.length === 0) {
+                      alert('현재 노트에 체크리스트(- [ ] 또는 체크박스) 항목이 없습니다.');
+                      return;
+                    }
+                    const { createdCount, duplicateCount } = createTodosFromChecklist(note, items);
+                    let msg = `총 ${createdCount}개의 할일이 '할일관리' 프로젝트(To Do)에 등록되었습니다!`;
+                    if (duplicateCount > 0) {
+                      msg += ` (이미 등록된 ${duplicateCount}개 제외)`;
+                    }
+                    alert(msg);
+                  },
+                };
+
                 return filterSuggestionItems(
-                  [...aiSlashItems, ...noteSlashItems, ...dateSlashItems, ...defaultSlashItems],
+                  [
+                    ...aiSlashItems,
+                    todoExportSlashItem,
+                    ...noteSlashItems,
+                    ...dateSlashItems,
+                    ...defaultSlashItems,
+                  ],
                   query
                 );
               }}
@@ -931,6 +1030,7 @@ function BlockEditor({
         onClose={() => setAiModalOpened(false)}
         initialAction={aiModalAction}
         currentContentMarkdown={currentMarkdownForAi}
+        currentNote={note}
         onApplyResult={handleApplyAiResult}
       />
     </Stack>
