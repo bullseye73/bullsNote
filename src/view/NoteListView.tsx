@@ -10,12 +10,14 @@ import {
   Stack,
   Text,
   Tooltip,
+  useComputedColorScheme,
 } from '@mantine/core';
 import {
   IconChevronDown,
   IconChevronRight,
   IconCopy,
   IconDots,
+  IconGripVertical,
   IconIndentDecrease,
   IconIndentIncrease,
   IconBellRinging,
@@ -27,7 +29,7 @@ import {
   IconTrash,
   IconX,
 } from '@tabler/icons-react';
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { PastelColorConfig, PASTEL_COLORS, getPastelConfig, TreeNode, getPathTitles } from '../model/Note';
 import { noteBodyText } from '../model/HashtagService';
 import { useNotes } from '../controller/NotesController';
@@ -35,7 +37,7 @@ import { CryptoService } from '../model/CryptoService';
 import { getSearchSnippet } from '../model/SearchService';
 import { HighlightText } from './HighlightText';
 import { formatDateTimeIso } from '../model/dateUtils';
-import { isSystemGroupNote } from '../model/TodoService';
+import { isSystemGroupNote, GROUP_ID_TO_STATUS, TODO_PROJECT_ID } from '../model/TodoService';
 
 function cleanExcerpt(content: string, title?: string): string {
   if (!content) return '';
@@ -294,18 +296,44 @@ function TreeRow({
   prevSibling,
   collapsed,
   onToggle,
+  draggingId,
+  dropTargetId,
+  onDragStart,
+  onDragOver,
+  onDragLeave,
+  onDrop,
+  onDragEnd,
 }: {
   node: TreeNode;
   depth: number;
   prevSibling: boolean;
   collapsed: Set<string>;
   onToggle(id: string): void;
+  draggingId: string | null;
+  dropTargetId: string | null;
+  onDragStart: (id: string, e: React.DragEvent) => void;
+  onDragOver: (id: string, e: React.DragEvent) => void;
+  onDragLeave: (id: string, e: React.DragEvent) => void;
+  onDrop: (id: string, e: React.DragEvent) => void;
+  onDragEnd: () => void;
 }) {
-  const { selectedId, select, setActiveTag } = useNotes();
+  const { selectedId, select, setActiveTag, isUnlocked, isMasterSet } = useNotes();
+  const scheme = useComputedColorScheme('light', { getInitialValueInEffect: true });
+  const isDark = scheme === 'dark';
+
   const n = node.note;
   const active = n.id === selectedId;
   const isCollapsed = collapsed.has(n.id);
   const cfg = getPastelConfig(n.color);
+  const isSystemGroup = isSystemGroupNote(n);
+
+  const isNoteLocked =
+    (!isUnlocked && (isMasterSet || CryptoService.isEncrypted(n.content))) ||
+    CryptoService.isEncrypted(n.content);
+
+  const isDragging = draggingId === n.id;
+  const isOver = dropTargetId === n.id && draggingId !== n.id;
+  const canDrag = !isSystemGroup && !isNoteLocked;
 
   return (
     <>
@@ -313,20 +341,58 @@ function TreeRow({
         withBorder
         shadow={active ? 'sm' : 'none'}
         className={active ? 'active-pastel-card' : 'inactive-note-card'}
+        draggable={canDrag}
+        onDragStart={(e) => {
+          if (canDrag) onDragStart(n.id, e);
+        }}
+        onDragEnd={onDragEnd}
+        onDragOver={(e) => onDragOver(n.id, e)}
+        onDragLeave={(e) => onDragLeave(n.id, e)}
+        onDrop={(e) => onDrop(n.id, e)}
         style={{
-          cursor: 'pointer',
+          cursor: isSystemGroup ? 'pointer' : isDragging ? 'grabbing' : 'grab',
           marginLeft: depth * 14,
-          borderColor: active ? cfg.border : undefined,
-          borderLeft: active ? `5px solid ${cfg.border}` : `4px solid ${cfg.border}`,
-          background: active ? cfg.bg : undefined,
+          borderColor: isOver ? 'var(--mantine-color-blue-5)' : active ? cfg.border : undefined,
+          borderLeft: isOver
+            ? '6px solid var(--mantine-color-blue-5)'
+            : active
+            ? `5px solid ${cfg.border}`
+            : `4px solid ${cfg.border}`,
+          background: isOver
+            ? isDark
+              ? 'rgba(34, 139, 230, 0.22)'
+              : 'rgba(231, 245, 255, 0.9)'
+            : active
+            ? cfg.bg
+            : undefined,
+          opacity: isDragging ? 0.35 : 1,
+          transform: isOver ? 'scale(1.015)' : 'none',
+          outline: isOver ? (isDark ? '2px dashed var(--mantine-color-blue-4)' : '2px dashed var(--mantine-color-blue-6)') : undefined,
+          outlineOffset: isOver ? '-2px' : undefined,
+          transition: 'all 0.15s ease',
         }}
         onClick={() => select(n.id)}
         py={6}
         px="xs"
       >
-        {/* 1줄: 펼치기/접기 + 제목 + 상태/알람/자식수 뱃지 + 액션 버튼 */}
+        {/* 1줄: 드래그 핸들 + 펼치기/접기 + 제목 + 상태/알람/자식수 뱃지 + 액션 버튼 */}
         <Group justify="space-between" wrap="nowrap" gap={4}>
           <Group gap={4} wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
+            {canDrag && (
+              <Tooltip label="드래그하여 다른 상태나 위치로 이동" position="left" withArrow>
+                <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                  <IconGripVertical
+                    size={13}
+                    style={{
+                      color: active ? cfg.iconColor : 'var(--mantine-color-dimmed)',
+                      opacity: 0.45,
+                      cursor: 'grab',
+                      flexShrink: 0,
+                    }}
+                  />
+                </span>
+              </Tooltip>
+            )}
             {node.children.length > 0 ? (
               <ActionIcon
                 size="xs"
@@ -344,7 +410,7 @@ function TreeRow({
                 {isCollapsed ? <IconChevronRight size={13} /> : <IconChevronDown size={13} />}
               </ActionIcon>
             ) : (
-              <span style={{ width: 18, flexShrink: 0 }} />
+              <span style={{ width: canDrag ? 6 : 18, flexShrink: 0 }} />
             )}
             <Text fw={600} truncate size="sm" style={{ color: active ? cfg.textColor : undefined, minWidth: 0 }}>
               {n.title || '제목 없음'}
@@ -398,7 +464,7 @@ function TreeRow({
         </Group>
 
         {/* 2줄: 작성일시와 상세 내용만 정제하여 1줄로 컴팩트하게 표시 */}
-        <Group gap={6} wrap="nowrap" mt={3} pl={22} style={{ minWidth: 0, overflow: 'hidden' }}>
+        <Group gap={6} wrap="nowrap" mt={3} pl={canDrag ? 32 : 22} style={{ minWidth: 0, overflow: 'hidden' }}>
           {n.systemGroupType ? (
             <Text
               size="xs"
@@ -452,10 +518,31 @@ function TreeRow({
             prevSibling={i > 0}
             collapsed={collapsed}
             onToggle={onToggle}
+            draggingId={draggingId}
+            dropTargetId={dropTargetId}
+            onDragStart={onDragStart}
+            onDragOver={onDragOver}
+            onDragLeave={onDragLeave}
+            onDrop={onDrop}
+            onDragEnd={onDragEnd}
           />
         ))}
     </>
   );
+}
+
+function isDescendant(
+  ancestorId: string,
+  potentialChildId: string,
+  notes: Array<{ id: string; parentId: string | null }>
+): boolean {
+  let cur = notes.find((n) => n.id === potentialChildId);
+  while (cur && cur.parentId) {
+    if (cur.parentId === ancestorId) return true;
+    const nextParentId = cur.parentId;
+    cur = notes.find((n) => n.id === nextParentId);
+  }
+  return false;
 }
 
 export function NoteListView() {
@@ -473,8 +560,12 @@ export function NoteListView() {
     projects,
     searchTokens,
     searchScope,
+    changeTodoStatus,
+    setParent,
   } = useNotes();
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
 
   const toggle = (id: string) =>
     setCollapsed((prev) => {
@@ -483,6 +574,68 @@ export function NoteListView() {
       else next.add(id);
       return next;
     });
+
+  const handleDragStart = useCallback((id: string, e: React.DragEvent) => {
+    e.dataTransfer.setData('text/plain', id);
+    e.dataTransfer.effectAllowed = 'move';
+    setDraggingId(id);
+  }, []);
+
+  const handleDragOver = useCallback((id: string, e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDropTargetId((prev) => (prev !== id ? id : prev));
+  }, []);
+
+  const handleDragLeave = useCallback((id: string, e: React.DragEvent) => {
+    e.preventDefault();
+    setDropTargetId((prev) => (prev === id ? null : prev));
+  }, []);
+
+  const handleDragEnd = useCallback(() => {
+    setDraggingId(null);
+    setDropTargetId(null);
+  }, []);
+
+  const handleDrop = useCallback(
+    (targetId: string, e: React.DragEvent) => {
+      e.preventDefault();
+      const draggedId = e.dataTransfer.getData('text/plain') || draggingId;
+      setDraggingId(null);
+      setDropTargetId(null);
+
+      if (!draggedId || draggedId === targetId) return;
+
+      const draggedNote = notes.find((n) => n.id === draggedId);
+      const targetNote = notes.find((n) => n.id === targetId);
+      if (!draggedNote || !targetNote) return;
+
+      // 시스템 그룹 노트(To Do, Doing, Done, Drop)는 드래그하여 이동할 수 없음
+      if (isSystemGroupNote(draggedNote)) return;
+
+      // 할일 관리 그룹 판별:
+      // 1) 대상이 그룹 카드 본체인 경우 (To Do, Doing, Done, Drop)
+      const targetGroupStatus = GROUP_ID_TO_STATUS[targetNote.id];
+      if (targetGroupStatus) {
+        changeTodoStatus(draggedId, targetGroupStatus);
+        return;
+      }
+
+      // 2) 대상이 특정 상태 그룹에 속한 할일 카드인 경우 -> 대상 카드의 부모 그룹 상태로 변경
+      if (targetNote.parentId && GROUP_ID_TO_STATUS[targetNote.parentId]) {
+        const parentStatus = GROUP_ID_TO_STATUS[targetNote.parentId];
+        changeTodoStatus(draggedId, parentStatus);
+        return;
+      }
+
+      // 3) 일반 노트의 경우: 순환 참조 방지 후 해당 노트의 자식으로 계층 이동
+      if (isDescendant(draggedId, targetId, notes)) {
+        return;
+      }
+      setParent(draggedId, targetId);
+    },
+    [draggingId, notes, changeTodoStatus, setParent]
+  );
 
   if (isFiltering) {
     if (flat.length === 0) {
@@ -679,7 +832,21 @@ export function NoteListView() {
     <ScrollArea h="100%" type="auto">
       <Stack gap={4} p="sm">
         {tree.map((node, i) => (
-          <TreeRow key={node.note.id} node={node} depth={0} prevSibling={i > 0} collapsed={collapsed} onToggle={toggle} />
+          <TreeRow
+            key={node.note.id}
+            node={node}
+            depth={0}
+            prevSibling={i > 0}
+            collapsed={collapsed}
+            onToggle={toggle}
+            draggingId={draggingId}
+            dropTargetId={dropTargetId}
+            onDragStart={handleDragStart}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            onDragEnd={handleDragEnd}
+          />
         ))}
       </Stack>
     </ScrollArea>
