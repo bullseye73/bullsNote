@@ -80,7 +80,7 @@ import { EditorToolbar } from './EditorToolbar';
 import { ReminderPopover } from './ReminderPopover';
 import { DatePickerModal } from './DatePickerModal';
 import { PrintPreviewModal } from './PrintPreviewModal';
-import { HistoryDiffModal } from './HistoryDiffModal';
+import { InlineHistoryDiffView } from './InlineHistoryDiffView';
 import { NoteTableOfContents } from './NoteTableOfContents';
 import { EditorAiModal } from './EditorAiModal';
 import { formatDateIso } from '../model/dateUtils';
@@ -1645,6 +1645,18 @@ export function NoteEditorView() {
             </Button>
           </Stack>
         </div>
+      ) : diffTargetSnapshot ? (
+        <InlineHistoryDiffView
+          currentNote={selected}
+          selectedSnapshot={diffTargetSnapshot.selected}
+          previousSnapshot={diffTargetSnapshot.previous}
+          onRestore={(savedAt) => {
+            restoreHistory(selected.id, savedAt);
+            setDiffTargetSnapshot(null);
+            setHistoryOpen(false);
+          }}
+          onClose={() => setDiffTargetSnapshot(null)}
+        />
       ) : (
         <div
           style={{
@@ -1683,6 +1695,8 @@ export function NoteEditorView() {
           <Stack gap="xs">
             {selected.history.map((h, idx) => {
               const previous = selected.history[idx + 1] || null;
+              const isComparingThis = diffTargetSnapshot?.selected.savedAt === h.savedAt;
+
               return (
                 <Paper
                   key={h.savedAt}
@@ -1690,14 +1704,23 @@ export function NoteEditorView() {
                   p="xs"
                   radius="sm"
                   style={{
-                    backgroundColor: 'var(--mantine-color-body)',
+                    backgroundColor: isComparingThis ? 'var(--mantine-color-blue-light)' : 'var(--mantine-color-body)',
+                    borderColor: isComparingThis ? 'var(--mantine-color-blue-5)' : undefined,
+                    transition: 'all 0.15s ease',
                   }}
                 >
                   <Group justify="space-between" wrap="nowrap" align="flex-start" mb={4}>
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      <Text size="sm" fw={600} truncate>
-                        {h.title || '제목 없음'}
-                      </Text>
+                    <div style={{ minWidth: 0, flex: 1, cursor: 'pointer' }} onClick={() => setDiffTargetSnapshot({ selected: h, previous })}>
+                      <Group gap={6} wrap="nowrap">
+                        <Text size="sm" fw={600} truncate>
+                          {h.title || '제목 없음'}
+                        </Text>
+                        {isComparingThis && (
+                          <Badge size="xs" variant="filled" color="blue">
+                            비교 중
+                          </Badge>
+                        )}
+                      </Group>
                       <Text size="xs" c="dimmed">
                         {new Date(h.savedAt).toLocaleString('ko-KR')}
                       </Text>
@@ -1705,14 +1728,14 @@ export function NoteEditorView() {
                     <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
                       <Button
                         size="compact-xs"
-                        variant="light"
+                        variant={isComparingThis ? 'filled' : 'light'}
                         color="blue"
                         leftSection={<IconGitCompare size={13} />}
                         onClick={() => {
                           setDiffTargetSnapshot({ selected: h, previous });
                         }}
                       >
-                        비교
+                        {isComparingThis ? '비교 중' : '비교'}
                       </Button>
                       <Button
                         size="compact-xs"
@@ -1722,6 +1745,7 @@ export function NoteEditorView() {
                           const dateStr = new Date(h.savedAt).toLocaleString('ko-KR');
                           if (confirm(`${dateStr} 버전으로 복원할까요?\n현재 작성 중인 내용은 새로운 히스토리로 보존됩니다.`)) {
                             restoreHistory(selected.id, h.savedAt);
+                            setDiffTargetSnapshot(null);
                             setHistoryOpen(false);
                           }
                         }}
@@ -1730,7 +1754,13 @@ export function NoteEditorView() {
                       </Button>
                     </Group>
                   </Group>
-                  <Text size="xs" c="dimmed" lineClamp={2} style={{ whiteSpace: 'pre-line' }}>
+                  <Text
+                    size="xs"
+                    c="dimmed"
+                    lineClamp={2}
+                    style={{ whiteSpace: 'pre-line', cursor: 'pointer' }}
+                    onClick={() => setDiffTargetSnapshot({ selected: h, previous })}
+                  >
                     {noteBodyText(h.content).slice(0, 120) || '내용 없음'}
                   </Text>
                 </Paper>
@@ -1739,18 +1769,6 @@ export function NoteEditorView() {
           </Stack>
         )}
       </Drawer>
-
-      <HistoryDiffModal
-        opened={diffTargetSnapshot !== null}
-        onClose={() => setDiffTargetSnapshot(null)}
-        currentNote={selected}
-        selectedSnapshot={diffTargetSnapshot?.selected ?? null}
-        previousSnapshot={diffTargetSnapshot?.previous ?? null}
-        onRestore={(savedAt) => {
-          restoreHistory(selected.id, savedAt);
-          setHistoryOpen(false);
-        }}
-      />
 
       <PrintPreviewModal
         opened={printPreviewOpen}
