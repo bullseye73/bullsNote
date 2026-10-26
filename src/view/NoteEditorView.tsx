@@ -28,6 +28,7 @@ import {
   IconDownload,
   IconEye,
   IconFileTypePdf,
+  IconGitCompare,
   IconHash,
   IconHistory,
   IconLock,
@@ -62,6 +63,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Note,
   NoteAttachment,
+  NoteSnapshot,
   getPathTitles,
   getPathNodes,
   findBacklinks,
@@ -78,6 +80,7 @@ import { EditorToolbar } from './EditorToolbar';
 import { ReminderPopover } from './ReminderPopover';
 import { DatePickerModal } from './DatePickerModal';
 import { PrintPreviewModal } from './PrintPreviewModal';
+import { HistoryDiffModal } from './HistoryDiffModal';
 import { NoteTableOfContents } from './NoteTableOfContents';
 import { EditorAiModal } from './EditorAiModal';
 import { formatDateIso } from '../model/dateUtils';
@@ -1058,6 +1061,10 @@ export function NoteEditorView() {
     openSecurityModal,
   } = useNotes();
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [diffTargetSnapshot, setDiffTargetSnapshot] = useState<{
+    selected: NoteSnapshot;
+    previous: NoteSnapshot | null;
+  } | null>(null);
   const [printPreviewOpen, setPrintPreviewOpen] = useState(false);
   const [currentEditor, setCurrentEditor] = useState<AnyEditor | null>(null);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
@@ -1674,38 +1681,76 @@ export function NoteEditorView() {
           </Text>
         ) : (
           <Stack gap="xs">
-            {selected.history.map((h) => (
-              <Group key={h.savedAt} justify="space-between" wrap="nowrap" align="flex-start"
-                style={{ border: '1px solid var(--mantine-color-gray-3)', borderRadius: 8, padding: 8 }}>
-                <div style={{ minWidth: 0 }}>
-                  <Text size="sm" fw={600} truncate>
-                    {h.title || '제목 없음'}
-                  </Text>
-                  <Text size="xs" c="dimmed">
-                    {new Date(h.savedAt).toLocaleString('ko-KR')}
-                  </Text>
-                  <Text size="xs" c="dimmed" lineClamp={2}>
-                    {noteBodyText(h.content).slice(0, 100) || '내용 없음'}
-                  </Text>
-                </div>
-                <Button
-                  size="xs"
-                  variant="light"
-                  style={{ flexShrink: 0 }}
-                  onClick={() => {
-                    if (confirm(`${new Date(h.savedAt).toLocaleString('ko-KR')} 버전으로 복원할까요?`)) {
-                      restoreHistory(selected.id, h.savedAt);
-                      setHistoryOpen(false);
-                    }
+            {selected.history.map((h, idx) => {
+              const previous = selected.history[idx + 1] || null;
+              return (
+                <Paper
+                  key={h.savedAt}
+                  withBorder
+                  p="xs"
+                  radius="sm"
+                  style={{
+                    backgroundColor: 'var(--mantine-color-body)',
                   }}
                 >
-                  복원
-                </Button>
-              </Group>
-            ))}
+                  <Group justify="space-between" wrap="nowrap" align="flex-start" mb={4}>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <Text size="sm" fw={600} truncate>
+                        {h.title || '제목 없음'}
+                      </Text>
+                      <Text size="xs" c="dimmed">
+                        {new Date(h.savedAt).toLocaleString('ko-KR')}
+                      </Text>
+                    </div>
+                    <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
+                      <Button
+                        size="compact-xs"
+                        variant="light"
+                        color="blue"
+                        leftSection={<IconGitCompare size={13} />}
+                        onClick={() => {
+                          setDiffTargetSnapshot({ selected: h, previous });
+                        }}
+                      >
+                        비교
+                      </Button>
+                      <Button
+                        size="compact-xs"
+                        variant="subtle"
+                        color="gray"
+                        onClick={() => {
+                          const dateStr = new Date(h.savedAt).toLocaleString('ko-KR');
+                          if (confirm(`${dateStr} 버전으로 복원할까요?\n현재 작성 중인 내용은 새로운 히스토리로 보존됩니다.`)) {
+                            restoreHistory(selected.id, h.savedAt);
+                            setHistoryOpen(false);
+                          }
+                        }}
+                      >
+                        복원
+                      </Button>
+                    </Group>
+                  </Group>
+                  <Text size="xs" c="dimmed" lineClamp={2} style={{ whiteSpace: 'pre-line' }}>
+                    {noteBodyText(h.content).slice(0, 120) || '내용 없음'}
+                  </Text>
+                </Paper>
+              );
+            })}
           </Stack>
         )}
       </Drawer>
+
+      <HistoryDiffModal
+        opened={diffTargetSnapshot !== null}
+        onClose={() => setDiffTargetSnapshot(null)}
+        currentNote={selected}
+        selectedSnapshot={diffTargetSnapshot?.selected ?? null}
+        previousSnapshot={diffTargetSnapshot?.previous ?? null}
+        onRestore={(savedAt) => {
+          restoreHistory(selected.id, savedAt);
+          setHistoryOpen(false);
+        }}
+      />
 
       <PrintPreviewModal
         opened={printPreviewOpen}
