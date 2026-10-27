@@ -15,6 +15,7 @@ import {
   Text,
   TextInput,
   Tooltip,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import {
@@ -25,6 +26,7 @@ import {
   IconCloudOff,
   IconCommand,
   IconDots,
+  IconFilterOff,
   IconFolder,
   IconHash,
   IconPencil,
@@ -32,12 +34,14 @@ import {
   IconRefresh,
   IconSearch,
   IconSettings,
+  IconSortAscendingLetters,
+  IconSortDescendingNumbers,
   IconSparkles,
   IconStar,
   IconTrash,
   IconX,
 } from '@tabler/icons-react';
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { useNotes } from '../controller/NotesController';
 import { Project } from '../model/Note';
 import { TODO_PROJECT_ID } from '../model/TodoService';
@@ -131,6 +135,26 @@ export function SidebarView({ onOpenSupabaseModal }: SidebarViewProps) {
     maxHeight: 500,
     storageKey: 'bullsnote.sidebar.projectHeight',
   });
+
+  // 태그 클라우드 정렬 및 검색 상태
+  const scheme = useComputedColorScheme('light', { getInitialValueInEffect: true });
+  const isDark = scheme === 'dark';
+  const [tagSort, setTagSort] = useState<'count' | 'name'>('count');
+  const [tagFilterText, setTagFilterText] = useState('');
+
+  const sortedFilteredTags = useMemo(() => {
+    let list = [...tagCounts];
+    if (tagFilterText.trim()) {
+      const q = tagFilterText.trim().toLowerCase();
+      list = list.filter((item) => item.tag.toLowerCase().includes(q));
+    }
+    if (tagSort === 'count') {
+      list.sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
+    } else {
+      list.sort((a, b) => a.tag.localeCompare(b.tag));
+    }
+    return list;
+  }, [tagCounts, tagSort, tagFilterText]);
 
   // 프로젝트 생성/수정 모달 상태
   const [modalOpened, { open: openModal, close: closeModal }] = useDisclosure(false);
@@ -467,33 +491,198 @@ export function SidebarView({ onOpenSupabaseModal }: SidebarViewProps) {
           <MiniCalendar />
         </Tabs.Panel>
 
-        <Tabs.Panel value="tags" style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-          <ScrollArea h="100%" type="auto">
-            <Stack gap={2}>
-              {tagCounts.length === 0 && (
-                <Text size="sm" c="dimmed">
-                  본문에 #태그를 입력하면 자동 수집됩니다.
-                </Text>
-              )}
-              {tagCounts.map(({ tag, count }) => (
-                <NavLink
-                  key={tag}
-                  label={`#${tag}`}
-                  description={`${count}개`}
-                  active={activeTag === tag}
-                  onClick={() => setActiveTag(activeTag === tag ? null : tag)}
-                  rightSection={
-                    <Badge size="xs" variant="light">
-                      {count}
-                    </Badge>
-                  }
-                />
-              ))}
-              {activeTag && (
-                <NavLink label="태그 필터 해제" onClick={() => setActiveTag(null)} color="red" />
-              )}
+        <Tabs.Panel value="tags" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+          {tagCounts.length === 0 ? (
+            <Stack align="center" justify="center" h="100%" gap="xs" p="md">
+              <IconHash size={28} color="var(--mantine-color-dimmed)" style={{ opacity: 0.5 }} />
+              <Text size="xs" c="dimmed" ta="center">
+                본문에 #태그를 입력하면<br />자동으로 여기에 수집됩니다.
+              </Text>
             </Stack>
-          </ScrollArea>
+          ) : (
+            <Stack gap={6} p="xs" style={{ flex: 1, minHeight: 0 }}>
+              {/* 태그 상단 툴바: 정렬 버튼 + 필터 해제 */}
+              <Group justify="space-between" align="center" wrap="nowrap" gap={4}>
+                <Group gap={4} wrap="nowrap">
+                  <Text size="xs" fw={600} c="dimmed">
+                    태그 {tagCounts.length}개
+                  </Text>
+                  {activeTag && (
+                    <Badge size="xs" variant="filled" color="blue">
+                      필터 중
+                    </Badge>
+                  )}
+                </Group>
+                <Group gap={3} wrap="nowrap">
+                  <Tooltip label="빈도순 정렬 (자주 쓰인 태그 우선)">
+                    <ActionIcon
+                      size="xs"
+                      variant={tagSort === 'count' ? 'filled' : 'subtle'}
+                      color={tagSort === 'count' ? 'blue' : 'gray'}
+                      onClick={() => setTagSort('count')}
+                      aria-label="빈도순 정렬"
+                    >
+                      <IconSortDescendingNumbers size={13} />
+                    </ActionIcon>
+                  </Tooltip>
+                  <Tooltip label="이름순 정렬 (가나다 오름차순)">
+                    <ActionIcon
+                      size="xs"
+                      variant={tagSort === 'name' ? 'filled' : 'subtle'}
+                      color={tagSort === 'name' ? 'blue' : 'gray'}
+                      onClick={() => setTagSort('name')}
+                      aria-label="이름순 정렬"
+                    >
+                      <IconSortAscendingLetters size={13} />
+                    </ActionIcon>
+                  </Tooltip>
+                  {activeTag && (
+                    <Tooltip label="태그 필터 해제">
+                      <ActionIcon
+                        size="xs"
+                        variant="light"
+                        color="red"
+                        onClick={() => setActiveTag(null)}
+                        aria-label="태그 필터 해제"
+                      >
+                        <IconFilterOff size={13} />
+                      </ActionIcon>
+                    </Tooltip>
+                  )}
+                </Group>
+              </Group>
+
+              {/* 태그가 많을 때 검색 필터 (6개 이상일 때) */}
+              {tagCounts.length >= 6 && (
+                <TextInput
+                  size="xs"
+                  placeholder="태그 검색…"
+                  value={tagFilterText}
+                  onChange={(e) => setTagFilterText(e.currentTarget.value)}
+                  leftSection={<IconSearch size={12} />}
+                  rightSection={
+                    tagFilterText ? (
+                      <ActionIcon size="xs" variant="subtle" color="gray" onClick={() => setTagFilterText('')}>
+                        <IconX size={10} />
+                      </ActionIcon>
+                    ) : undefined
+                  }
+                  styles={{
+                    input: {
+                      height: 26,
+                      minHeight: 26,
+                      fontSize: 11,
+                    },
+                  }}
+                />
+              )}
+
+              {/* 활성 태그 배너 */}
+              {activeTag && (
+                <Group
+                  justify="space-between"
+                  align="center"
+                  wrap="nowrap"
+                  px={8}
+                  py={3}
+                  style={{
+                    backgroundColor: isDark ? 'rgba(34, 139, 230, 0.2)' : 'var(--mantine-color-blue-0)',
+                    border: `1px solid ${isDark ? 'var(--mantine-color-blue-8)' : 'var(--mantine-color-blue-2)'}`,
+                    borderRadius: 6,
+                  }}
+                >
+                  <Text size="xs" fw={600} c="blue" truncate>
+                    #{activeTag} 필터 중
+                  </Text>
+                  <ActionIcon
+                    size="xs"
+                    variant="subtle"
+                    color="blue"
+                    onClick={() => setActiveTag(null)}
+                    aria-label="필터 해제"
+                  >
+                    <IconX size={11} />
+                  </ActionIcon>
+                </Group>
+              )}
+
+              {/* 태그 클라우드 (Flex-wrap Pill Badges) */}
+              <ScrollArea h="100%" type="auto" offsetScrollbars style={{ flex: 1 }}>
+                {sortedFilteredTags.length === 0 ? (
+                  <Text size="xs" c="dimmed" ta="center" py="md">
+                    일치하는 태그가 없습니다.
+                  </Text>
+                ) : (
+                  <Group gap={5} wrap="wrap" align="center">
+                    {sortedFilteredTags.map(({ tag, count }) => {
+                      const isActive = activeTag === tag;
+                      return (
+                        <Badge
+                          key={tag}
+                          size="md"
+                          radius="xl"
+                          variant={isActive ? 'filled' : 'light'}
+                          color={isActive ? 'blue' : isDark ? 'gray' : 'gray'}
+                          onClick={() => setActiveTag(isActive ? null : tag)}
+                          style={{
+                            cursor: 'pointer',
+                            userSelect: 'none',
+                            textTransform: 'none',
+                            fontWeight: isActive ? 700 : 500,
+                            fontSize: 11,
+                            paddingLeft: 7,
+                            paddingRight: 5,
+                            border: isActive
+                              ? undefined
+                              : isDark
+                              ? '1px solid var(--mantine-color-dark-4)'
+                              : '1px solid var(--mantine-color-gray-3)',
+                            backgroundColor: isActive
+                              ? undefined
+                              : isDark
+                              ? 'var(--mantine-color-dark-6)'
+                              : 'var(--mantine-color-gray-0)',
+                            boxShadow: isActive ? '0 1px 4px rgba(34, 139, 230, 0.35)' : undefined,
+                            transition: 'all 0.15s ease',
+                          }}
+                          rightSection={
+                            <span
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: 10,
+                                fontWeight: 600,
+                                padding: '0 4px',
+                                minWidth: 16,
+                                height: 16,
+                                borderRadius: 8,
+                                marginLeft: 2,
+                                backgroundColor: isActive
+                                  ? 'rgba(255, 255, 255, 0.28)'
+                                  : isDark
+                                  ? 'var(--mantine-color-dark-4)'
+                                  : 'var(--mantine-color-gray-2)',
+                                color: isActive
+                                  ? '#ffffff'
+                                  : isDark
+                                  ? 'var(--mantine-color-dark-0)'
+                                  : 'var(--mantine-color-gray-7)',
+                              }}
+                            >
+                              {count}
+                            </span>
+                          }
+                        >
+                          #{tag}
+                        </Badge>
+                      );
+                    })}
+                  </Group>
+                )}
+              </ScrollArea>
+            </Stack>
+          )}
         </Tabs.Panel>
       </Tabs>
 
