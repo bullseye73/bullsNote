@@ -27,6 +27,12 @@ export function insertNoteLink(editor: AnyEditor, targetNote: Note) {
     },
     ' ',
   ]);
+  // 비동기 틱으로 에디터 포커스를 복원하여 즉시 쓰기 모드 유지
+  requestAnimationFrame(() => {
+    try {
+      editor.focus();
+    } catch {}
+  });
 }
 
 /**
@@ -47,8 +53,23 @@ export function getCombinedAtSuggestions(
   const projectMap = new Map(projects.map((p) => [p.id, p]));
   const trimmed = query.trim().toLowerCase();
 
+  // 단 1회(O(N)) 순회로 서브노트, 부모노트, 기타 노트 분류 (중복 filter/find 제거)
+  const subNotes: Note[] = [];
+  let parentNote: Note | null = null;
+  const otherNotes: Note[] = [];
+
+  for (const n of notes) {
+    if (n.id === currentNote.id) continue;
+    if (n.parentId === currentNote.id) {
+      subNotes.push(n);
+    } else if (currentNote.parentId && n.id === currentNote.parentId) {
+      parentNote = n;
+    } else {
+      otherNotes.push(n);
+    }
+  }
+
   // 1. 현재 노트의 직속 하위(서브) 노트들
-  const subNotes = notes.filter((n) => n.parentId === currentNote.id);
   const subNoteItems: DefaultReactSuggestionItem[] = subNotes.map((n) => ({
     title: n.title || '제목 없음',
     subtext: '↳ 하위 서브노트로 링크 연결',
@@ -60,7 +81,6 @@ export function getCombinedAtSuggestions(
   }));
 
   // 2. 부모 노트 (있을 경우)
-  const parentNote = currentNote.parentId ? notes.find((n) => n.id === currentNote.parentId) : null;
   const parentItems: DefaultReactSuggestionItem[] = parentNote
     ? [
         {
@@ -75,13 +95,8 @@ export function getCombinedAtSuggestions(
       ]
     : [];
 
-  // 3. 다른 모든 노트들 (현재 노트, 이미 추가된 서브/부모 제외)
-  const otherNotes = notes.filter(
-    (n) => n.id !== currentNote.id && n.parentId !== currentNote.id && n.id !== currentNote.parentId
-  );
-
-  // 최근 수정순 정렬
-  const sortedOtherNotes = [...otherNotes].sort((a, b) => b.updatedAt - a.updatedAt);
+  // 3. 다른 모든 노트들 (최근 수정순 정렬)
+  const sortedOtherNotes = otherNotes.sort((a, b) => b.updatedAt - a.updatedAt);
 
   const otherNoteItems: DefaultReactSuggestionItem[] = sortedOtherNotes.map((n) => {
     const proj = projectMap.get(n.projectId || 'default');
@@ -137,8 +152,13 @@ export function getNoteSlashMenuItems(
       group: '노트 링크',
       icon: <IconLink size={18} color="var(--mantine-color-blue-6)" />,
       onItemClick: () => {
-        editor.focus();
-        editor.insertInlineContent('@');
+        // 슬래시 메뉴 팝오버 닫힘 후 안정적으로 포커스를 복원하고 @ 삽입
+        requestAnimationFrame(() => {
+          try {
+            editor.focus();
+            editor.insertInlineContent('@');
+          } catch {}
+        });
       },
     },
     {

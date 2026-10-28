@@ -272,6 +272,20 @@ function BlockEditor({
     [note.id]
   );
 
+  // 에디터 인스턴스 상위 등록 및 노트 진입 시 즉시 쓰기 모드(자동 포커스) 보장
+  useEffect(() => {
+    if (editor) {
+      onEditorInit?.(editor);
+      // 노트 선택 또는 링크 전환 직후 본문으로 커서를 자동 배치하여 쓰기 모드로 진입
+      const timer = setTimeout(() => {
+        try {
+          editor.focus();
+        } catch {}
+      }, 50);
+      return () => clearTimeout(timer);
+    }
+  }, [editor, onEditorInit, note.id]);
+
   // / 슬래시 메뉴에서 파일 첨부 선택 시
   const handleAttachFromSlash = useCallback(() => {
     if (!supabaseConnected || !supabaseConfig.enabled) {
@@ -846,8 +860,12 @@ function BlockEditor({
             backgroundColor: 'var(--mantine-color-body)',
           }}
           onClick={(e) => {
-            if (e.target === e.currentTarget) {
-              editor.focus();
+            const target = e.target as HTMLElement;
+            // 내부 링크, 버튼, 입력창, 파일 블록, 태그 뱃지 등이 아닌 빈 공간/패딩 클릭 시 즉시 쓰기모드로 포커스
+            if (!target.closest('a, button, input, textarea, [data-content-type="file"], .bn-hashtag-badge')) {
+              try {
+                editor.focus();
+              } catch {}
             }
           }}
           onClickCapture={(e) => {

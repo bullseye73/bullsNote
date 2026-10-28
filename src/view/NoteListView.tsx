@@ -29,37 +29,15 @@ import {
   IconTrash,
   IconX,
 } from '@tabler/icons-react';
-import { useState, useCallback } from 'react';
-import { PastelColorConfig, PASTEL_COLORS, getPastelConfig, TreeNode, getPathTitles } from '../model/Note';
-import { noteBodyText } from '../model/HashtagService';
+import { useState, useCallback, useMemo } from 'react';
+import { PastelColorConfig, PASTEL_COLORS, getPastelConfig, TreeNode } from '../model/Note';
 import { useNotes } from '../controller/NotesController';
 import { CryptoService } from '../model/CryptoService';
 import { getSearchSnippet } from '../model/SearchService';
 import { HighlightText } from './HighlightText';
 import { formatDateTimeIso } from '../model/dateUtils';
 import { isSystemGroupNote, GROUP_ID_TO_STATUS, TODO_PROJECT_ID } from '../model/TodoService';
-
-function cleanExcerpt(content: string, title?: string): string {
-  if (!content) return '';
-  if (CryptoService.isEncrypted(content) || CryptoService.isCorruptedPlaceholder(content)) {
-    return '🔒 암호화된 노트';
-  }
-  let t = noteBodyText(content);
-  // 할일 템플릿 메타 헤더 안내 텍스트들 및 장식 제거
-  t = t
-    .replace(/📌\s*원본\s*노트:[^\n]*/g, '')
-    .replace(/⏰\s*작성\s*일시:[^\n]*/g, '')
-    .replace(/📝\s*세부\s*내용\s*및\s*작업\s*메모/g, '')
-    .replace(/💡\s*작업\s*세부\s*내용\s*및\s*진행\s*메모[^\n]*/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  // 제목과 동일한 텍스트만 남아있으면 제거 (추가 메모가 없는 경우)
-  if (title && t.trim() === title.trim()) {
-    return '';
-  }
-  return t;
-}
+import { buildNoteHierarchy, cleanExcerpt, NoteHierarchy } from '../model/treeUtils';
 
 function RowActions({
   id,
@@ -68,6 +46,7 @@ function RowActions({
   hasParent,
   active,
   colorCfg,
+  descendantCount = 0,
 }: {
   id: string;
   hasChildren: boolean;
@@ -75,6 +54,7 @@ function RowActions({
   hasParent: boolean;
   active: boolean;
   colorCfg: PastelColorConfig;
+  descendantCount?: number;
 }) {
   const {
     create,
@@ -97,28 +77,6 @@ function RowActions({
     ((!isUnlocked && (isMasterSet || CryptoService.isEncrypted(note.content))) ||
       CryptoService.isEncrypted(note.content));
   const isSystemGroup = isSystemGroupNote(note);
-
-  const descendantCount = (() => {
-    let c = 0;
-    const stack = [id];
-    const visited = new Set<string>([id]);
-    const kids = new Map<string, string[]>();
-    for (const n of notes) {
-      if (!n.parentId) continue;
-      kids.set(n.parentId, [...(kids.get(n.parentId) ?? []), n.id]);
-    }
-    while (stack.length > 0) {
-      const cur = stack.pop()!;
-      for (const k of kids.get(cur) ?? []) {
-        if (!visited.has(k)) {
-          visited.add(k);
-          c += 1;
-          stack.push(k);
-        }
-      }
-    }
-    return c;
-  })();
 
   return (
     <Group gap={2} wrap="nowrap" onClick={(e) => e.stopPropagation()}>
@@ -303,6 +261,7 @@ function TreeRow({
   onDragLeave,
   onDrop,
   onDragEnd,
+  descendantCounts,
 }: {
   node: TreeNode;
   depth: number;
@@ -316,6 +275,7 @@ function TreeRow({
   onDragLeave: (id: string, e: React.DragEvent) => void;
   onDrop: (id: string, e: React.DragEvent) => void;
   onDragEnd: () => void;
+  descendantCounts: Map<string, number>;
 }) {
   const { selectedId, select, setActiveTag, isUnlocked, isMasterSet } = useNotes();
   const scheme = useComputedColorScheme('light', { getInitialValueInEffect: true });
@@ -460,6 +420,7 @@ function TreeRow({
             hasParent={n.parentId !== null}
             active={active}
             colorCfg={cfg}
+            descendantCount={descendantCounts.get(n.id) ?? 0}
           />
         </Group>
 
@@ -525,24 +486,11 @@ function TreeRow({
             onDragLeave={onDragLeave}
             onDrop={onDrop}
             onDragEnd={onDragEnd}
+            descendantCounts={descendantCounts}
           />
         ))}
     </>
   );
-}
-
-function isDescendant(
-  ancestorId: string,
-  potentialChildId: string,
-  notes: Array<{ id: string; parentId: string | null }>
-): boolean {
-  let cur = notes.find((n) => n.id === potentialChildId);
-  while (cur && cur.parentId) {
-    if (cur.parentId === ancestorId) return true;
-    const nextParentId = cur.parentId;
-    cur = notes.find((n) => n.id === nextParentId);
-  }
-  return false;
 }
 
 export function NoteListView() {
@@ -566,6 +514,9 @@ export function NoteListView() {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+
+  // O(N)으로 전체 계층 구조 및 자손 수를 1회만 계산
+  const hierarchy = useMemo(() => buildNoteHierarchy(notes), [notes]);
 
   const toggle = (id: string) =>
     setCollapsed((prev) => {
@@ -629,12 +580,12 @@ export function NoteListView() {
       }
 
       // 3) 일반 노트의 경우: 순환 참조 방지 후 해당 노트의 자식으로 계층 이동
-      if (isDescendant(draggedId, targetId, notes)) {
+      if (hierarchy.isDescendant(draggedId, targetId)) {
         return;
       }
       setParent(draggedId, targetId);
     },
-    [draggingId, notes, changeTodoStatus, setParent]
+    [draggingId, notes, changeTodoStatus, setParent, hierarchy]
   );
 
   if (isFiltering) {
@@ -724,7 +675,7 @@ export function NoteListView() {
           )}
           {flat.map((n) => {
             const active = n.id === selectedId;
-            const path = getPathTitles(notes, n.id);
+            const path = hierarchy.getPathTitles(n.id);
             const cfg = getPastelConfig(n.color);
             const proj = projects.find((p) => p.id === (n.projectId || 'default'));
             const snippet = getSearchSnippet(n.content, searchTokens);
@@ -846,6 +797,7 @@ export function NoteListView() {
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
             onDragEnd={handleDragEnd}
+            descendantCounts={hierarchy.descendantCounts}
           />
         ))}
       </Stack>
