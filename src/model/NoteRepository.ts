@@ -1,5 +1,6 @@
 // MODEL: 영속성 계층 (MVC의 M) - localStorage 기반 + 구버전 마이그레이션
-import { DEFAULT_PROJECT_ID, DEFAULT_PROJECTS, Note, NoteReminder, Project } from './Note';
+import { DEFAULT_PROJECT_ID, DEFAULT_PROJECTS, Note, NoteReminder, Project, TodoMeta, TodoStatus } from './Note';
+import { GROUP_ID_TO_STATUS } from './TodoService';
 
 const STORAGE_KEY = 'bullsnote.notes.v1';
 const PROJECTS_STORAGE_KEY = 'bullsnote.projects.v1';
@@ -76,6 +77,15 @@ function migrate(raw: unknown): Note[] {
         attachments: Array.isArray((n as { attachments?: unknown }).attachments)
           ? (n as { attachments: Note['attachments'] }).attachments
           : [],
+        todoMeta:
+          (n as { todoMeta?: unknown }).todoMeta &&
+          typeof (n as { todoMeta?: unknown }).todoMeta === 'object'
+            ? ((n as { todoMeta: TodoMeta }).todoMeta as TodoMeta)
+            : undefined,
+        systemGroupType:
+          typeof (n as { systemGroupType?: unknown }).systemGroupType === 'string'
+            ? ((n as { systemGroupType: TodoStatus }).systemGroupType as TodoStatus)
+            : GROUP_ID_TO_STATUS[n.id as string],
         createdAt: typeof n.createdAt === 'number' ? n.createdAt : now,
         updatedAt: typeof n.updatedAt === 'number' ? n.updatedAt : now,
       } as Note;

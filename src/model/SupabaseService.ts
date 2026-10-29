@@ -1,9 +1,19 @@
 import { createClient, RealtimeChannel, SupabaseClient } from '@supabase/supabase-js';
 import { Note, NoteAttachment, Project } from './Note';
 import { CryptoService, VERIFIER_STORAGE_KEY } from './CryptoService';
+import { GROUP_ID_TO_STATUS, isSystemGroupNote, TODO_PROJECT_ID } from './TodoService';
 
 const SUPABASE_CONFIG_STORAGE_KEY = 'bullsnote.supabase.config.v1';
 export const SUPABASE_STORAGE_BUCKET = 'bullsnote-attachments';
+
+/**
+ * 노트 조회 시 불필요한 대용량 history 컬럼(최대 30개 스냅샷)을 제외하여
+ * Database Output(Egress) 사용량을 대폭 절감합니다.
+ */
+const NOTE_SYNC_COLUMNS =
+  'id, title, project_id, color, reminder, content, tags, pinned, favorite, parent_id, attachments, created_at, updated_at';
+
+const PROJECT_SYNC_COLUMNS = 'id, name, icon, created_at, updated_at';
 
 export interface SupabaseConfig {
   url: string;
@@ -117,8 +127,9 @@ BEGIN
   END IF;
 END $$;
 
-ALTER TABLE bullsnote_projects REPLICA IDENTITY FULL;
-ALTER TABLE bullsnote_notes REPLICA IDENTITY FULL;
+-- PK(id)만 old 레코드로 전송하여 UPDATE 시 불필요한 본문/히스토리 중복 전송(Output 폭증) 방지
+ALTER TABLE bullsnote_projects REPLICA IDENTITY DEFAULT;
+ALTER TABLE bullsnote_notes REPLICA IDENTITY DEFAULT;
 `;
 
 export interface DbProjectRow {
@@ -140,9 +151,14 @@ export interface DbNoteRow {
   pinned: boolean;
   favorite: boolean;
   parent_id: string | null;
-  history: unknown;
+  history?: unknown;
   attachments?: unknown;
   created_at: number;
+  updated_at: number;
+}
+
+interface DbNoteMetaRow {
+  id: string;
   updated_at: number;
 }
 
@@ -155,6 +171,14 @@ class SupabaseSyncManager {
   private realtimeListeners = new Set<(change: RealtimeChange) => void>();
   private realtimeStatus: RealtimeStatus = 'disconnected';
   private realtimeStatusListeners = new Set<(status: RealtimeStatus) => void>();
+  private hasRealtimeConnectedOnce = false;
+  private realtimeHadDisconnection = false;
+
+  // 중복 업로드(Input) 및 Realtime 자체 에코(Output/복호화) 방지용 타임스탬프 캐시
+  private lastSyncedNoteAt = new Map<string, number>();
+  private lastSyncedProjectAt = new Map<string, number>();
+  private lastSyncedVerifier: string | null = null;
+  private lastSyncedVerifierAt = 0;
 
   constructor() {
     this.currentConfig = this.loadConfig();
@@ -184,10 +208,28 @@ class SupabaseSyncManager {
       url: (config.url || '').trim().replace(/\/+$/, ''),
       anonKey: (config.anonKey || '').trim(),
     };
-    const wasAutoSync = this.currentConfig.autoSync;
+    const prev = this.currentConfig;
+    const credentialsChanged =
+      cleanConfig.url !== prev.url ||
+      cleanConfig.anonKey !== prev.anonKey ||
+      cleanConfig.enabled !== prev.enabled;
+    const wasAutoSync = prev.autoSync;
+
     this.currentConfig = cleanConfig;
-    localStorage.setItem(SUPABASE_CONFIG_STORAGE_KEY, JSON.stringify(cleanConfig));
-    this.initClient();
+    try {
+      localStorage.setItem(SUPABASE_CONFIG_STORAGE_KEY, JSON.stringify(cleanConfig));
+    } catch {}
+
+    // URL, API Key, 활성화 여부가 실제로 변경되었을 때만 클라이언트를 재초기화 (무한 재연결 루프 방지)
+    if (credentialsChanged || (cleanConfig.enabled && !this.client)) {
+      this.lastSyncedNoteAt.clear();
+      this.lastSyncedProjectAt.clear();
+      this.lastSyncedVerifier = null;
+      this.lastSyncedVerifierAt = 0;
+      this.initClient();
+      return;
+    }
+
     if (!cleanConfig.autoSync && wasAutoSync) {
       this.teardownRealtime();
     } else if (cleanConfig.autoSync && this.isConnected() && this.realtimeListeners.size > 0) {
@@ -266,6 +308,8 @@ class SupabaseSyncManager {
       } catch {}
       this.realtimeChannel = null;
     }
+    this.hasRealtimeConnectedOnce = false;
+    this.realtimeHadDisconnection = false;
     this.setRealtimeStatus('disconnected');
   }
 
@@ -294,6 +338,7 @@ class SupabaseSyncManager {
               if (eventType === 'DELETE') {
                 const oldId = (payload.old as { id?: string })?.id;
                 if (oldId) {
+                  this.lastSyncedNoteAt.delete(oldId);
                   this.notifyRealtimeListeners({ type: 'note', action: 'DELETE', id: oldId });
                 }
               } else if (eventType === 'INSERT' || eventType === 'UPDATE') {
@@ -301,12 +346,23 @@ class SupabaseSyncManager {
                 if (row && row.id) {
                   if (row.id === '__bullsnote_security_verifier__') {
                     if (row.content && CryptoService.isEncrypted(row.content)) {
+                      this.lastSyncedVerifier = row.content;
+                      this.lastSyncedVerifierAt = Number(row.updated_at) || Date.now();
                       try {
                         localStorage.setItem(VERIFIER_STORAGE_KEY, row.content);
                       } catch {}
                     }
                     return;
                   }
+
+                  const remoteUpdatedAt = Number(row.updated_at) || 0;
+                  const knownAt = this.lastSyncedNoteAt.get(row.id);
+                  // 현재 기기에서 방금 업로드했거나 이미 동일한 타임스탬프로 반영된 에코 이벤트는 즉시 무시
+                  if (knownAt !== undefined && remoteUpdatedAt > 0 && remoteUpdatedAt <= knownAt) {
+                    return;
+                  }
+
+                  this.lastSyncedNoteAt.set(row.id, remoteUpdatedAt);
                   const note = await this.rowToNote(row);
                   this.notifyRealtimeListeners({ type: 'note', action: eventType, note });
                 }
@@ -325,11 +381,18 @@ class SupabaseSyncManager {
               if (eventType === 'DELETE') {
                 const oldId = (payload.old as { id?: string })?.id;
                 if (oldId) {
+                  this.lastSyncedProjectAt.delete(oldId);
                   this.notifyRealtimeListeners({ type: 'project', action: 'DELETE', id: oldId });
                 }
               } else if (eventType === 'INSERT' || eventType === 'UPDATE') {
                 const row = payload.new as DbProjectRow;
                 if (row && row.id) {
+                  const remoteUpdatedAt = Number(row.updated_at) || 0;
+                  const knownAt = this.lastSyncedProjectAt.get(row.id);
+                  if (knownAt !== undefined && remoteUpdatedAt > 0 && remoteUpdatedAt <= knownAt) {
+                    return;
+                  }
+                  this.lastSyncedProjectAt.set(row.id, remoteUpdatedAt);
                   const project = this.rowToProject(row);
                   this.notifyRealtimeListeners({ type: 'project', action: eventType, project });
                 }
@@ -342,12 +405,23 @@ class SupabaseSyncManager {
         .subscribe((status, err) => {
           if (status === 'SUBSCRIBED') {
             this.setRealtimeStatus('connected');
-            // 재연결되거나 처음 연결될 때 누락된 변경사항이 있을 수 있으므로 sync_needed 알림
-            this.notifyRealtimeListeners({ type: 'sync_needed', reason: 'subscribed' });
+            // 최초 구독 시에는 초기 동기화(initialSupabaseSyncedRef)가 이미 실행되므로 중복 호출하지 않고,
+            // 네트워크 단절/오류 이후 재연결된 경우에만 누락분 증분 동기화를 요청합니다.
+            if (this.hasRealtimeConnectedOnce && this.realtimeHadDisconnection) {
+              this.realtimeHadDisconnection = false;
+              this.notifyRealtimeListeners({ type: 'sync_needed', reason: 'reconnected' });
+            }
+            this.hasRealtimeConnectedOnce = true;
           } else if (status === 'TIMED_OUT' || status === 'CHANNEL_ERROR') {
+            if (this.hasRealtimeConnectedOnce) {
+              this.realtimeHadDisconnection = true;
+            }
             this.setRealtimeStatus('error');
             console.warn('[Supabase Realtime] 채널 상태 경고:', status, err);
           } else if (status === 'CLOSED') {
+            if (this.hasRealtimeConnectedOnce) {
+              this.realtimeHadDisconnection = true;
+            }
             this.setRealtimeStatus('disconnected');
           }
         });
@@ -470,22 +544,32 @@ class SupabaseSyncManager {
     }
   }
 
-  // --- 보안 토큰 서버 동기화 ---
+  // --- 보안 토큰 서버 동기화 (동일 토큰 중복 업로드 방지) ---
   public async uploadSecurityVerifier(verifierString: string): Promise<boolean> {
-    if (!this.isConnected() || !this.client) return false;
+    if (!this.isConnected() || !this.client || !verifierString) return false;
+    if (this.lastSyncedVerifier === verifierString) {
+      return true;
+    }
     try {
-      await this.client.from('bullsnote_notes').upsert(
+      const now = Date.now();
+      const { error } = await this.client.from('bullsnote_notes').upsert(
         {
           id: '__bullsnote_security_verifier__',
           title: '__BULLSNOTE_SECURITY_VERIFIER__',
           content: verifierString,
           project_id: '__sys__',
-          created_at: Date.now(),
-          updated_at: Date.now(),
+          history: [],
+          created_at: now,
+          updated_at: now,
         },
         { onConflict: 'id' }
       );
-      return true;
+      if (!error) {
+        this.lastSyncedVerifier = verifierString;
+        this.lastSyncedVerifierAt = now;
+        return true;
+      }
+      return false;
     } catch {
       return false;
     }
@@ -518,18 +602,8 @@ class SupabaseSyncManager {
     if (CryptoService.isUnlocked() && !CryptoService.isEncrypted(encryptedContent)) {
       encryptedContent = await CryptoService.encrypt(encryptedContent);
     }
-    // 히스토리 스냅샷도 암호화 보장
-    let historyToSave = n.history || [];
-    if (CryptoService.isUnlocked() && Array.isArray(historyToSave) && historyToSave.length > 0) {
-      historyToSave = await Promise.all(
-        historyToSave.map(async (h) => {
-          if (h.content && !CryptoService.isEncrypted(h.content)) {
-            return { ...h, content: await CryptoService.encrypt(h.content) };
-          }
-          return h;
-        })
-      );
-    }
+    // DB Input/Output 및 저장 용량 폭증을 막기 위해 최대 30개 본문 복사본이 누적되는 history는 로컬 전용으로 유지하고
+    // 클라우드 DB 행에는 빈 배열로 저장합니다.
     return {
       id: n.id,
       title: n.title,
@@ -541,49 +615,59 @@ class SupabaseSyncManager {
       pinned: Boolean(n.pinned),
       favorite: Boolean(n.favorite),
       parent_id: n.parentId,
-      history: historyToSave,
+      history: [],
       attachments: n.attachments || [],
       created_at: n.createdAt,
       updated_at: n.updatedAt,
     };
   }
 
-  public async rowToNote(row: DbNoteRow): Promise<Note> {
+  public async rowToNote(row: DbNoteRow, localExisting?: Note): Promise<Note> {
     const rawContent = row.content || '';
     let content = rawContent;
     // 언락되어 있다면 복호화, 잠겨있다면 암호문 그대로 유지하여 데이터 보존! (절대 플레이스홀더 문자열로 덮어쓰지 않음)
     if (CryptoService.isUnlocked() && CryptoService.isEncrypted(rawContent)) {
       content = await CryptoService.decrypt(rawContent);
     }
-    let historyLoaded = Array.isArray(row.history) ? (row.history as Note['history']) : [];
-    if (CryptoService.isUnlocked() && historyLoaded.length > 0) {
-      historyLoaded = await Promise.all(
-        historyLoaded.map(async (h) => {
-          if (h.content && CryptoService.isEncrypted(h.content)) {
-            return { ...h, content: await CryptoService.decrypt(h.content) };
-          }
-          return h;
-        })
-      );
-    }
 
     const rawAttachments = Array.isArray((row as { attachments?: unknown }).attachments)
       ? ((row as { attachments: NoteAttachment[] }).attachments as NoteAttachment[])
       : [];
 
+    const systemGroupType = GROUP_ID_TO_STATUS[row.id] ?? localExisting?.systemGroupType;
+    const projectId = row.project_id || 'default';
+    const parentId = row.parent_id || null;
+
+    // 할일 관리 항목인 경우 기존 로컬 todoMeta 보존 및 상태 동기화
+    let todoMeta = localExisting?.todoMeta;
+    if (projectId === TODO_PROJECT_ID && !systemGroupType) {
+      const inferredStatus = (parentId && GROUP_ID_TO_STATUS[parentId]) || todoMeta?.status || 'todo';
+      if (todoMeta) {
+        todoMeta = { ...todoMeta, status: inferredStatus };
+      } else {
+        const match = content.match(/#note-([a-zA-Z0-9_-]+)/);
+        todoMeta = {
+          sourceNoteId: match ? match[1] : undefined,
+          status: inferredStatus,
+        };
+      }
+    }
+
     return {
       id: row.id,
       title: row.title || '제목 없음',
-      projectId: row.project_id || 'default',
+      projectId,
       color: row.color || 'blue',
       reminder: (row.reminder as Note['reminder']) || null,
       content,
       tags: Array.isArray(row.tags) ? (row.tags as string[]) : [],
       pinned: Boolean(row.pinned),
       favorite: Boolean(row.favorite),
-      parentId: row.parent_id || null,
-      history: historyLoaded,
+      parentId,
+      history: localExisting?.history ?? [],
       attachments: rawAttachments,
+      todoMeta,
+      systemGroupType,
       createdAt: Number(row.created_at) || Date.now(),
       updatedAt: Number(row.updated_at) || Date.now(),
     };
@@ -593,10 +677,22 @@ class SupabaseSyncManager {
     return this.upsertNotes([note]);
   }
 
-  public async upsertNotes(notes: Note[]): Promise<boolean> {
+  public async upsertNotes(notes: Note[], force = false): Promise<boolean> {
     if (!this.isConnected() || !this.client || notes.length === 0) return false;
     try {
-      const rows = await Promise.all(notes.map((n) => this.noteToRow(n)));
+      // 이미 동일한 updatedAt으로 동기화된 노트는 중복 업로드(Input) 스킵
+      const changedNotes = force
+        ? notes
+        : notes.filter((n) => this.lastSyncedNoteAt.get(n.id) !== n.updatedAt);
+
+      if (changedNotes.length === 0) return true;
+
+      const rows = await Promise.all(changedNotes.map((n) => this.noteToRow(n)));
+      // 먼저 타임스탬프를 기록하여 직후 도착하는 Realtime 에코를 차단
+      for (const n of changedNotes) {
+        this.lastSyncedNoteAt.set(n.id, n.updatedAt);
+      }
+
       const { error } = await this.client.from('bullsnote_notes').upsert(rows, { onConflict: 'id' });
       if (error) {
         console.warn('[Supabase] 노트 동기화 실패:', error);
@@ -612,6 +708,7 @@ class SupabaseSyncManager {
   public async deleteNote(id: string): Promise<boolean> {
     if (!this.isConnected() || !this.client) return false;
     try {
+      this.lastSyncedNoteAt.delete(id);
       const { error } = await this.client.from('bullsnote_notes').delete().eq('id', id);
       if (error) {
         console.warn('[Supabase] 노트 삭제 동기화 실패:', error);
@@ -693,10 +790,20 @@ class SupabaseSyncManager {
     return this.upsertProjects([project]);
   }
 
-  public async upsertProjects(projects: Project[]): Promise<boolean> {
+  public async upsertProjects(projects: Project[], force = false): Promise<boolean> {
     if (!this.isConnected() || !this.client || projects.length === 0) return false;
     try {
-      const rows = projects.map((p) => this.projectToRow(p));
+      const changedProjects = force
+        ? projects
+        : projects.filter((p) => this.lastSyncedProjectAt.get(p.id) !== p.updatedAt);
+
+      if (changedProjects.length === 0) return true;
+
+      const rows = changedProjects.map((p) => this.projectToRow(p));
+      for (const p of changedProjects) {
+        this.lastSyncedProjectAt.set(p.id, p.updatedAt);
+      }
+
       const { error } = await this.client.from('bullsnote_projects').upsert(rows, { onConflict: 'id' });
       if (error) {
         console.warn('[Supabase] 프로젝트 동기화 실패:', error);
@@ -712,6 +819,7 @@ class SupabaseSyncManager {
   public async deleteProject(id: string): Promise<boolean> {
     if (!this.isConnected() || !this.client) return false;
     try {
+      this.lastSyncedProjectAt.delete(id);
       const { error } = await this.client.from('bullsnote_projects').delete().eq('id', id);
       if (error) {
         console.warn('[Supabase] 프로젝트 삭제 동기화 실패:', error);
@@ -724,7 +832,7 @@ class SupabaseSyncManager {
     }
   }
 
-  // --- 전체 서버 우선 양방향 동기화 (Server-First Bidirectional Sync) ---
+  // --- 메타데이터 기반 스마트 증분 동기화 (Metadata-First Delta Sync) ---
   public async syncAll(
     localNotes: Note[],
     localProjects: Project[],
@@ -734,6 +842,7 @@ class SupabaseSyncManager {
     projects: Project[];
     uploadedCount: number;
     downloadedCount: number;
+    hasRemoteChanges: boolean;
     error?: string;
   }> {
     if (!this.isConnected() || !this.client) {
@@ -743,90 +852,162 @@ class SupabaseSyncManager {
         projects: localProjects,
         uploadedCount: 0,
         downloadedCount: 0,
+        hasRemoteChanges: false,
         error: 'Supabase가 연동되지 않았거나 비활성화되어 있습니다.',
       };
     }
 
     try {
-      // 1. Supabase에서 모든 원격 프로젝트와 노트 조회 (서버가 최우선 원천)
+      // 1. 원격 프로젝트 조회 및 원격 노트의 경량 메타데이터(id, updated_at)만 우선 조회
+      // (전체 본문 SELECT * 를 피하여 Database Output 사용량을 99% 이상 절감)
       const { data: remoteProjectsRaw, error: projError } = await this.client
         .from('bullsnote_projects')
-        .select('*');
+        .select(PROJECT_SYNC_COLUMNS);
 
       if (projError) {
         throw new Error(`원격 프로젝트 조회 실패: ${projError.message}`);
       }
 
-      const { data: remoteNotesRaw, error: noteError } = await this.client
+      const { data: remoteNotesMetaRaw, error: metaError } = await this.client
         .from('bullsnote_notes')
-        .select('*');
+        .select('id, updated_at');
 
-      if (noteError) {
-        throw new Error(`원격 노트 조회 실패: ${noteError.message}`);
+      if (metaError) {
+        throw new Error(`원격 노트 메타데이터 조회 실패: ${metaError.message}`);
       }
 
-      // 서버에 보안 verifier가 저장되어 있다면 로컬스토리지에 동기화
-      const verifierRow = (remoteNotesRaw || []).find((r) => r.id === '__bullsnote_security_verifier__');
-      if (verifierRow && verifierRow.content && CryptoService.isEncrypted(verifierRow.content)) {
-        try {
-          localStorage.setItem(VERIFIER_STORAGE_KEY, verifierRow.content);
-        } catch {}
+      const remoteNotesMeta = (remoteNotesMetaRaw as DbNoteMetaRow[]) || [];
+      const localNoteMap = new Map<string, Note>(localNotes.map((n) => [n.id, n]));
+      const localProjectMap = new Map<string, Project>(localProjects.map((p) => [p.id, p]));
+
+      // 2. 실제로 다운로드가 필요한 노트 ID만 선별 (신규 노트 또는 서버 버전이 더 최신인 노트)
+      const idsToDownload: string[] = [];
+
+      const verifierMeta = remoteNotesMeta.find((r) => r.id === '__bullsnote_security_verifier__');
+      const localVerifier = localStorage.getItem(VERIFIER_STORAGE_KEY);
+      if (
+        verifierMeta &&
+        (!localVerifier || Number(verifierMeta.updated_at) > this.lastSyncedVerifierAt)
+      ) {
+        idsToDownload.push('__bullsnote_security_verifier__');
       }
 
-      // 실제 사용자 노트만 필터링 (시스템용 verifier 행 제외)
-      const userNotesRaw = (remoteNotesRaw as DbNoteRow[] || []).filter(
-        (r) => r.id !== '__bullsnote_security_verifier__'
-      );
+      const userNotesMeta = remoteNotesMeta.filter((r) => r.id !== '__bullsnote_security_verifier__');
 
-      const remoteProjects: Project[] = (remoteProjectsRaw as DbProjectRow[] || []).map((r) => this.rowToProject(r));
-      const remoteNotes: Note[] = await Promise.all(userNotesRaw.map((r) => this.rowToNote(r)));
+      for (const meta of userNotesMeta) {
+        const remoteUpdatedAt = Number(meta.updated_at) || 0;
+        const localNote = localNoteMap.get(meta.id);
+        if (
+          !localNote ||
+          remoteUpdatedAt > (localNote.updatedAt || 0) ||
+          CryptoService.isCorruptedPlaceholder(localNote.content)
+        ) {
+          idsToDownload.push(meta.id);
+        } else {
+          // 이미 최신 버전을 로컬에 보유 중이므로 본문 다운로드 생략 및 타임스탬프 캐시 갱신
+          this.lastSyncedNoteAt.set(meta.id, remoteUpdatedAt);
+        }
+      }
+
+      // 3. 선별된 변경 노트만 배치(100개 단위)로 본문 조회 (history 컬럼 제외)
+      const downloadedNotesMap = new Map<string, Note>();
+      const BATCH_SIZE = 100;
+      for (let i = 0; i < idsToDownload.length; i += BATCH_SIZE) {
+        const chunk = idsToDownload.slice(i, i + BATCH_SIZE);
+        const { data: chunkRows, error: chunkErr } = await this.client
+          .from('bullsnote_notes')
+          .select(NOTE_SYNC_COLUMNS)
+          .in('id', chunk);
+
+        if (chunkErr) {
+          throw new Error(`원격 노트 상세 조회 실패: ${chunkErr.message}`);
+        }
+
+        for (const row of (chunkRows as DbNoteRow[]) || []) {
+          if (row.id === '__bullsnote_security_verifier__') {
+            if (row.content && CryptoService.isEncrypted(row.content)) {
+              this.lastSyncedVerifier = row.content;
+              this.lastSyncedVerifierAt = Number(row.updated_at) || Date.now();
+              try {
+                localStorage.setItem(VERIFIER_STORAGE_KEY, row.content);
+              } catch {}
+            }
+            continue;
+          }
+          const existingLocal = localNoteMap.get(row.id);
+          const converted = await this.rowToNote(row, existingLocal);
+          downloadedNotesMap.set(row.id, converted);
+          this.lastSyncedNoteAt.set(row.id, converted.updatedAt);
+        }
+      }
+
+      const remoteProjects: Project[] = ((remoteProjectsRaw as DbProjectRow[]) || []).map((r) => {
+        const p = this.rowToProject(r);
+        this.lastSyncedProjectAt.set(p.id, p.updatedAt);
+        return p;
+      });
 
       let uploadedCount = 0;
-      const downloadedCount = remoteNotes.length;
-      const serverHasData = remoteProjects.length > 0 || remoteNotes.length > 0;
+      const downloadedCount = downloadedNotesMap.size;
+      const serverHasData = remoteProjects.length > 0 || userNotesMeta.length > 0;
 
-      // 2. 프로젝트 동기화 (서버 우선 정책)
+      // 4. 프로젝트 동기화 병합
       const projectMap = new Map<string, Project>();
       const projectsToUpload: Project[] = [];
+      let projectsChangedFromRemote = remoteProjects.length !== localProjects.length;
 
-      // [서버 최우선] 원격에 있는 프로젝트를 먼저 맵에 등록 (동일 ID 충돌 시 서버 버전 우선)
       for (const p of remoteProjects) {
+        const lp = localProjectMap.get(p.id);
+        if (!lp || lp.updatedAt !== p.updatedAt || lp.name !== p.name || lp.icon !== p.icon) {
+          projectsChangedFromRemote = true;
+        }
         projectMap.set(p.id, p);
       }
 
       if (serverHasData) {
-        // 서버에 이미 프로젝트가 있는 경우: 서버에 존재하지 않는 로컬 고유 프로젝트만 업로드 대상에 추가
         for (const lp of localProjects) {
-          if (!projectMap.has(lp.id)) {
+          const rp = projectMap.get(lp.id);
+          if (!rp) {
+            projectMap.set(lp.id, lp);
+            projectsToUpload.push(lp);
+          } else if (lp.updatedAt > rp.updatedAt && lp.id !== TODO_PROJECT_ID) {
             projectMap.set(lp.id, lp);
             projectsToUpload.push(lp);
           }
         }
       } else {
-        // 서버가 완전히 비어있는 최초 연동: 로컬의 모든 프로젝트를 서버로 업로드
         for (const lp of localProjects) {
           projectMap.set(lp.id, lp);
           projectsToUpload.push(lp);
         }
       }
 
-      // 3. 노트 동기화 (서버 우선 정책 & 서버에 없는 로컬 노트만 업로드)
+      // 5. 노트 동기화 병합
       const noteMap = new Map<string, Note>();
       const notesToUpload: Note[] = [];
+      const remoteMetaMap = new Map<string, number>(
+        userNotesMeta.map((m) => [m.id, Number(m.updated_at) || 0]),
+      );
 
-      // [서버 최우선] 원격에 있는 노트를 먼저 맵에 등록 (동일 ID 충돌 시 서버 버전 우선 채택)
-      for (const n of remoteNotes) {
-        noteMap.set(n.id, n);
+      // 원격에 존재하는 노트들을 먼저 구성 (다운로드된 최신 노트 또는 기존 로컬 최신 노트)
+      for (const meta of userNotesMeta) {
+        const downloaded = downloadedNotesMap.get(meta.id);
+        if (downloaded) {
+          noteMap.set(meta.id, downloaded);
+        } else {
+          const local = localNoteMap.get(meta.id);
+          if (local) {
+            noteMap.set(meta.id, local);
+          }
+        }
       }
 
-      if (remoteNotes.length > 0) {
-        // 서버에 기존 노트가 이미 존재하는 경우:
+      if (userNotesMeta.length > 0) {
         for (const ln of localNotes) {
-          // 손상된 플레이스홀더 노트는 서버에 업로드하지 않음
           if (CryptoService.isCorruptedPlaceholder(ln.content)) continue;
 
-          const remote = noteMap.get(ln.id);
-          if (!remote) {
+          const remoteUpdatedAt = remoteMetaMap.get(ln.id);
+          if (remoteUpdatedAt === undefined) {
             // 서버에 없는 로컬 전용 노트
             const isUnmodifiedSeed =
               (ln.id === 'seed-1' && ln.title.includes('환영')) ||
@@ -837,16 +1018,15 @@ class SupabaseSyncManager {
               notesToUpload.push(ln);
             }
           } else {
-            // 서버에 이미 있는 노트: 로컬의 수정 시간이 서버보다 더 최신인 경우 로컬 버전 채택 및 업로드
-            if (ln.updatedAt > remote.updatedAt) {
+            // 서버에 이미 있는 노트: 로컬이 실제로 더 최신이고 시스템 기본 그룹 노트가 아닐 때만 업로드
+            if (ln.updatedAt > remoteUpdatedAt && !isSystemGroupNote(ln)) {
               noteMap.set(ln.id, ln);
               notesToUpload.push(ln);
             }
           }
         }
       } else {
-        // 서버에 노트가 전혀 없는 경우 (새 DB 최초 연동):
-        // 로컬에 있는 모든 노트를 서버로 최초 업로드
+        // 서버에 노트가 전혀 없는 경우 (새 DB 최초 연동)
         for (const ln of localNotes) {
           if (!CryptoService.isCorruptedPlaceholder(ln.content)) {
             noteMap.set(ln.id, ln);
@@ -855,7 +1035,6 @@ class SupabaseSyncManager {
         }
       }
 
-      // 만약 결과적으로 노트가 하나도 없는데 로컬에 노트가 있었다면 로컬 노트 보존
       if (noteMap.size === 0 && localNotes.length > 0) {
         for (const ln of localNotes) {
           noteMap.set(ln.id, ln);
@@ -863,22 +1042,20 @@ class SupabaseSyncManager {
         }
       }
 
-      // 4. 서버에 없는 항목들만 업로드 실행
+      // 6. 변경된 항목들만 최소 업로드 실행
       if (projectsToUpload.length > 0) {
-        const rows = projectsToUpload.map((p) => this.projectToRow(p));
-        const { error: upProjErr } = await this.client.from('bullsnote_projects').upsert(rows, { onConflict: 'id' });
-        if (upProjErr) throw new Error(`프로젝트 업로드 실패: ${upProjErr.message}`);
+        const ok = await this.upsertProjects(projectsToUpload);
+        if (!ok) throw new Error('프로젝트 업로드에 실패했습니다.');
         uploadedCount += projectsToUpload.length;
       }
 
       if (notesToUpload.length > 0) {
-        const rows = await Promise.all(notesToUpload.map((n) => this.noteToRow(n)));
-        const { error: upNoteErr } = await this.client.from('bullsnote_notes').upsert(rows, { onConflict: 'id' });
-        if (upNoteErr) throw new Error(`노트 업로드 실패: ${upNoteErr.message}`);
+        const ok = await this.upsertNotes(notesToUpload);
+        if (!ok) throw new Error('노트 업로드에 실패했습니다.');
         uploadedCount += notesToUpload.length;
       }
 
-      // 5. 최종 병합 리스트 생성 (프로젝트가 비어있을 경우 기본 프로젝트 보장)
+      // 7. 최종 병합 리스트 생성
       let mergedProjects = Array.from(projectMap.values());
       if (mergedProjects.length === 0) {
         const defaultProj: Project = {
@@ -889,15 +1066,16 @@ class SupabaseSyncManager {
           updatedAt: Date.now(),
         };
         mergedProjects = [defaultProj];
-        await this.client.from('bullsnote_projects').upsert([this.projectToRow(defaultProj)], { onConflict: 'id' });
+        await this.upsertProjects([defaultProj]);
       }
 
       const mergedNotes = Array.from(noteMap.values());
+      const notesCountChanged = mergedNotes.length !== localNotes.length;
+      const hasRemoteChanges =
+        downloadedCount > 0 || notesCountChanged || projectsChangedFromRemote;
 
-      // 6. 동기화 성공 타임스탬프 기록
-      const now = Date.now();
-      const updatedConfig = { ...this.currentConfig, lastSyncedAt: now };
-      this.saveConfig(updatedConfig);
+      // 8. 동기화 성공 타임스탬프만 경량 기록 (saveConfig 호출로 인한 Realtime 재연결 루프 원천 차단!)
+      this.updateLastSyncedAt(Date.now());
 
       return {
         success: true,
@@ -905,6 +1083,7 @@ class SupabaseSyncManager {
         projects: mergedProjects,
         uploadedCount,
         downloadedCount,
+        hasRemoteChanges,
       };
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -914,6 +1093,7 @@ class SupabaseSyncManager {
         projects: localProjects,
         uploadedCount: 0,
         downloadedCount: 0,
+        hasRemoteChanges: false,
         error: msg,
       };
     }

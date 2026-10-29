@@ -92,15 +92,16 @@ export function ensureTodoProjectAndGroups(
   let nextProjects = [...projects];
   let nextNotes = [...notes];
 
-  // 1. 할일관리 프로젝트 확인/생성
+  // 1. 할일관리 프로젝트 확인/생성 (고정 초기 타임스탬프 사용하여 타 기기 동기화 시 불필요한 재업로드 방지)
+  const SYSTEM_BASE_TS = 1700000000000;
   const hasTodoProject = nextProjects.some((p) => p.id === TODO_PROJECT_ID);
   if (!hasTodoProject) {
     const todoProject: Project = {
       id: TODO_PROJECT_ID,
       name: TODO_PROJECT_NAME,
       icon: TODO_PROJECT_ICON,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
+      createdAt: SYSTEM_BASE_TS,
+      updatedAt: SYSTEM_BASE_TS,
     };
     nextProjects = [todoProject, ...nextProjects];
     created = true;
@@ -110,7 +111,7 @@ export function ensureTodoProjectAndGroups(
   TODO_GROUPS.forEach((group, index) => {
     const existing = nextNotes.find((n) => n.id === group.id);
     if (!existing) {
-      const now = Date.now() + index; // 순서 보장
+      const ts = SYSTEM_BASE_TS + index; // 순서 보장 및 불필요한 서버 덮어쓰기 방지
       const groupNote: Note = {
         id: group.id,
         title: group.title,
@@ -136,8 +137,8 @@ export function ensureTodoProjectAndGroups(
         attachments: [],
         reminder: null,
         systemGroupType: group.status,
-        createdAt: now,
-        updatedAt: now,
+        createdAt: ts,
+        updatedAt: ts,
       };
       nextNotes.push(groupNote);
       created = true;

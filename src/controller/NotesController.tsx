@@ -388,7 +388,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       if (supabaseConnected) {
         const verifier = localStorage.getItem('bullsnote.security.verifier.v1');
         if (verifier) void SupabaseService.uploadSecurityVerifier(verifier);
-        await SupabaseService.upsertNotes(decrypted);
+        await SupabaseService.upsertNotes(decrypted, true);
       }
       return true;
     },
@@ -451,7 +451,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     setIsMasterSet(false);
     setIsUnlocked(false);
     if (supabaseConnected) {
-      await SupabaseService.upsertNotes(decrypted);
+      await SupabaseService.upsertNotes(decrypted, true);
       await SupabaseService.deleteNote('__bullsnote_security_verifier__');
     }
     return true;
@@ -1698,12 +1698,20 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   );
 
   // --- Supabase 동기화 액션 ---
-  const syncWithSupabase = useCallback(async (isSilent = false) => {
+  const lastSilentSyncAtRef = useRef<number>(0);
+  const syncWithSupabase = useCallback(async (isSilent = false, bypassCooldown = false) => {
     if (!SupabaseService.isConnected() || isSyncingRef.current) return;
 
     // 자동 백그라운드 동기화인 경우, 사용자가 타이핑 중이면 작업 방해 방지를 위해 건너뜀
     if (isSilent && (isLocalSavePendingRef.current || pendingNotesRef.current.size > 0)) {
       return;
+    }
+    if (isSilent && !bypassCooldown) {
+      const minInterval = SupabaseService.getRealtimeStatus() === 'connected' ? 300_000 : 60_000;
+      if (Date.now() - lastSilentSyncAtRef.current < minInterval) return;
+    }
+    if (isSilent) {
+      lastSilentSyncAtRef.current = Date.now();
     }
 
     if (!isSilent) {
@@ -1719,6 +1727,10 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       const curProjects = projectsRef.current;
       const res = await SupabaseService.syncAll(curNotes, curProjects);
       if (res.success) {
+        setSupabaseConfigState(SupabaseService.getConfig());
+        if (!res.hasRemoteChanges) {
+          return;
+        }
         let syncedNotes = res.notes;
         if (CryptoService.isUnlocked()) {
           syncedNotes = await CryptoService.decryptNotes(syncedNotes);
@@ -1729,7 +1741,6 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         const sortedNotes = syncedNotes.sort(sortNotes);
         setNotes(sortedNotes);
         setProjects(res.projects);
-        NoteRepository.save(sortedNotes);
         NoteRepository.saveProjects(res.projects);
         setSupabaseConfigState(SupabaseService.getConfig());
 
@@ -1797,7 +1808,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
     const unsubscribe = SupabaseService.subscribeToRealtime(async (change) => {
       if (change.type === 'sync_needed') {
-        void syncWithSupabase(true);
+        void syncWithSupabase(true, true);
         return;
       }
 
@@ -1829,11 +1840,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       if (change.type === 'note') {
         if (change.action === 'DELETE') {
           const doomedId = change.id;
-          setNotes((prev) => {
-            const next = prev.filter((n) => n.id !== doomedId);
-            NoteRepository.save(next);
-            return next;
-          });
+          setNotes((prev) => prev.filter((n) => n.id !== doomedId));
           if (selectedIdRef.current === doomedId) {
             const remaining = notesRef.current.filter((n) => n.id !== doomedId);
             setSelectedId(remaining[0]?.id ?? null);
@@ -1859,10 +1866,13 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
             return prev;
           }
           const next = local
-            ? prev.map((n) => (n.id === remoteNote.id ? remoteNote : n))
+            ? prev.map((n) =>
+                n.id === remoteNote.id
+                  ? { ...remoteNote, history: n.history, todoMeta: remoteNote.todoMeta ?? n.todoMeta }
+                  : n,
+              )
             : [remoteNote, ...prev];
           const sorted = next.sort(sortNotes);
-          NoteRepository.save(sorted);
           return sorted;
         });
 
@@ -1891,12 +1901,17 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     };
 
     // 3. 인터넷 재연결 시 (오프라인 -> 온라인)
-    const onOnline = () => void syncWithSupabase(true);
+    const onOnline = () => void syncWithSupabase(true, true);
 
-    // 4. 웹소켓 유실 및 백그라운드 대비 30초 주기 무소음 동기화
+    // 4. Realtime 웹소켓이 비연결 상태일 때만 3분 주기로 백업 폴링 (연결 상태에서는 불필요한 폴링 0건)
     const syncInterval = setInterval(() => {
-      void syncWithSupabase(true);
-    }, 30000);
+      if (
+        document.visibilityState === 'visible' &&
+        SupabaseService.getRealtimeStatus() !== 'connected'
+      ) {
+        void syncWithSupabase(true);
+      }
+    }, 180000);
 
     window.addEventListener('focus', onFocus);
     document.addEventListener('visibilitychange', onVisibilityChange);
@@ -2041,7 +2056,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       const ensured = ensureTodoProjectAndGroups(projectsRef.current, notesRef.current);
       if (ensured.created) {
         setProjects(ensured.projects);
-        ensured.projects.forEach((p) => queueProjectSync(p));
+        ensured.projects.forEach((p) => {
+          if (p.id === TODO_PROJECT_ID) queueProjectSync(p);
+        });
         ensured.notes.forEach((n) => {
           if (n.systemGroupType) queueNoteSync(n);
         });
