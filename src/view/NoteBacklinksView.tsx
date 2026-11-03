@@ -31,7 +31,7 @@ interface NoteBacklinksViewProps {
 }
 
 export function NoteBacklinksView({
-  currentNote,
+  currentNote: _currentNote,
   backlinks,
   allNotes,
   projects,
@@ -53,12 +53,16 @@ export function NoteBacklinksView({
       radius="md"
       className="backlinks-container"
       style={{
-        backgroundColor: 'var(--mantine-color-default)',
-        borderColor: 'var(--mantine-color-blue-2)',
-        boxShadow: '0 1px 3px rgba(0, 0, 0, 0.04)',
+        backgroundColor: 'var(--bn-surface-list)',
+        borderColor: 'var(--bn-border-subtle)',
       }}
     >
-      <Group justify="space-between" wrap="nowrap" style={{ cursor: 'pointer' }} onClick={() => setOpened((o) => !o)}>
+      <Group
+        justify="space-between"
+        wrap="nowrap"
+        style={{ cursor: 'pointer' }}
+        onClick={() => setOpened((o) => !o)}
+      >
         <Group gap="xs" wrap="nowrap">
           <Badge
             size="sm"
@@ -68,7 +72,7 @@ export function NoteBacklinksView({
           >
             이 노트를 참조하는 노트 (백링크)
           </Badge>
-          <Badge size="xs" variant="filled" color="blue" circle>
+          <Badge size="xs" variant="light" color="blue" circle>
             {backlinks.length}
           </Badge>
           <Text size="xs" c="dimmed">
@@ -104,13 +108,13 @@ export function NoteBacklinksView({
               <Paper
                 key={refNote.id}
                 p="xs"
-                radius="sm"
+                radius="md"
                 className="backlink-item-card"
                 onClick={() => onSelectNote(refNote.id)}
                 style={{
                   cursor: 'pointer',
-                  border: '1px solid var(--mantine-color-gray-2)',
-                  backgroundColor: 'var(--mantine-color-body)',
+                  border: '1px solid var(--bn-border-subtle)',
+                  backgroundColor: 'var(--bn-card-bg)',
                   borderLeft: `3px solid ${pastelCfg.border}`,
                   transition: 'all 0.18s ease',
                 }}
@@ -123,14 +127,14 @@ export function NoteBacklinksView({
                         {refNote.title || '제목 없음'}
                       </Text>
                       {proj && (
-                        <Badge size="xs" variant="outline" color="gray">
+                        <Badge size="xs" variant="light" color="gray" style={{ flexShrink: 0 }}>
                           {proj.icon} {proj.name}
                         </Badge>
                       )}
                       {refNote.tags.slice(0, 2).map((t) => (
-                        <Badge key={t} size="xs" variant="light" color="teal">
+                        <span key={t} className="bn-subtle-tag" style={{ flexShrink: 0 }}>
                           #{t}
-                        </Badge>
+                        </span>
                       ))}
                     </Group>
 

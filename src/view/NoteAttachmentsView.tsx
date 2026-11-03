@@ -11,6 +11,7 @@ import {
   Stack,
   Text,
   Tooltip,
+  useComputedColorScheme,
 } from '@mantine/core';
 import {
   IconAlertCircle,
@@ -75,6 +76,8 @@ export function NoteAttachmentsView({ note, onAttachmentDeleted }: NoteAttachmen
     addAttachment,
     removeAttachment,
   } = useNotes();
+  const computedColorScheme = useComputedColorScheme('light', { getInitialValueInEffect: true });
+  const isDark = computedColorScheme === 'dark';
 
   const attachments = note.attachments || [];
   const totalBytes = attachments.reduce((sum, a) => sum + (a.size || 0), 0);
@@ -176,8 +179,10 @@ export function NoteAttachmentsView({ note, onAttachmentDeleted }: NoteAttachmen
         }
       }}
       style={{
-        backgroundColor: 'var(--mantine-color-default)',
-        borderColor: isDragOver ? 'var(--mantine-color-blue-5)' : 'var(--mantine-color-gray-3)',
+        backgroundColor: 'var(--bn-surface-list)',
+        borderColor: isDragOver
+          ? 'var(--mantine-color-teal-5)'
+          : 'var(--bn-border-subtle)',
         transition: 'all 0.2s ease',
       }}
     >
@@ -207,7 +212,7 @@ export function NoteAttachmentsView({ note, onAttachmentDeleted }: NoteAttachmen
           >
             첨부파일
           </Badge>
-          <Badge size="xs" variant="filled" color="teal" circle>
+          <Badge size="xs" variant="light" color="teal" circle>
             {attachments.length}
           </Badge>
           {attachments.length > 0 && (
@@ -229,10 +234,10 @@ export function NoteAttachmentsView({ note, onAttachmentDeleted }: NoteAttachmen
 
           {supabaseConnected ? (
             <Button
-              size="xs"
+              size="compact-xs"
               variant="light"
               color="teal"
-              leftSection={<IconPlus size={14} />}
+              leftSection={<IconPlus size={13} />}
               loading={uploading}
               onClick={() => fileInputRef.current?.click()}
             >
@@ -241,10 +246,10 @@ export function NoteAttachmentsView({ note, onAttachmentDeleted }: NoteAttachmen
           ) : (
             <Tooltip label="클라우드 파일 업로드를 위해 Supabase 연동이 필요합니다">
               <Button
-                size="xs"
+                size="compact-xs"
                 variant="subtle"
                 color="orange"
-                leftSection={<IconAlertCircle size={14} />}
+                leftSection={<IconAlertCircle size={13} />}
                 onClick={openSupabaseModal}
               >
                 Supabase 연동 필요
@@ -272,14 +277,14 @@ export function NoteAttachmentsView({ note, onAttachmentDeleted }: NoteAttachmen
             mb="xs"
             radius="sm"
             style={{
-              backgroundColor: 'var(--mantine-color-orange-0)',
-              border: '1px solid var(--mantine-color-orange-2)',
+              backgroundColor: isDark ? 'rgba(253, 126, 20, 0.12)' : 'var(--mantine-color-orange-0)',
+              border: `1px solid ${isDark ? 'rgba(253, 126, 20, 0.3)' : 'var(--mantine-color-orange-2)'}`,
             }}
           >
             <Group justify="space-between" wrap="nowrap">
               <Group gap="xs" wrap="nowrap">
-                <IconAlertCircle size={18} color="var(--mantine-color-orange-7)" />
-                <Text size="xs" c="orange.9">
+                <IconAlertCircle size={18} color="var(--mantine-color-orange-5)" />
+                <Text size="xs" c={isDark ? 'orange.2' : 'orange.9'}>
                   파일 첨부 및 동기화는 <strong>Supabase 스토리지 연동</strong> 상태에서만 제공됩니다.
                 </Text>
               </Group>
@@ -301,12 +306,22 @@ export function NoteAttachmentsView({ note, onAttachmentDeleted }: NoteAttachmen
             style={{
               padding: '16px 12px',
               textAlign: 'center',
-              border: '1px dashed var(--mantine-color-gray-3)',
+              border: `1px dashed ${
+                isDragOver
+                  ? 'var(--mantine-color-teal-5)'
+                  : isDark
+                  ? 'rgba(255, 255, 255, 0.12)'
+                  : 'rgba(0, 0, 0, 0.12)'
+              }`,
               borderRadius: 6,
-              backgroundColor: isDragOver ? 'var(--mantine-color-blue-0)' : 'transparent',
+              backgroundColor: isDragOver
+                ? isDark
+                  ? 'rgba(18, 184, 134, 0.1)'
+                  : 'var(--mantine-color-teal-0)'
+                : 'transparent',
             }}
           >
-            <IconCloudUpload size={24} color="var(--mantine-color-dimmed)" style={{ marginBottom: 4 }} />
+            <IconCloudUpload size={22} color="var(--mantine-color-dimmed)" style={{ marginBottom: 4 }} />
             <Text size="xs" c="dimmed">
               {supabaseConnected
                 ? '첨부된 파일이 없습니다. 파일을 여기에 드래그하거나 [파일 첨부] 버튼을 누르세요 (최대 50MB).'
@@ -319,11 +334,11 @@ export function NoteAttachmentsView({ note, onAttachmentDeleted }: NoteAttachmen
               <Paper
                 key={att.id}
                 p="xs"
-                radius="sm"
+                radius="md"
                 className="attachment-file-card"
                 style={{
-                  border: '1px solid var(--mantine-color-gray-2)',
-                  backgroundColor: 'var(--mantine-color-body)',
+                  border: '1px solid var(--bn-border-subtle)',
+                  backgroundColor: 'var(--bn-card-bg)',
                   transition: 'all 0.15s ease',
                 }}
               >
