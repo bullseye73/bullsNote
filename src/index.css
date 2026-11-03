@@ -1,4 +1,115 @@
-/* BullsNote Pastel Notes and Custom Dark/Light theme styles */
+/* BullsNote UI/UX Redesign - Linear / Craft / Raycast Inspired Surface Depth & Theme Styles */
+
+:root,
+[data-mantine-color-scheme="light"] {
+  --bn-font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable", "Segoe UI", "Pretendard", "Inter", Ubuntu, system-ui, sans-serif;
+  --bn-surface-titlebar: #f4f4f5;
+  --bn-surface-sidebar: #f4f4f5;
+  --bn-surface-list: #f8f9fa;
+  --bn-surface-editor: #ffffff;
+  --bn-border-subtle: rgba(0, 0, 0, 0.06);
+  --bn-card-bg: #ffffff;
+  --bn-card-hover: rgba(0, 0, 0, 0.035);
+  --bn-card-active: rgba(59, 130, 246, 0.08);
+  --bn-text-muted: #71717a;
+}
+
+[data-mantine-color-scheme="dark"] {
+  --bn-surface-titlebar: #121214;
+  --bn-surface-sidebar: #121214;
+  --bn-surface-list: #18181b;
+  --bn-surface-editor: #202023;
+  --bn-border-subtle: rgba(255, 255, 255, 0.06);
+  --bn-card-bg: rgba(255, 255, 255, 0.025);
+  --bn-card-hover: rgba(255, 255, 255, 0.05);
+  --bn-card-active: rgba(59, 130, 246, 0.14);
+  --bn-text-muted: #a1a1aa;
+}
+
+/* Unified Titlebar (Electron frameless drag regions) */
+.titlebar-drag-region {
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.titlebar-no-drag,
+.titlebar-drag-region button,
+.titlebar-drag-region a,
+.titlebar-drag-region input,
+.titlebar-drag-region [role="button"] {
+  -webkit-app-region: no-drag;
+}
+
+/* Subtle Tag Styling (저채도 반투명 배경 + 조화로운 텍스트 컬러) */
+.bn-subtle-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.4;
+  background-color: rgba(59, 130, 246, 0.09);
+  color: var(--mantine-color-blue-7);
+  border: 1px solid rgba(59, 130, 246, 0.16);
+  transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
+}
+
+.bn-subtle-tag:hover {
+  background-color: rgba(59, 130, 246, 0.15);
+  border-color: rgba(59, 130, 246, 0.28);
+}
+
+[data-mantine-color-scheme="dark"] .bn-subtle-tag {
+  background-color: rgba(59, 130, 246, 0.14);
+  color: #93c5fd;
+  border-color: rgba(59, 130, 246, 0.24);
+}
+
+[data-mantine-color-scheme="dark"] .bn-subtle-tag:hover {
+  background-color: rgba(59, 130, 246, 0.22);
+  border-color: rgba(59, 130, 246, 0.38);
+}
+
+/* Note list card & hover-revealed actions */
+.note-card-item {
+  transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease !important;
+}
+
+.note-card-item .note-row-actions {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+.note-card-item:hover .note-row-actions,
+.note-card-item[data-active="true"] .note-row-actions,
+.note-card-item:focus-within .note-row-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Sidebar Nav Item */
+.bn-sidebar-nav-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+.bn-sidebar-nav-item:hover {
+  background-color: var(--bn-card-hover);
+}
+
+.bn-sidebar-nav-item[data-active="true"] {
+  background-color: var(--bn-card-active);
+  font-weight: 600;
+}
 
 /* Active pastel card styling */
 .active-pastel-card {
@@ -24,8 +135,7 @@
   transition: border-color 0.15s ease, background-color 0.15s ease, transform 0.15s ease !important;
 }
 .inactive-note-card:hover {
-  transform: translateX(2px);
-  background-color: var(--mantine-color-default-hover);
+  background-color: var(--bn-card-hover);
 }
 
 /* Quick Search Spotlight Modal card hover and smooth transition */
@@ -40,19 +150,23 @@
 html,
 body,
 #root {
-  background-color: var(--mantine-color-body);
+  background-color: var(--bn-surface-editor);
   color: var(--mantine-color-text);
+  font-family: var(--bn-font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 .note-editor-wrapper,
 .note-editor-stack {
-  background-color: var(--mantine-color-body);
+  background-color: var(--bn-surface-editor);
 }
 
 /* BlockNote 에디터 배경색이 고정 흰색(#ffffff) 대신 Mantine 테마/노트 본문 배경색을 투명하게 상속받도록 보정 */
 .bn-container,
 .bn-editor {
   background-color: transparent !important;
+  font-family: var(--bn-font-sans) !important;
 }
 
 /* ==========================================================================
@@ -60,7 +174,7 @@ body,
    ========================================================================== */
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgba(120, 120, 120, 0.3) transparent;
+  scrollbar-color: rgba(120, 120, 120, 0.25) transparent;
 }
 
 ::-webkit-scrollbar {
@@ -73,13 +187,13 @@ body,
 }
 
 ::-webkit-scrollbar-thumb {
-  background-color: rgba(120, 120, 120, 0.25);
+  background-color: rgba(120, 120, 120, 0.22);
   border-radius: 9999px;
   transition: background-color 0.2s ease;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(120, 120, 120, 0.5);
+  background-color: rgba(120, 120, 120, 0.45);
 }
 
 ::-webkit-scrollbar-corner {
@@ -163,6 +277,40 @@ body,
   max-width: 100%;
   height: auto;
   border-radius: 4px;
+}
+
+.a4-preview-sheet[data-sheet-theme="dark"] .print-preview-content pre {
+  background: #141416;
+  color: #f4f4f5;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.a4-preview-sheet[data-sheet-theme="dark"] .print-preview-content code {
+  background: rgba(255, 255, 255, 0.09);
+  color: #ffa94d;
+}
+
+.a4-preview-sheet[data-sheet-theme="dark"] .print-preview-content pre code {
+  background: transparent;
+  color: inherit;
+}
+
+.a4-preview-sheet[data-sheet-theme="dark"] .print-preview-content blockquote {
+  border-left: 4px solid #60a5fa;
+  color: #a1a1aa;
+}
+
+.a4-preview-sheet[data-sheet-theme="dark"] .print-preview-content th,
+.a4-preview-sheet[data-sheet-theme="dark"] .print-preview-content td {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.a4-preview-sheet[data-sheet-theme="dark"] .print-preview-content th {
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+.a4-preview-sheet[data-sheet-theme="dark"] .print-preview-content a {
+  color: #60a5fa;
 }
 
 @media print {
@@ -479,45 +627,43 @@ a[data-deleted-attachment="true"]::after {
 }
 
 /* ==========================================================================
-   에디터 본문 내 해시태그 (#태그) 시각적 강조 및 인터랙티브 배지
+   에디터 본문 내 해시태그 (#태그) 시각적 강조 및 인터랙티브 배지 (Subtle Tag)
    ========================================================================== */
 .bn-hashtag-badge {
   display: inline-flex !important;
   align-items: center !important;
-  background-color: rgba(37, 99, 235, 0.09) !important;
+  background-color: rgba(59, 130, 246, 0.09) !important;
   color: var(--mantine-color-blue-7) !important;
-  border: 1px solid rgba(37, 99, 235, 0.22) !important;
-  border-radius: 4px !important;
-  padding: 1px 6px !important;
+  border: 1px solid rgba(59, 130, 246, 0.18) !important;
+  border-radius: 5px !important;
+  padding: 1px 7px !important;
   margin: 0 2px !important;
-  font-weight: 600 !important;
-  font-size: 0.94em !important;
+  font-weight: 500 !important;
+  font-size: 0.92em !important;
   line-height: 1.4 !important;
-  letter-spacing: -0.2px !important;
+  letter-spacing: -0.1px !important;
   cursor: pointer !important;
   transition: all 0.15s ease !important;
   user-select: text !important;
 }
 
 .bn-hashtag-badge:hover {
-  background-color: rgba(37, 99, 235, 0.18) !important;
-  border-color: var(--mantine-color-blue-5) !important;
+  background-color: rgba(59, 130, 246, 0.16) !important;
+  border-color: var(--mantine-color-blue-4) !important;
   color: var(--mantine-color-blue-9) !important;
   transform: translateY(-1px);
-  box-shadow: 0 2px 5px rgba(37, 99, 235, 0.18) !important;
 }
 
 [data-mantine-color-scheme="dark"] .bn-hashtag-badge {
-  background-color: rgba(59, 130, 246, 0.18) !important;
-  color: var(--mantine-color-blue-3) !important;
-  border-color: rgba(59, 130, 246, 0.38) !important;
+  background-color: rgba(59, 130, 246, 0.15) !important;
+  color: #93c5fd !important;
+  border-color: rgba(59, 130, 246, 0.28) !important;
 }
 
 [data-mantine-color-scheme="dark"] .bn-hashtag-badge:hover {
-  background-color: rgba(59, 130, 246, 0.3) !important;
+  background-color: rgba(59, 130, 246, 0.26) !important;
   border-color: var(--mantine-color-blue-4) !important;
   color: #fff !important;
-  box-shadow: 0 2px 6px rgba(59, 130, 246, 0.25) !important;
 }
 
 /* ==========================================================================
@@ -873,9 +1019,3 @@ span.shiki,
   border-right-color: rgba(0, 0, 0, 0.12) !important;
   color: rgba(0, 0, 0, 0.35) !important;
 }
-
-
-
-
-
-

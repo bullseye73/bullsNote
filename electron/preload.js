@@ -5,6 +5,7 @@ const packageJson = require('../package.json');
 contextBridge.exposeInMainWorld('bullsNote', {
   platform: process.platform,
   version: packageJson.version || '0.1.0',
+  setTitleBarTheme: (isDark) => ipcRenderer.invoke('window:setTitleBarTheme', Boolean(isDark)),
   notification: {
     show: (data) => ipcRenderer.invoke('notification:show', data),
     onOpenNote: (callback) => {
@@ -30,4 +31,3 @@ contextBridge.exposeInMainWorld('bullsNote', {
     exportPdf: (title) => ipcRenderer.invoke('print:exportPdf', { title }),
   },
 });
-

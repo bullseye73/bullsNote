@@ -36,8 +36,8 @@ import { CryptoService } from '../model/CryptoService';
 import { getSearchSnippet } from '../model/SearchService';
 import { HighlightText } from './HighlightText';
 import { formatDateTimeIso } from '../model/dateUtils';
-import { isSystemGroupNote, GROUP_ID_TO_STATUS, TODO_PROJECT_ID } from '../model/TodoService';
-import { buildNoteHierarchy, cleanExcerpt, NoteHierarchy } from '../model/treeUtils';
+import { isSystemGroupNote, GROUP_ID_TO_STATUS } from '../model/TodoService';
+import { buildNoteHierarchy, cleanExcerpt } from '../model/treeUtils';
 
 function RowActions({
   id,
@@ -79,11 +79,16 @@ function RowActions({
   const isSystemGroup = isSystemGroupNote(note);
 
   return (
-    <Group gap={2} wrap="nowrap" onClick={(e) => e.stopPropagation()}>
+    <Group
+      gap={2}
+      wrap="nowrap"
+      className="note-row-actions"
+      onClick={(e) => e.stopPropagation()}
+    >
       {/* 생성: 하위 노트 추가 */}
       <Tooltip label="하위 노트 추가">
         <ActionIcon
-          size="sm"
+          size="xs"
           variant="subtle"
           onClick={() => create(id)}
           aria-label="하위 노트 추가"
@@ -92,43 +97,77 @@ function RowActions({
             backgroundColor: active ? 'rgba(8, 127, 91, 0.12)' : undefined,
           }}
         >
-          <IconPlus size={14} />
+          <IconPlus size={13} />
         </ActionIcon>
       </Tooltip>
       {/* 이동: 들여쓰기 */}
-      <Tooltip label={isSystemGroup ? '시스템 그룹 노트는 이동할 수 없습니다' : isNoteLocked ? '잠긴 상태에서는 이동할 수 없습니다' : '들여쓰기 (이전 형제의 자식으로)'}>
+      <Tooltip
+        label={
+          isSystemGroup
+            ? '시스템 그룹 노트는 이동할 수 없습니다'
+            : isNoteLocked
+            ? '잠긴 상태에서는 이동할 수 없습니다'
+            : '들여쓰기 (이전 형제의 자식으로)'
+        }
+      >
         <ActionIcon
-          size="sm"
+          size="xs"
           variant="subtle"
           disabled={isSystemGroup || !hasPrevSibling || isNoteLocked}
           onClick={() => indent(id)}
           aria-label="들여쓰기"
           style={{
-            color: active ? (!isSystemGroup && hasPrevSibling && !isNoteLocked ? colorCfg.iconColor : 'rgba(0,0,0,0.25)') : undefined,
+            color: active
+              ? !isSystemGroup && hasPrevSibling && !isNoteLocked
+                ? colorCfg.iconColor
+                : 'rgba(0,0,0,0.25)'
+              : undefined,
           }}
         >
-          <IconIndentIncrease size={14} />
+          <IconIndentIncrease size={13} />
         </ActionIcon>
       </Tooltip>
       {/* 이동: 내어쓰기 */}
-      <Tooltip label={isSystemGroup ? '시스템 그룹 노트는 이동할 수 없습니다' : isNoteLocked ? '잠긴 상태에서는 이동할 수 없습니다' : '내어쓰기 (부모와 같은 레벨로)'}>
+      <Tooltip
+        label={
+          isSystemGroup
+            ? '시스템 그룹 노트는 이동할 수 없습니다'
+            : isNoteLocked
+            ? '잠긴 상태에서는 이동할 수 없습니다'
+            : '내어쓰기 (부모와 같은 레벨로)'
+        }
+      >
         <ActionIcon
-          size="sm"
+          size="xs"
           variant="subtle"
           disabled={isSystemGroup || !hasParent || isNoteLocked}
           onClick={() => outdent(id)}
           aria-label="내어쓰기"
           style={{
-            color: active ? (!isSystemGroup && hasParent && !isNoteLocked ? colorCfg.iconColor : 'rgba(0,0,0,0.25)') : undefined,
+            color: active
+              ? !isSystemGroup && hasParent && !isNoteLocked
+                ? colorCfg.iconColor
+                : 'rgba(0,0,0,0.25)'
+              : undefined,
           }}
         >
-          <IconIndentDecrease size={14} />
+          <IconIndentDecrease size={13} />
         </ActionIcon>
       </Tooltip>
       {/* 상태: 상단 고정 */}
-      <Tooltip label={isSystemGroup ? '시스템 그룹은 항상 상단에 고정됩니다' : isNoteLocked ? '잠긴 상태에서는 변경할 수 없습니다' : (note.pinned ? '핀 해제' : '상단 고정')}>
+      <Tooltip
+        label={
+          isSystemGroup
+            ? '시스템 그룹은 항상 상단에 고정됩니다'
+            : isNoteLocked
+            ? '잠긴 상태에서는 변경할 수 없습니다'
+            : note.pinned
+            ? '핀 해제'
+            : '상단 고정'
+        }
+      >
         <ActionIcon
-          size="sm"
+          size="xs"
           variant={note.pinned ? 'filled' : 'subtle'}
           color={note.pinned ? 'blue' : undefined}
           disabled={isSystemGroup || isNoteLocked}
@@ -139,13 +178,23 @@ function RowActions({
             backgroundColor: note.pinned && active ? colorCfg.border : undefined,
           }}
         >
-          <IconPin size={14} />
+          <IconPin size={13} />
         </ActionIcon>
       </Tooltip>
       {/* 상태: 즐겨찾기 */}
-      <Tooltip label={isSystemGroup ? '시스템 그룹은 즐겨찾기 대상이 아닙니다' : isNoteLocked ? '잠긴 상태에서는 변경할 수 없습니다' : (note.favorite ? '즐겨찾기 해제' : '즐겨찾기 등록')}>
+      <Tooltip
+        label={
+          isSystemGroup
+            ? '시스템 그룹은 즐겨찾기 대상이 아닙니다'
+            : isNoteLocked
+            ? '잠긴 상태에서는 변경할 수 없습니다'
+            : note.favorite
+            ? '즐겨찾기 해제'
+            : '즐겨찾기 등록'
+        }
+      >
         <ActionIcon
-          size="sm"
+          size="xs"
           variant={note.favorite ? 'filled' : 'subtle'}
           color={note.favorite ? 'yellow' : undefined}
           disabled={isSystemGroup || isNoteLocked}
@@ -155,14 +204,14 @@ function RowActions({
             color: !note.favorite && active ? colorCfg.iconColor : undefined,
           }}
         >
-          <IconStar size={14} />
+          <IconStar size={13} />
         </ActionIcon>
       </Tooltip>
       {/* 관리 메뉴 */}
       <Menu position="bottom-end" withArrow shadow="md" withinPortal disabled={isNoteLocked}>
         <Menu.Target>
           <ActionIcon
-            size="sm"
+            size="xs"
             variant="subtle"
             disabled={isNoteLocked}
             aria-label="노트 관리 메뉴"
@@ -170,14 +219,22 @@ function RowActions({
               color: active ? colorCfg.iconColor : undefined,
             }}
           >
-            <IconDots size={14} />
+            <IconDots size={13} />
           </ActionIcon>
         </Menu.Target>
         <Menu.Dropdown>
           {!isSystemGroup && (
             <>
               <Menu.Label>노트 색상 변경</Menu.Label>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(8, 1fr)', gap: 6, padding: '6px 8px', minWidth: 260 }}>
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(8, 1fr)',
+                  gap: 6,
+                  padding: '6px 8px',
+                  minWidth: 260,
+                }}
+              >
                 {Object.values(PASTEL_COLORS).map((c) => {
                   const isCurrent = (note.color || 'blue') === c.id;
                   return (
@@ -277,7 +334,7 @@ function TreeRow({
   onDragEnd: () => void;
   descendantCounts: Map<string, number>;
 }) {
-  const { selectedId, select, setActiveTag, isUnlocked, isMasterSet } = useNotes();
+  const { selectedId, select, isUnlocked, isMasterSet } = useNotes();
   const scheme = useComputedColorScheme('light', { getInitialValueInEffect: true });
   const isDark = scheme === 'dark';
 
@@ -299,8 +356,10 @@ function TreeRow({
     <>
       <Card
         withBorder
-        shadow={active ? 'sm' : 'none'}
-        className={active ? 'active-pastel-card' : 'inactive-note-card'}
+        radius="md"
+        shadow={active ? 'xs' : 'none'}
+        data-active={active}
+        className={`note-card-item ${active ? 'active-pastel-card' : 'inactive-note-card'}`}
         draggable={canDrag}
         onDragStart={(e) => {
           if (canDrag) onDragStart(n.id, e);
@@ -312,27 +371,34 @@ function TreeRow({
         style={{
           cursor: isSystemGroup ? 'pointer' : isDragging ? 'grabbing' : 'grab',
           marginLeft: depth * 14,
-          borderColor: isOver ? 'var(--mantine-color-blue-5)' : active ? cfg.border : undefined,
-          borderLeft: isOver
-            ? '6px solid var(--mantine-color-blue-5)'
+          borderColor: isOver
+            ? 'var(--mantine-color-blue-5)'
             : active
-            ? `5px solid ${cfg.border}`
-            : `4px solid ${cfg.border}`,
+            ? cfg.border
+            : 'var(--bn-border-subtle)',
+          borderLeft: isOver
+            ? '5px solid var(--mantine-color-blue-5)'
+            : active
+            ? `4px solid ${cfg.border}`
+            : `3px solid ${cfg.border}`,
           background: isOver
             ? isDark
               ? 'rgba(34, 139, 230, 0.22)'
               : 'rgba(231, 245, 255, 0.9)'
             : active
             ? cfg.bg
-            : undefined,
+            : 'var(--bn-card-bg)',
           opacity: isDragging ? 0.35 : 1,
-          transform: isOver ? 'scale(1.015)' : 'none',
-          outline: isOver ? (isDark ? '2px dashed var(--mantine-color-blue-4)' : '2px dashed var(--mantine-color-blue-6)') : undefined,
+          transform: isOver ? 'scale(1.01)' : 'none',
+          outline: isOver
+            ? isDark
+              ? '2px dashed var(--mantine-color-blue-4)'
+              : '2px dashed var(--mantine-color-blue-6)'
+            : undefined,
           outlineOffset: isOver ? '-2px' : undefined,
-          transition: 'all 0.15s ease',
         }}
         onClick={() => select(n.id)}
-        py={6}
+        py={8}
         px="xs"
       >
         {/* 1줄: 드래그 핸들 + 펼치기/접기 + 제목 + 상태/알람/자식수 뱃지 + 액션 버튼 */}
@@ -345,7 +411,7 @@ function TreeRow({
                     size={13}
                     style={{
                       color: active ? cfg.iconColor : 'var(--mantine-color-dimmed)',
-                      opacity: 0.45,
+                      opacity: 0.4,
                       cursor: 'grab',
                       flexShrink: 0,
                     }}
@@ -372,9 +438,37 @@ function TreeRow({
             ) : (
               <span style={{ width: canDrag ? 6 : 18, flexShrink: 0 }} />
             )}
-            <Text fw={600} truncate size="sm" style={{ color: active ? cfg.textColor : undefined, minWidth: 0 }}>
+            <Text
+              fw={active ? 600 : 500}
+              truncate
+              size="sm"
+              style={{
+                color: active ? cfg.textColor : undefined,
+                minWidth: 0,
+                letterSpacing: '-0.15px',
+              }}
+            >
               {n.title || '제목 없음'}
             </Text>
+            {n.pinned && !isSystemGroup && (
+              <IconPin
+                size={12}
+                style={{
+                  color: active ? cfg.iconColor : 'var(--mantine-color-blue-5)',
+                  flexShrink: 0,
+                  opacity: 0.85,
+                }}
+              />
+            )}
+            {n.favorite && !isSystemGroup && (
+              <IconStar
+                size={12}
+                style={{
+                  color: 'var(--mantine-color-yellow-5)',
+                  flexShrink: 0,
+                }}
+              />
+            )}
             {n.systemGroupType && (
               <Badge size="xs" variant="light" color={n.color || 'blue'} style={{ flexShrink: 0 }}>
                 그룹
@@ -425,7 +519,7 @@ function TreeRow({
         </Group>
 
         {/* 2줄: 작성일시와 상세 내용만 정제하여 1줄로 컴팩트하게 표시 */}
-        <Group gap={6} wrap="nowrap" mt={3} pl={canDrag ? 32 : 22} style={{ minWidth: 0, overflow: 'hidden' }}>
+        <Group gap={6} wrap="nowrap" mt={4} pl={canDrag ? 30 : 20} style={{ minWidth: 0, overflow: 'hidden' }}>
           {n.systemGroupType ? (
             <Text
               size="xs"
@@ -445,7 +539,7 @@ function TreeRow({
                   color: active ? cfg.dimmedColor : 'var(--mantine-color-dimmed)',
                 }}
               >
-                ⏰ {formatDateTimeIso(new Date(n.createdAt))}
+                {formatDateTimeIso(new Date(n.createdAt))}
               </Text>
               {(() => {
                 const detail = cleanExcerpt(n.content, n.title);
@@ -500,7 +594,6 @@ export function NoteListView() {
     isFiltering,
     selectedId,
     select,
-    setActiveTag,
     selectedDate,
     setSelectedDate,
     openOrCreateDailyNote,
@@ -619,30 +712,32 @@ export function NoteListView() {
       }
       return (
         <Stack align="center" justify="center" h="100%" gap="xs" p="xl">
-          <Text c="dimmed">조건에 맞는 노트가 없습니다.</Text>
+          <Text c="dimmed" size="sm">
+            조건에 맞는 노트가 없습니다.
+          </Text>
         </Stack>
       );
     }
     return (
       <ScrollArea h="100%" type="auto">
-        <Stack gap="xs" p="sm">
+        <Stack gap={6} p="xs">
           {selectedDate && (
             <Paper
               p="xs"
               withBorder
-              radius="sm"
+              radius="md"
               style={{
-                backgroundColor: 'var(--mantine-color-blue-light)',
-                borderColor: 'var(--mantine-color-blue-4)',
+                backgroundColor: 'var(--bn-card-active)',
+                borderColor: 'var(--bn-border-subtle)',
               }}
             >
               <Group justify="space-between" align="center" wrap="nowrap">
                 <Group gap={6} wrap="nowrap" style={{ overflow: 'hidden' }}>
                   <IconCalendar size={14} color="var(--mantine-color-blue-6)" />
-                  <Text size="xs" fw={700} truncate>
+                  <Text size="xs" fw={600} truncate>
                     {selectedDate} 작성된 노트
                   </Text>
-                  <Badge size="xs" variant="filled" color="blue">
+                  <Badge size="xs" variant="light" color="blue">
                     {flat.length}개
                   </Badge>
                 </Group>
@@ -675,7 +770,6 @@ export function NoteListView() {
           )}
           {flat.map((n) => {
             const active = n.id === selectedId;
-            const path = hierarchy.getPathTitles(n.id);
             const cfg = getPastelConfig(n.color);
             const proj = projects.find((p) => p.id === (n.projectId || 'default'));
             const snippet = getSearchSnippet(n.content, searchTokens);
@@ -684,16 +778,18 @@ export function NoteListView() {
               <Card
                 key={n.id}
                 withBorder
-                shadow={active ? 'sm' : 'none'}
-                className={active ? 'active-pastel-card' : 'inactive-note-card'}
+                radius="md"
+                shadow={active ? 'xs' : 'none'}
+                data-active={active}
+                className={`note-card-item ${active ? 'active-pastel-card' : 'inactive-note-card'}`}
                 style={{
                   cursor: 'pointer',
-                  borderColor: active ? cfg.border : undefined,
-                  borderLeft: active ? `5px solid ${cfg.border}` : `4px solid ${cfg.border}`,
-                  background: active ? cfg.bg : undefined,
+                  borderColor: active ? cfg.border : 'var(--bn-border-subtle)',
+                  borderLeft: active ? `4px solid ${cfg.border}` : `3px solid ${cfg.border}`,
+                  background: active ? cfg.bg : 'var(--bn-card-bg)',
                 }}
                 onClick={() => select(n.id)}
-                py={6}
+                py={8}
                 px="xs"
               >
                 {/* 1줄: 제목 + 프로젝트/알람 배지 */}
@@ -704,7 +800,12 @@ export function NoteListView() {
                         {proj.icon || '📁'} {proj.name}
                       </Badge>
                     )}
-                    <Text fw={600} truncate size="sm" style={{ color: active ? cfg.textColor : undefined, minWidth: 0 }}>
+                    <Text
+                      fw={active ? 600 : 500}
+                      truncate
+                      size="sm"
+                      style={{ color: active ? cfg.textColor : undefined, minWidth: 0 }}
+                    >
                       <HighlightText text={n.title || '제목 없음'} tokens={searchTokens} />
                     </Text>
                   </Group>
@@ -729,7 +830,7 @@ export function NoteListView() {
                 </Group>
 
                 {/* 2줄: 작성일시와 상세내용/스니펫만 1줄로 표시 */}
-                <Group gap={6} wrap="nowrap" mt={3} style={{ minWidth: 0, overflow: 'hidden' }}>
+                <Group gap={6} wrap="nowrap" mt={4} style={{ minWidth: 0, overflow: 'hidden' }}>
                   <Text
                     size="xs"
                     style={{
@@ -738,7 +839,7 @@ export function NoteListView() {
                       color: active ? cfg.dimmedColor : 'var(--mantine-color-dimmed)',
                     }}
                   >
-                    ⏰ {formatDateTimeIso(new Date(n.createdAt))}
+                    {formatDateTimeIso(new Date(n.createdAt))}
                   </Text>
                   {(() => {
                     const detail = snippet || cleanExcerpt(n.content, n.title);
@@ -771,8 +872,10 @@ export function NoteListView() {
   if (tree.length === 0) {
     return (
       <Stack align="center" justify="center" h="100%" gap="xs" p="xl">
-        <Text c="dimmed">노트가 없습니다.</Text>
-        <Text size="sm" c="dimmed">
+        <Text c="dimmed" size="sm">
+          노트가 없습니다.
+        </Text>
+        <Text size="xs" c="dimmed">
           + 버튼으로 새 노트를 만드세요.
         </Text>
       </Stack>
@@ -781,7 +884,7 @@ export function NoteListView() {
 
   return (
     <ScrollArea h="100%" type="auto">
-      <Stack gap={4} p="sm">
+      <Stack gap={5} p="xs">
         {tree.map((node, i) => (
           <TreeRow
             key={node.note.id}

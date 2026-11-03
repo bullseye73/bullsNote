@@ -69,14 +69,26 @@ function createWindow() {
   const iconPath = path.join(__dirname, 'assets', 'icon.png');
   const appVersion = packageJson.version || '1.1.1';
   const isDark = nativeTheme.shouldUseDarkColors;
+  const isMac = process.platform === 'darwin';
+
   const win = new BrowserWindow({
     title: `BullsNote v${appVersion}`,
     width: 1280,
-    height: 800,
-    minWidth: 900,
+    height: 820,
+    minWidth: 920,
     minHeight: 600,
-    backgroundColor: isDark ? '#1a1b1e' : '#ffffff',
+    backgroundColor: isDark ? '#121214' : '#ffffff',
     icon: nativeImage.createFromPath(iconPath),
+    titleBarStyle: isMac ? 'hiddenInset' : 'hidden',
+    ...(isMac
+      ? { trafficLightPosition: { x: 14, y: 12 } }
+      : {
+          titleBarOverlay: {
+            color: '#00000000',
+            symbolColor: isDark ? '#a1a1aa' : '#52525b',
+            height: 40,
+          },
+        }),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -86,6 +98,22 @@ function createWindow() {
     autoHideMenuBar: true,
   });
   mainWindow = win;
+
+  nativeTheme.on('updated', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (process.platform !== 'darwin' && typeof mainWindow.setTitleBarOverlay === 'function') {
+      const dark = nativeTheme.shouldUseDarkColors;
+      try {
+        mainWindow.setTitleBarOverlay({
+          color: '#00000000',
+          symbolColor: dark ? '#a1a1aa' : '#52525b',
+          height: 40,
+        });
+      } catch {
+        // ignore if unsupported on some Linux WMs
+      }
+    }
+  });
 
   // 마우스 우클릭 컨텍스트 메뉴 등록 (잘라내기, 복사, 붙여넣기, 모두 선택 등)
   win.webContents.on('context-menu', (_event, params) => {
@@ -181,6 +209,22 @@ function createWindow() {
 app.whenReady().then(() => {
   setupAppMenu();
   registerVaultIpc(app);
+
+  ipcMain.handle('window:setTitleBarTheme', (_event, isDark) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return false;
+    if (process.platform !== 'darwin' && typeof mainWindow.setTitleBarOverlay === 'function') {
+      try {
+        mainWindow.setTitleBarOverlay({
+          color: isDark ? '#121214' : '#f4f4f5',
+          symbolColor: isDark ? '#a1a1aa' : '#52525b',
+          height: 40,
+        });
+      } catch {
+        // ignore if unsupported
+      }
+    }
+    return true;
+  });
 
   ipcMain.handle('notification:show', (event, { title, body, noteId }) => {
     if (!Notification.isSupported()) return false;

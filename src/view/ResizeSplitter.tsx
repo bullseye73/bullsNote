@@ -114,14 +114,16 @@ export function ResizeSplitter({
         flexShrink: 0,
         height: '100%',
         transition: 'background-color 0.15s ease',
-        backgroundColor: hovered ? 'rgba(34, 139, 230, 0.15)' : 'transparent',
+        backgroundColor: hovered ? 'rgba(59, 130, 246, 0.14)' : 'transparent',
       }}
     >
       <div
         style={{
           width: hovered ? 2 : 1,
           height: '100%',
-          backgroundColor: hovered ? 'var(--mantine-color-blue-6, #228be6)' : 'var(--mantine-color-gray-3, #dee2e6)',
+          backgroundColor: hovered
+            ? 'var(--mantine-color-blue-6, #228be6)'
+            : 'var(--bn-border-subtle)',
           transition: 'all 0.15s ease',
         }}
       />
@@ -242,14 +244,16 @@ export function HorizontalResizeSplitter({
         flexShrink: 0,
         width: '100%',
         transition: 'background-color 0.15s ease',
-        backgroundColor: hovered ? 'rgba(34, 139, 230, 0.15)' : 'transparent',
+        backgroundColor: hovered ? 'rgba(59, 130, 246, 0.14)' : 'transparent',
       }}
     >
       <div
         style={{
           height: hovered ? 2 : 1,
           width: '100%',
-          backgroundColor: hovered ? 'var(--mantine-color-blue-6, #228be6)' : 'var(--mantine-color-gray-3, #dee2e6)',
+          backgroundColor: hovered
+            ? 'var(--mantine-color-blue-6, #228be6)'
+            : 'var(--bn-border-subtle)',
           transition: 'all 0.15s ease',
         }}
       />

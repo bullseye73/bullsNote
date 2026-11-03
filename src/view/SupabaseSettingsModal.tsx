@@ -1,4 +1,4 @@
-// VIEW: Supabase 연동 정보 입력 및 동기화 관리 모달
+// VIEW: Supabase 연동 정보 입력 및 동기화 관리 모달 (SecretInput 마스킹·호버 노출·원클릭 복사 지원)
 import {
   ActionIcon,
   Alert,
@@ -6,10 +6,8 @@ import {
   Button,
   Code,
   CopyButton,
-  Divider,
   Group,
   Modal,
-  PasswordInput,
   Stack,
   Switch,
   Tabs,
@@ -25,7 +23,8 @@ import {
   IconCloudOff,
   IconCopy,
   IconDatabase,
-  IconExternalLink,
+  IconEye,
+  IconEyeOff,
   IconInfoCircle,
   IconPlugConnected,
   IconRefresh,
@@ -33,6 +32,85 @@ import {
 import { useEffect, useState } from 'react';
 import { useNotes } from '../controller/NotesController';
 import { SUPABASE_SETUP_SQL, SupabaseConfig, SupabaseService } from '../model/SupabaseService';
+
+export function SecretInput({
+  label,
+  description,
+  placeholder,
+  value,
+  onChange,
+  required,
+}: {
+  label: string;
+  description?: string;
+  placeholder?: string;
+  value: string;
+  onChange: (value: string) => void;
+  required?: boolean;
+}) {
+  const [pinnedReveal, setPinnedReveal] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+
+  const visible = pinnedReveal || hovered || focused || !value;
+
+  return (
+    <div
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <TextInput
+        label={label}
+        description={description}
+        placeholder={placeholder}
+        type={visible ? 'text' : 'password'}
+        value={value}
+        onChange={(e) => onChange(e.currentTarget.value)}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        required={required}
+        rightSectionWidth={64}
+        rightSection={
+          <Group gap={2} wrap="nowrap">
+            <Tooltip label={pinnedReveal ? '항상 숨기기' : '항상 표시 고정 (마우스 오버 시 자동 표시)'}>
+              <ActionIcon
+                size="sm"
+                variant="subtle"
+                color={pinnedReveal ? 'blue' : 'gray'}
+                onClick={() => setPinnedReveal((v) => !v)}
+                aria-label="표시 전환"
+              >
+                {visible ? <IconEyeOff size={14} /> : <IconEye size={14} />}
+              </ActionIcon>
+            </Tooltip>
+            <CopyButton value={value} timeout={1500}>
+              {({ copied, copy }) => (
+                <Tooltip label={copied ? '복사됨!' : '클립보드에 복사'}>
+                  <ActionIcon
+                    size="sm"
+                    variant="subtle"
+                    color={copied ? 'teal' : 'gray'}
+                    disabled={!value}
+                    onClick={copy}
+                    aria-label="복사"
+                  >
+                    {copied ? <IconCheck size={14} /> : <IconCopy size={14} />}
+                  </ActionIcon>
+                </Tooltip>
+              )}
+            </CopyButton>
+          </Group>
+        }
+        styles={{
+          input: {
+            fontFamily: visible ? 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' : undefined,
+            fontSize: 12.5,
+          },
+        }}
+      />
+    </div>
+  );
+}
 
 interface SupabaseSettingsModalProps {
   opened: boolean;
@@ -173,9 +251,9 @@ export function SupabaseSettingsModal({ opened, onClose }: SupabaseSettingsModal
                 borderRadius: 8,
                 backgroundColor: supabaseConnected
                   ? 'var(--mantine-color-green-light)'
-                  : 'var(--mantine-color-gray-1)',
+                  : 'var(--bn-card-hover)',
                 border: `1px solid ${
-                  supabaseConnected ? 'var(--mantine-color-green-3)' : 'var(--mantine-color-gray-3)'
+                  supabaseConnected ? 'var(--mantine-color-green-3)' : 'var(--bn-border-subtle)'
                 }`,
               }}
             >
@@ -229,21 +307,21 @@ export function SupabaseSettingsModal({ opened, onClose }: SupabaseSettingsModal
               </Alert>
             )}
 
-            <TextInput
+            <SecretInput
               label="Supabase Project URL"
-              description="Supabase 대시보드 -> Project Settings -> API -> Project URL"
+              description="기본 마스킹 보호됨 — 마우스를 올리거나 우측 눈 아이콘을 클릭하면 확인 및 원클릭 복사가 가능합니다."
               placeholder="https://your-project-id.supabase.co"
               value={url}
-              onChange={(e) => setUrl(e.currentTarget.value)}
+              onChange={setUrl}
               required
             />
 
-            <PasswordInput
+            <SecretInput
               label="Supabase Anon Key (Public API Key)"
               description="Supabase 대시보드 -> Project Settings -> API -> Project API Keys (anon public)"
               placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
               value={anonKey}
-              onChange={(e) => setAnonKey(e.currentTarget.value)}
+              onChange={setAnonKey}
               required
             />
 
@@ -256,7 +334,7 @@ export function SupabaseSettingsModal({ opened, onClose }: SupabaseSettingsModal
 
             <Alert icon={<IconInfoCircle size={16} />} color="blue" variant="light">
               <Text size="xs">
-                <strong>동기화 우선순위 안내:</strong> Supabase 연동 시 서버의 프로젝트와 노트가 최우선으로 로컬에 동기화(다운로드)되며, 서버에 없는 로컬 노트만 클라우드로 안전하게 업로드됩니다. (로컬 기본 시드 예제는 서버로 오염되지 않음)
+                <strong>동기화 우선순위 안내:</strong> Supabase 연동 시 서버의 프로젝트와 노트가 최우선으로 로컬에 동기화(다운로드)되며, 변경된 노트만 델타(Delta) 방식으로 최소 전송됩니다.
               </Text>
             </Alert>
 

@@ -1,9 +1,8 @@
-// VIEW: 인쇄 및 PDF 내보내기 전 A4 용지 규격 실시간 미리보기 모달
+// VIEW: 인쇄 및 PDF 내보내기 전 A4 용지 규격 실시간 미리보기 모달 (다크/라이트 테마 연동 지원)
 import {
   ActionIcon,
   Badge,
   Button,
-  Divider,
   Group,
   Modal,
   ScrollArea,
@@ -12,9 +11,10 @@ import {
   Switch,
   Text,
   Title,
+  useComputedColorScheme,
 } from '@mantine/core';
 import { IconFileTypePdf, IconPrinter, IconX } from '@tabler/icons-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { BlockNoteEditor } from '@blocknote/core';
 import { Note } from '../model/Note';
 import { noteBodyText } from '../model/HashtagService';
@@ -38,8 +38,20 @@ export function PrintPreviewModal({
   onPrint,
   onExportPdf,
 }: PrintPreviewModalProps) {
+  const computedColorScheme = useComputedColorScheme('light', { getInitialValueInEffect: true });
+  const isDark = computedColorScheme === 'dark';
+
   const [includeHeader, setIncludeHeader] = useState(true);
   const [fontSize, setFontSize] = useState<'normal' | 'large'>('normal');
+  const [sheetMode, setSheetMode] = useState<'theme' | 'paper'>('theme');
+
+  useEffect(() => {
+    if (opened) {
+      setSheetMode('theme');
+    }
+  }, [opened]);
+
+  const isSheetDark = sheetMode === 'theme' && isDark;
 
   // 에디터의 HTML 변환 결과
   const bodyHtml = useMemo(() => {
@@ -77,7 +89,7 @@ export function PrintPreviewModal({
       size="920px"
       title={
         <Group gap="xs">
-          <IconPrinter size={20} color="var(--mantine-color-blue-6)" />
+          <IconPrinter size={20} color="var(--mantine-color-blue-5)" />
           <Text fw={700} size="md">
             인쇄 및 PDF 미리보기
           </Text>
@@ -86,20 +98,40 @@ export function PrintPreviewModal({
       centered
       padding="md"
       styles={{
-        body: { backgroundColor: '#f3f4f6', padding: '16px' },
+        header: {
+          backgroundColor: 'var(--bn-surface-list)',
+          borderBottom: '1px solid var(--bn-border-subtle)',
+        },
+        content: {
+          backgroundColor: 'var(--bn-surface-sidebar)',
+          border: '1px solid var(--bn-border-subtle)',
+        },
+        body: {
+          backgroundColor: 'var(--bn-surface-sidebar)',
+          padding: '16px',
+        },
       }}
     >
       <Stack gap="md">
         {/* 상단 컨트롤 바 */}
-        <Group justify="space-between" align="center" bg="white" p="xs" style={{ borderRadius: 8, border: '1px solid #e5e7eb' }}>
-          <Group gap="lg">
+        <Group
+          justify="space-between"
+          align="center"
+          p="xs"
+          style={{
+            borderRadius: 8,
+            backgroundColor: 'var(--bn-surface-list)',
+            border: '1px solid var(--bn-border-subtle)',
+          }}
+        >
+          <Group gap="md" wrap="wrap">
             <Switch
               label="문서 메타정보(일시/태그) 포함"
               checked={includeHeader}
               onChange={(e) => setIncludeHeader(e.currentTarget.checked)}
-              size="sm"
+              size="xs"
             />
-            <Group gap="xs">
+            <Group gap={6}>
               <Text size="xs" c="dimmed">
                 글자 크기:
               </Text>
@@ -113,6 +145,22 @@ export function PrintPreviewModal({
                 ]}
               />
             </Group>
+            {isDark && (
+              <Group gap={6}>
+                <Text size="xs" c="dimmed">
+                  미리보기 배경:
+                </Text>
+                <SegmentedControl
+                  size="xs"
+                  value={sheetMode}
+                  onChange={(v) => setSheetMode(v as 'theme' | 'paper')}
+                  data={[
+                    { label: '다크 테마', value: 'theme' },
+                    { label: '흰색 용지', value: 'paper' },
+                  ]}
+                />
+              </Group>
+            )}
           </Group>
 
           <Group gap="xs">
@@ -126,7 +174,7 @@ export function PrintPreviewModal({
               인쇄하기
             </Button>
             <Button
-              variant="filled"
+              variant="light"
               color="red"
               size="xs"
               leftSection={<IconFileTypePdf size={15} />}
@@ -151,19 +199,24 @@ export function PrintPreviewModal({
           >
             <div
               className="a4-preview-sheet"
+              data-sheet-theme={isSheetDark ? 'dark' : 'light'}
               style={{
                 width: '100%',
                 maxWidth: '740px',
                 minHeight: '880px',
-                backgroundColor: '#ffffff',
-                boxShadow: '0 4px 20px rgba(0, 0, 0, 0.1)',
-                borderRadius: '4px',
+                backgroundColor: isSheetDark ? '#202023' : '#ffffff',
+                border: isSheetDark ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid rgba(0, 0, 0, 0.06)',
+                boxShadow: isSheetDark
+                  ? '0 8px 30px rgba(0, 0, 0, 0.45)'
+                  : '0 4px 20px rgba(0, 0, 0, 0.08)',
+                borderRadius: '8px',
                 padding: '48px 40px',
-                color: '#1a1a1a',
-                fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+                color: isSheetDark ? '#e4e4e7' : '#1a1a1a',
+                fontFamily: 'var(--bn-font-sans)',
                 fontSize: fontSize === 'large' ? '16px' : '14px',
-                lineHeight: 1.6,
+                lineHeight: 1.65,
                 boxSizing: 'border-box',
+                transition: 'background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease',
               }}
             >
               {/* 문서 헤더 */}
@@ -173,8 +226,10 @@ export function PrintPreviewModal({
                   fontSize: fontSize === 'large' ? '28px' : '24px',
                   fontWeight: 800,
                   margin: 0,
-                  color: '#111827',
-                  borderBottom: '2px solid #374151',
+                  color: isSheetDark ? '#fafafa' : '#111827',
+                  borderBottom: isSheetDark
+                    ? '2px solid rgba(255, 255, 255, 0.16)'
+                    : '2px solid #374151',
                   paddingBottom: 12,
                 }}
               >
@@ -188,19 +243,26 @@ export function PrintPreviewModal({
                     flexWrap: 'wrap',
                     gap: '16px',
                     fontSize: '12px',
-                    color: '#6b7280',
+                    color: isSheetDark ? '#a1a1aa' : '#6b7280',
                     margin: '12px 0 24px 0',
                     paddingBottom: '12px',
-                    borderBottom: '1px solid #e5e7eb',
+                    borderBottom: isSheetDark
+                      ? '1px solid rgba(255, 255, 255, 0.08)'
+                      : '1px solid #e5e7eb',
                   }}
                 >
                   <span>생성: {new Date(note.createdAt).toLocaleString('ko-KR')}</span>
                   <span>수정: {new Date(note.updatedAt).toLocaleString('ko-KR')}</span>
                   {note.tags.length > 0 && (
-                    <span>
-                      태그:{' '}
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+                      태그:
                       {note.tags.map((t) => (
-                        <Badge key={t} size="xs" variant="light" color="gray" ml={4}>
+                        <Badge
+                          key={t}
+                          size="xs"
+                          variant="light"
+                          color={isSheetDark ? 'blue' : 'gray'}
+                        >
                           #{t}
                         </Badge>
                       ))}

@@ -36,6 +36,7 @@ import React, { useEffect, useState } from 'react';
 import { useNotes } from '../controller/NotesController';
 import { DEFAULT_GEMINI_MODELS, GeminiConfig, GeminiService } from '../model/GeminiService';
 import { SHORTCUTS } from '../model/shortcutUtils';
+import { SecretInput } from './SupabaseSettingsModal';
 
 interface GeminiAiModalProps {
   opened: boolean;
@@ -451,12 +452,12 @@ export function GeminiAiModal({ opened, onClose, initialTab = 'clipboard' }: Gem
               </Group>
             </Card>
 
-            <PasswordInput
+            <SecretInput
               label="API Key"
+              description="기본 마스킹 보호됨 — 마우스를 올리거나 눈 아이콘을 클릭하면 확인 및 복사가 가능합니다."
               placeholder="AIzaSy..."
               value={config.apiKey}
-              onChange={(e) => {
-                const newKey = e.currentTarget.value;
+              onChange={(newKey) => {
                 setConfig((prev) => ({ ...prev, apiKey: newKey }));
               }}
             />

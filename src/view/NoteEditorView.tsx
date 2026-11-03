@@ -844,7 +844,7 @@ function BlockEditor({
           position: 'relative',
           display: 'flex',
           flexDirection: 'column',
-          backgroundColor: 'var(--mantine-color-body)',
+          backgroundColor: 'var(--bn-surface-editor)',
         }}
       >
         {/* 우측 상단 고정 목차 (TOC) */}
@@ -857,7 +857,7 @@ function BlockEditor({
             minHeight: 0,
             overflow: 'auto',
             paddingBottom: 280,
-            backgroundColor: 'var(--mantine-color-body)',
+            backgroundColor: 'var(--bn-surface-editor)',
           }}
           onClick={(e) => {
             const target = e.target as HTMLElement;
@@ -1016,7 +1016,7 @@ function BlockEditor({
               maxWidth: 900,
             }}
           >
-            <Divider mb="md" color="var(--mantine-color-gray-2)" />
+            <Divider mb="md" color="var(--bn-border-subtle)" />
             <Stack gap="sm">
               {/* 첨부파일 관리 패널 (파일 없을 시 접힘) */}
               <NoteAttachmentsView
@@ -1366,20 +1366,6 @@ export function NoteEditorView() {
               </ActionIcon>
             </Tooltip>
 
-            {/* PDF 내보내기 버튼 */}
-            <Tooltip label={isNoteLocked ? '잠긴 상태에서는 내보낼 수 없습니다' : 'PDF로 내보내기'}>
-              <ActionIcon
-                size="lg"
-                variant="light"
-                color="red"
-                disabled={isNoteLocked}
-                onClick={handleExportPdf}
-                aria-label="PDF로 내보내기"
-              >
-                <IconFileTypePdf size={17} />
-              </ActionIcon>
-            </Tooltip>
-
             {/* 공유 및 내보내기 메뉴 */}
             <Menu position="bottom-end" withArrow shadow="md" withinPortal disabled={isNoteLocked}>
               <Menu.Target>
@@ -1454,7 +1440,7 @@ export function NoteEditorView() {
               </Menu.Dropdown>
             </Menu>
 
-            <Divider orientation="vertical" />
+            <Divider orientation="vertical" color="var(--bn-border-subtle)" />
 
             {/* 파스텔 색상 선택 메뉴 */}
             <Menu position="bottom-end" withArrow shadow="md" withinPortal disabled={isNoteLocked}>
@@ -1519,7 +1505,7 @@ export function NoteEditorView() {
             >
               히스토리
             </Button>
-            <Divider orientation="vertical" />
+            <Divider orientation="vertical" color="var(--bn-border-subtle)" />
             <Tooltip label={isNoteLocked ? '잠긴 상태에서는 변경할 수 없습니다' : (selected.pinned ? '핀 해제' : '상단 고정')}>
               <ActionIcon
                 size="lg"
@@ -1547,42 +1533,34 @@ export function NoteEditorView() {
           </Group>
         </Group>
 
-        <Group gap={6} mb={6} align="center">
-          <ThemeIcon size={20} variant="subtle" color="blue" radius="sm">
-            <IconHash size={15} />
-          </ThemeIcon>
-          {selected.tags.length === 0 ? (
-            <Text size="xs" c="dimmed">
-              태그 없음 — 본문에 <Text span fw={600} c="blue.6">#태그명</Text>을 입력하면 실시간으로 감지 및 분류됩니다.
-            </Text>
-          ) : (
-            selected.tags.map((t) => (
-              <Tooltip key={t} label={`#${t} 태그로 목록 필터링`}>
-                <Badge
-                  key={t}
-                  variant="light"
-                  color="blue"
-                  size="sm"
-                  style={{
-                    cursor: 'pointer',
-                    transition: 'all 0.15s ease',
-                    fontWeight: 600,
-                  }}
-                  onClick={() => setActiveTag(t)}
-                >
-                  #{t}
-                </Badge>
-              </Tooltip>
-            ))
-          )}
+        <Group justify="space-between" align="center" wrap="wrap" gap={8} mb={6}>
+          <Group gap={5} align="center" wrap="wrap">
+            {selected.tags.length === 0 ? (
+              <Text size="11.5px" c="dimmed">
+                #태그를 본문에 입력하면 자동으로 분류됩니다
+              </Text>
+            ) : (
+              selected.tags.map((t) => (
+                <Tooltip key={t} label={`#${t} 태그로 목록 필터링`}>
+                  <span
+                    className="bn-subtle-tag"
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => setActiveTag(t)}
+                  >
+                    #{t}
+                  </span>
+                </Tooltip>
+              ))
+            )}
+          </Group>
+          <Text size="11.5px" c="dimmed">
+            생성 {new Date(selected.createdAt).toLocaleString('ko-KR')} · 수정{' '}
+            {new Date(selected.updatedAt).toLocaleString('ko-KR')} ·{' '}
+            {CryptoService.isEncrypted(selected.content)
+              ? '🔒 암호화됨'
+              : `${noteBodyText(selected.content).length}자`}
+          </Text>
         </Group>
-        <Text size="xs" c="dimmed" mb={8}>
-          생성 {new Date(selected.createdAt).toLocaleString('ko-KR')} · 수정{' '}
-          {new Date(selected.updatedAt).toLocaleString('ko-KR')} ·{' '}
-          {CryptoService.isEncrypted(selected.content)
-            ? '🔒 암호화됨'
-            : `${noteBodyText(selected.content).length}자`}
-        </Text>
         {storageError && (
           <Badge
             size="md"
@@ -1682,7 +1660,7 @@ export function NoteEditorView() {
             minHeight: 0,
             display: 'flex',
             flexDirection: 'column',
-            backgroundColor: 'var(--mantine-color-body)',
+            backgroundColor: 'var(--bn-surface-editor)',
           }}
         >
           <ErrorBoundary
