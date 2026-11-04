@@ -859,8 +859,12 @@ function BlockEditor({
           }}
           onClick={(e) => {
             const target = e.target as HTMLElement;
-            // 내부 링크, 버튼, 입력창, 파일 블록, 태그 뱃지 등이 아닌 빈 공간/패딩 클릭 시 즉시 쓰기모드로 포커스
-            if (!target.closest('a, button, input, textarea, [data-content-type="file"], .bn-hashtag-badge')) {
+            // 내부 링크, 버튼, 입력창, select(코드블록 언어 선택), 툴바, 파일 블록, 태그 뱃지 등이 아닌 빈 공간/패딩 클릭 시에만 쓰기모드로 포커스
+            if (
+              !target.closest(
+                'a, button, input, textarea, select, option, .bn-code-toolbar, [data-content-type="file"], .bn-hashtag-badge'
+              )
+            ) {
               try {
                 editor.focus();
               } catch {}

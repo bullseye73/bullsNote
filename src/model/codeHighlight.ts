@@ -148,6 +148,8 @@ export function createRichCodeBlock(
 
     if (editor.isEditable) {
       select.addEventListener('change', handleLanguageChange);
+      // 클릭 이벤트가 상위 에디터 컨테이너로 전파되어 editor.focus()를 호출하고 네이티브 select 팝업을 닫는 현상 원천 차단
+      select.addEventListener('click', (e) => e.stopPropagation());
     } else {
       select.disabled = true;
     }
@@ -292,9 +294,10 @@ export function createRichCodeBlock(
     updateLineNumbers();
   };
 
-  // 툴바 내부 클릭 시 ProseMirror 커서 가로챔 방지
+  // 툴바 내부 클릭 시 ProseMirror 커서 가로챔 및 상위 컨테이너 버블링 방지
   const handleToolbarMouseDown = (e: MouseEvent) => {
-    if ((e.target as HTMLElement)?.tagName === 'SELECT') {
+    const tag = (e.target as HTMLElement)?.tagName;
+    if (tag === 'SELECT' || tag === 'OPTION') {
       e.stopPropagation();
       return;
     }
@@ -302,7 +305,12 @@ export function createRichCodeBlock(
     e.stopPropagation();
   };
 
+  const handleToolbarClick = (e: MouseEvent) => {
+    e.stopPropagation();
+  };
+
   toolbar.addEventListener('mousedown', handleToolbarMouseDown);
+  toolbar.addEventListener('click', handleToolbarClick);
   collapseBtn.addEventListener('click', toggleCollapse);
   lineNumbersBtn.addEventListener('click', toggleLineNumbers);
 
@@ -383,6 +391,7 @@ export function createRichCodeBlock(
     },
     destroy: () => {
       toolbar.removeEventListener('mousedown', handleToolbarMouseDown);
+      toolbar.removeEventListener('click', handleToolbarClick);
       collapseBtn.removeEventListener('click', toggleCollapse);
       lineNumbersBtn.removeEventListener('click', toggleLineNumbers);
       copyBtn.removeEventListener('click', handleCopy);
