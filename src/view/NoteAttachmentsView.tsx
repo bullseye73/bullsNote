@@ -1,4 +1,4 @@
-// VIEW: Supabase Storage 연동 노트 첨부파일 관리 컴포넌트
+// VIEW: Google Drive Storage 연동 노트 첨부파일 관리 컴포넌트
 import { useEffect, useRef, useState } from 'react';
 import {
   ActionIcon,
@@ -32,7 +32,7 @@ import {
 } from '@tabler/icons-react';
 import { Note, NoteAttachment } from '../model/Note';
 import { useNotes } from '../controller/NotesController';
-import { SupabaseService } from '../model/SupabaseService';
+import { GoogleDriveService } from '../model/GoogleDriveService';
 
 interface NoteAttachmentsViewProps {
   note: Note;
@@ -70,9 +70,8 @@ function getFileIcon(fileName: string, mimeType?: string) {
 
 export function NoteAttachmentsView({ note, onAttachmentDeleted }: NoteAttachmentsViewProps) {
   const {
-    supabaseConnected,
-    supabaseConfig,
-    openSupabaseModal,
+    googleConnected,
+    openGoogleSyncModal,
     addAttachment,
     removeAttachment,
   } = useNotes();
@@ -95,8 +94,8 @@ export function NoteAttachmentsView({ note, onAttachmentDeleted }: NoteAttachmen
 
   // 파일 업로드 처리
   const handleFileUpload = async (files: FileList | File[]) => {
-    if (!supabaseConnected || !supabaseConfig.enabled) {
-      openSupabaseModal();
+    if (!googleConnected) {
+      openGoogleSyncModal();
       return;
     }
 
@@ -110,7 +109,7 @@ export function NoteAttachmentsView({ note, onAttachmentDeleted }: NoteAttachmen
           alert(`"${file.name}" 파일이 50MB 용량 제한을 초과했습니다.`);
           continue;
         }
-        const att = await SupabaseService.uploadAttachment(note.id, file);
+        const att = await GoogleDriveService.uploadAttachment(note.id, file);
         addAttachment(note.id, att);
       }
     } catch (err) {
@@ -127,8 +126,8 @@ export function NoteAttachmentsView({ note, onAttachmentDeleted }: NoteAttachmen
     setDownloadingId(att.id);
     try {
       let blob: Blob;
-      if (supabaseConnected && att.storagePath) {
-        blob = await SupabaseService.downloadAttachment(att.storagePath);
+      if (googleConnected && att.storagePath) {
+        blob = await GoogleDriveService.downloadAttachment(att.storagePath);
       } else {
         // storagePath가 없거나 오프라인일 때 URL fetch 폴백
         const res = await fetch(att.url);
@@ -232,7 +231,7 @@ export function NoteAttachmentsView({ note, onAttachmentDeleted }: NoteAttachmen
             </Group>
           )}
 
-          {supabaseConnected ? (
+          {googleConnected ? (
             <Button
               size="compact-xs"
               variant="light"
@@ -244,15 +243,15 @@ export function NoteAttachmentsView({ note, onAttachmentDeleted }: NoteAttachmen
               파일 첨부
             </Button>
           ) : (
-            <Tooltip label="클라우드 파일 업로드를 위해 Supabase 연동이 필요합니다">
+            <Tooltip label="클라우드 파일 업로드를 위해 Google Drive 연동이 필요합니다">
               <Button
                 size="compact-xs"
                 variant="subtle"
                 color="orange"
                 leftSection={<IconAlertCircle size={13} />}
-                onClick={openSupabaseModal}
+                onClick={openGoogleSyncModal}
               >
-                Supabase 연동 필요
+                Google Drive 연동 필요
               </Button>
             </Tooltip>
           )}
@@ -270,8 +269,8 @@ export function NoteAttachmentsView({ note, onAttachmentDeleted }: NoteAttachmen
 
       {/* 내용 영역 */}
       <Collapse in={opened} mt="xs">
-        {/* Supabase 미연동 시 안내 배너 */}
-        {!supabaseConnected && (
+        {/* Google Drive 미연동 시 안내 배너 */}
+        {!googleConnected && (
           <Paper
             p="xs"
             mb="xs"
@@ -285,7 +284,7 @@ export function NoteAttachmentsView({ note, onAttachmentDeleted }: NoteAttachmen
               <Group gap="xs" wrap="nowrap">
                 <IconAlertCircle size={18} color="var(--mantine-color-orange-5)" />
                 <Text size="xs" c={isDark ? 'orange.2' : 'orange.9'}>
-                  파일 첨부 및 동기화는 <strong>Supabase 스토리지 연동</strong> 상태에서만 제공됩니다.
+                  파일 첨부 및 클라우드 동기화는 <strong>Google Drive 연동</strong> 상태에서 제공됩니다.
                 </Text>
               </Group>
               <Button
@@ -293,9 +292,9 @@ export function NoteAttachmentsView({ note, onAttachmentDeleted }: NoteAttachmen
                 variant="light"
                 color="orange"
                 leftSection={<IconSettings size={12} />}
-                onClick={openSupabaseModal}
+                onClick={openGoogleSyncModal}
               >
-                설정 열기
+                연동 설정
               </Button>
             </Group>
           </Paper>
@@ -323,9 +322,9 @@ export function NoteAttachmentsView({ note, onAttachmentDeleted }: NoteAttachmen
           >
             <IconCloudUpload size={22} color="var(--mantine-color-dimmed)" style={{ marginBottom: 4 }} />
             <Text size="xs" c="dimmed">
-              {supabaseConnected
+              {googleConnected
                 ? '첨부된 파일이 없습니다. 파일을 여기에 드래그하거나 [파일 첨부] 버튼을 누르세요 (최대 50MB).'
-                : 'Supabase를 연동하면 자유롭게 파일을 첨부하고 다른 기기에서 다운로드할 수 있습니다.'}
+                : 'Google 계정을 연동하면 자유롭게 파일을 첨부하고 다른 기기에서 다운로드할 수 있습니다.'}
             </Text>
           </div>
         ) : (

@@ -44,8 +44,8 @@ import {
   swapDataUrlsToAssets,
 } from '../model/FileVault';
 import type { VaultApi } from '../electron';
-import { RealtimeStatus, SupabaseConfig, SupabaseService } from '../model/SupabaseService';
-import { CryptoService } from '../model/CryptoService';
+import { GoogleDriveConfig, GoogleDriveService, GoogleUserInfo } from '../model/GoogleDriveService';
+import { hasAnyEncryptedNotes, hasLegacyEncryptedText, recoverEncryptedNotes } from '../model/LegacyDecryptor';
 import { parseSearchQuery, searchNotes } from '../model/SearchService';
 import { formatDateIso } from '../model/dateUtils';
 import { GeminiService } from '../model/GeminiService';
@@ -110,10 +110,10 @@ export interface NotesState {
   vaultError: string;
   storageError: string;
   activeAlarmNote: Note | null;
-  /** Supabase 클라우드 연동 상태 */
-  supabaseConnected: boolean;
-  supabaseConfig: SupabaseConfig;
-  realtimeStatus: RealtimeStatus;
+  /** Google Drive 클라우드 연동 상태 */
+  googleConnected: boolean;
+  googleConfig: GoogleDriveConfig;
+  guestMode: boolean;
   isSyncing: boolean;
   syncError: string | null;
   lastSyncedAt: number | null;
@@ -121,11 +121,8 @@ export interface NotesState {
   projectSortOption: SortOption;
   noteSortOption: SortOption;
   sortedProjects: Project[];
-  /** 종단간 암호화(E2EE) 보안 상태 */
-  isMasterSet: boolean;
-  isUnlocked: boolean;
-  securityModalOpened: boolean;
-  supabaseModalOpened: boolean;
+  hasEncryptedNotes: boolean;
+  googleSyncModalOpened: boolean;
   geminiModalOpened: boolean;
   geminiModalTab: 'clipboard' | 'prompt' | 'settings';
 }
@@ -166,21 +163,18 @@ export interface NotesActions {
   updateProject(id: string, patch: Partial<Pick<Project, 'name' | 'icon'>>): void;
   deleteProject(id: string): void;
   moveNoteToProject(noteId: string, targetProjectId: string): void;
-  saveSupabaseConfig(config: SupabaseConfig): Promise<void>;
-  syncWithSupabase(isSilent?: boolean): Promise<void>;
-  disconnectSupabase(): void;
+  saveGoogleConfig(config: Partial<GoogleDriveConfig>): void;
+  syncWithGoogleDrive(isSilent?: boolean): Promise<void>;
+  loginGoogle(): Promise<{ success: boolean; error?: string; user?: GoogleUserInfo }>;
+  logoutGoogle(): void;
+  enterGuestMode(): void;
   setProjectSortOption(opt: SortOption): void;
   setNoteSortOption(opt: SortOption): void;
-  /** 보안 액션 */
-  openSecurityModal(): void;
-  closeSecurityModal(): void;
-  setupMasterPassword(password: string): Promise<boolean>;
-  unlockMasterPassword(password: string): Promise<boolean>;
-  lockMasterPassword(): void;
-  removeMasterPassword(): Promise<boolean>;
-  /** Supabase 모달 및 첨부파일 액션 */
-  openSupabaseModal(): void;
-  closeSupabaseModal(): void;
+  /** 기존 암호화된 노트 평문 복구 */
+  decryptAllLegacyNotes(password: string): Promise<{ success: boolean; count: number }>;
+  /** Google Drive 모달 및 첨부파일 액션 */
+  openGoogleSyncModal(): void;
+  closeGoogleSyncModal(): void;
   addAttachment(noteId: string, attachment: NoteAttachment): void;
   removeAttachment(noteId: string, attachmentId: string): Promise<void>;
   /** Gemini AI 액션 */
@@ -285,17 +279,15 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const isLocalSavePendingRef = useRef(false);
   const flushLocalSaveRef = useRef<(() => Promise<void>) | null>(null);
 
-  // Supabase 클라우드 연동 상태
-  const [supabaseConfig, setSupabaseConfigState] = useState<SupabaseConfig>(() => SupabaseService.getConfig());
-  const [realtimeStatus, setRealtimeStatus] = useState<RealtimeStatus>(() => SupabaseService.getRealtimeStatus());
+  // Google Drive 클라우드 연동 상태
+  const [googleConfig, setGoogleConfigState] = useState<GoogleDriveConfig>(() => GoogleDriveService.getConfig());
   const [isSyncing, setIsSyncing] = useState(false);
   const isSyncingRef = useRef(false);
+  const syncWithGoogleDriveRef = useRef<(isSilent?: boolean) => Promise<void>>(() => Promise.resolve());
   const [syncError, setSyncError] = useState<string | null>(null);
-  const supabaseConnected = supabaseConfig.enabled && Boolean(supabaseConfig.url && supabaseConfig.anonKey);
-
-  useEffect(() => {
-    return SupabaseService.subscribeToRealtimeStatus(setRealtimeStatus);
-  }, []);
+  const [guestMode, setGuestMode] = useState(false);
+  const enterGuestMode = useCallback(() => setGuestMode(true), []);
+  const googleConnected = GoogleDriveService.isConnected();
 
   // 프로젝트 및 노트 정렬 상태 (localStorage 영구 보존)
   const [projectSortOption, setProjectSortOptionState] = useState<SortOption>(() => {
@@ -343,120 +335,6 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     (a: Note, b: Note) => compareNotesWithOption(a, b, noteSortOption),
     [noteSortOption],
   );
-
-  // 종단간 암호화(E2EE) 보안 상태 및 핸들러
-  const [isMasterSet, setIsMasterSet] = useState<boolean>(() => CryptoService.isMasterPasswordSet());
-  const [isUnlocked, setIsUnlocked] = useState<boolean>(() => CryptoService.isUnlocked());
-  const [securityModalOpened, setSecurityModalOpened] = useState(false);
-
-  // 노트 목록에 암호화된 노트가 포함되어 있다면 마스터 비밀번호가 설정된 것으로 자동 감지
-  useEffect(() => {
-    if (!isMasterSet) {
-      if (notes.some((n) => CryptoService.isEncrypted(n.content))) {
-        setIsMasterSet(true);
-      }
-    }
-  }, [notes, isMasterSet]);
-
-  // 앱 기동 시 보안 보호가 설정되어 있고 잠겨있다면 자동으로 비밀번호 입력 모달 오픈
-  const initialModalPromptRef = useRef(false);
-  useEffect(() => {
-    if (!initialModalPromptRef.current && isMasterSet && !isUnlocked) {
-      initialModalPromptRef.current = true;
-      setSecurityModalOpened(true);
-    }
-  }, [isMasterSet, isUnlocked]);
-
-  const openSecurityModal = useCallback(() => setSecurityModalOpened(true), []);
-  const closeSecurityModal = useCallback(() => setSecurityModalOpened(false), []);
-
-  const setupMasterPassword = useCallback(
-    async (password: string): Promise<boolean> => {
-      // 기존 암호화된 노트가 있다면 그 salt를 재사용하여 호환성 유지
-      const encryptedNote = notes.find((n) => CryptoService.isEncrypted(n.content));
-      const existingSalt = encryptedNote ? CryptoService.extractSaltHex(encryptedNote.content) : null;
-
-      await CryptoService.setupMasterPassword(password, existingSalt);
-      setIsMasterSet(true);
-      setIsUnlocked(true);
-      // 현재 메모리에 있는 노트들을 복호화하여 편집 가능한 평문으로 전환
-      const decrypted = await CryptoService.decryptNotes(notes);
-      setNotes(decrypted);
-      // 로컬 저장소에는 암호화하여 저장
-      const encrypted = await CryptoService.encryptNotes(decrypted);
-      NoteRepository.save(encrypted);
-      if (supabaseConnected) {
-        const verifier = localStorage.getItem('bullsnote.security.verifier.v1');
-        if (verifier) void SupabaseService.uploadSecurityVerifier(verifier);
-        await SupabaseService.upsertNotes(decrypted, true);
-      }
-      return true;
-    },
-    [notes, supabaseConnected],
-  );
-
-  const unlockMasterPassword = useCallback(
-    async (password: string): Promise<boolean> => {
-      const encryptedSamples = notes
-        .map((n) => n.content)
-        .filter((c) => CryptoService.isEncrypted(c));
-      const ok = await CryptoService.unlock(password, encryptedSamples);
-      if (ok) {
-        setIsUnlocked(true);
-        setIsMasterSet(true);
-        // 모든 암호화된 노트를 복호화하여 상태 갱신
-        const decrypted = await CryptoService.decryptNotes(notes);
-        setNotes(decrypted);
-        if (supabaseConnected) {
-          const verifier = localStorage.getItem('bullsnote.security.verifier.v1');
-          if (verifier) void SupabaseService.uploadSecurityVerifier(verifier);
-        }
-        return true;
-      }
-      return false;
-    },
-    [notes, supabaseConnected],
-  );
-
-  const lockMasterPassword = useCallback(async () => {
-    if (isLocalSavePendingRef.current && flushLocalSaveRef.current) {
-      if (localSaveTimerRef.current) clearTimeout(localSaveTimerRef.current);
-      await flushLocalSaveRef.current();
-    }
-    // 잠그기 전 현재 평문 노트들을 암호화하여 로컬에 저장
-    const encrypted = await CryptoService.encryptNotes(notes);
-    const res = NoteRepository.save(encrypted);
-    if (!res.success) {
-      setStorageError(res.error || '저장 실패');
-    } else {
-      setStorageError('');
-    }
-    CryptoService.lock();
-    setIsUnlocked(false);
-    // 메모리 상태도 암호화된 상태로 전환하여 평문 메모리 폐기
-    setNotes(encrypted);
-  }, [notes]);
-
-  const removeMasterPassword = useCallback(async (): Promise<boolean> => {
-    // 현재 복호화된 평문 상태의 노트를 로컬에 그대로 저장
-    const decrypted = await CryptoService.decryptNotes(notes);
-    setNotes(decrypted);
-    const res = NoteRepository.save(decrypted);
-    if (!res.success) {
-      setStorageError(res.error || '저장 실패');
-    } else {
-      setStorageError('');
-    }
-    CryptoService.removeMasterPassword();
-    setIsMasterSet(false);
-    setIsUnlocked(false);
-    if (supabaseConnected) {
-      await SupabaseService.upsertNotes(decrypted, true);
-      await SupabaseService.deleteNote('__bullsnote_security_verifier__');
-    }
-    return true;
-  }, [notes, supabaseConnected]);
-
 
   // 주기적으로 알람 감지 (5초 주기)
   useEffect(() => {
@@ -527,23 +405,10 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const flushSaveRef = useRef<(() => Promise<void>) | null>(null);
 
   const doLocalSave = useCallback(
-    async (currentNotes: Note[], isMaster: boolean, unlocked: boolean, seq: number) => {
+    async (currentNotes: Note[], seq: number) => {
       isLocalSavePendingRef.current = false;
       try {
-        let notesToSave = currentNotes;
-        if (isMaster) {
-          if (unlocked) {
-            notesToSave = await CryptoService.encryptNotes(currentNotes);
-            // 비동기 암호화 완료 후 자신이 최신 요청인지 순번 확인 (경합 방지)
-            if (seq !== localSaveSeqRef.current) {
-              return;
-            }
-          } else {
-            // 잠금 상태: 암호문은 암호문, 평문은 평문 보존
-            notesToSave = currentNotes;
-          }
-        }
-        const res = NoteRepository.save(notesToSave);
+        const res = NoteRepository.save(currentNotes);
         if (seq === localSaveSeqRef.current) {
           if (res.success) {
             setStorageError('');
@@ -561,7 +426,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     [],
   );
 
-  // localStorage 모드: 디바운스(400ms) 및 순번 토큰을 적용하여 영속화 (키 입력마다 전체 재암호화 방지)
+  // localStorage 모드: 디바운스(400ms) 및 순번 토큰을 적용하여 영속화
   useEffect(() => {
     if (vaultMode) return;
 
@@ -569,7 +434,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     const currentSeq = localSaveSeqRef.current;
     isLocalSavePendingRef.current = true;
 
-    const runSave = () => doLocalSave(notes, isMasterSet, isUnlocked, currentSeq);
+    const runSave = () => doLocalSave(notes, currentSeq);
     flushLocalSaveRef.current = runSave;
 
     if (localSaveTimerRef.current) {
@@ -584,14 +449,14 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         clearTimeout(localSaveTimerRef.current);
       }
     };
-  }, [notes, vaultMode, isMasterSet, isUnlocked, doLocalSave]);
+  }, [notes, vaultMode, doLocalSave]);
 
   useEffect(() => {
     if (vaultMode) return;
     NoteRepository.saveProjects(projects);
   }, [projects, vaultMode]);
 
-  // localStorage 모드: 레거시 마이그레이션 (암호화된 노트는 블록 변환 제외)
+  // localStorage 모드: 레거시 마이그레이션 (암호문은 복구 전까지 JSON 블록으로 감싸지 않도록 보존)
   const migratedRef = useRef(false);
   useEffect(() => {
     if (vaultMode || migratedRef.current) return;
@@ -600,13 +465,13 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       try {
         const current = NoteRepository.load();
         const needsMigration = current.some(
-          (n) => !isBlocksJson(n.content) && !CryptoService.isEncrypted(n.content),
+          (n) => !isBlocksJson(n.content) && !hasLegacyEncryptedText(n.content),
         );
         if (!needsMigration) return;
         const headless = await getHeadless();
         const converted = await Promise.all(
           current.map(async (n) => {
-            if (isBlocksJson(n.content) || CryptoService.isEncrypted(n.content)) return n;
+            if (isBlocksJson(n.content) || hasLegacyEncryptedText(n.content)) return n;
             const blocks = await headless.toBlocks(n.content);
             const content = JSON.stringify(blocks);
             return { ...n, content, tags: extractHashtags(n.title, content) };
@@ -678,8 +543,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
               if (text == null) continue;
               const parsed = parseNoteFile(f.id, text);
               if (!parsed) continue;
-              const decryptedBody = await CryptoService.decrypt(parsed.body);
-              const withUrls = await swapAssetsToDataUrls(decryptedBody, (name) => vault.readAsset(name));
+              const withUrls = await swapAssetsToDataUrls(parsed.body, (name) => vault.readAsset(name));
               const blocks = await headless.toBlocks(withUrls);
               const content = JSON.stringify(blocks);
               loaded.push({
@@ -735,11 +599,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
             n.id,
             (name, b64) => vault.writeAsset(name, b64),
           );
-          let finalBody = body;
-          if (CryptoService.isMasterPasswordSet() && CryptoService.isUnlocked()) {
-            finalBody = await CryptoService.encrypt(body);
-          }
-          const text = serializeNoteFile(n, finalBody);
+          const text = serializeNoteFile(n, body);
           if (lastSavedRef.current.get(n.id) !== text) {
             await vault.write(n.id, text);
             lastSavedRef.current.set(n.id, text);
@@ -932,41 +792,36 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     await pollExternal();
   }, [pollExternal]);
 
-  // --- Supabase 변경 감지 증분 동기화 큐 (Idle 시 네트워크 0건) ---
+  // --- Google Drive 변경 감지 동기화 큐 (디바운스 2초, Idle 시 트래픽 0건) ---
   const pendingNotesRef = useRef<Map<string, Note>>(new Map());
   const noteSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const queueNoteSync = useCallback(
     (note: Note) => {
-      if (!supabaseConnected || !supabaseConfig.autoSync || isSyncingRef.current) return;
+      if (!GoogleDriveService.isConnected() || !googleConfig.autoSync || isSyncingRef.current) return;
       pendingNotesRef.current.set(note.id, note);
       if (noteSyncTimerRef.current) clearTimeout(noteSyncTimerRef.current);
       noteSyncTimerRef.current = setTimeout(async () => {
-        const notesToSync = Array.from(pendingNotesRef.current.values());
         pendingNotesRef.current.clear();
-        if (notesToSync.length > 0) {
-          await SupabaseService.upsertNotes(notesToSync);
-        }
-      }, 1500);
+        void syncWithGoogleDriveRef.current(true);
+      }, 2000);
     },
-    [supabaseConnected, supabaseConfig.autoSync],
+    [googleConfig.autoSync],
   );
 
-  const queueProjectSync = useCallback(
-    (project: Project) => {
-      if (!supabaseConnected || !supabaseConfig.autoSync || isSyncingRef.current) return;
-      void SupabaseService.upsertProject(project);
-    },
-    [supabaseConnected, supabaseConfig.autoSync],
-  );
+  const queueProjectSync = useCallback((_project?: Project) => {
+    if (!GoogleDriveService.isConnected() || !googleConfig.autoSync || isSyncingRef.current) return;
+    if (noteSyncTimerRef.current) clearTimeout(noteSyncTimerRef.current);
+    noteSyncTimerRef.current = setTimeout(async () => {
+      void syncWithGoogleDriveRef.current(true);
+    }, 2000);
+  }, [googleConfig.autoSync]);
 
   const mutate = useCallback(
     (id: string, fn: (n: Note) => Note) => {
       setNotes((prev) =>
         prev.map((n) => {
           if (n.id === id) {
-            // 잠금 상태에서 암호화된 노트는 메타데이터 변경 방지
-            if (CryptoService.isEncrypted(n.content)) return n;
             const updated = { ...fn(n), updatedAt: Date.now() };
             queueNoteSync(updated);
             return updated;
@@ -979,8 +834,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   );
 
   const refreshTags = useCallback((note: Note, title: string, content: string): Note => {
-    // 암호화된 본문인 경우 태그를 재계산하면 ENC:v1:... 암호문에서 본문 태그가 0개로 소실되므로 기존 note.tags 유지
-    const tags = CryptoService.isEncrypted(content) ? note.tags : extractHashtags(title, content);
+    const tags = extractHashtags(title, content);
     return { ...note, title, content, tags };
   }, []);
 
@@ -1075,13 +929,14 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
           const nextNotes = notes.filter((n) => (n.projectId || DEFAULT_PROJECT_ID) === nextProj.id);
           setSelectedId(nextNotes[0]?.id ?? null);
         }
-        if (supabaseConnected && supabaseConfig.autoSync) {
-          void SupabaseService.deleteProject(id);
+        if (GoogleDriveService.isConnected() && googleConfig.autoSync) {
+          GoogleDriveService.recordDeletedProject(id);
+          queueProjectSync();
         }
         return remaining;
       });
     },
-    [selectedProjectId, notes, supabaseConnected, supabaseConfig.autoSync],
+    [selectedProjectId, notes, googleConfig.autoSync, queueProjectSync],
   );
 
   const moveNoteToProject = useCallback(
@@ -1261,15 +1116,16 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
           );
           setSelectedId(siblings[0]?.id ?? fixed[0]?.id ?? null);
         }
-        if (supabaseConnected && supabaseConfig.autoSync) {
+        if (GoogleDriveService.isConnected() && googleConfig.autoSync) {
           for (const doomedId of doomed) {
-            void SupabaseService.deleteNote(doomedId);
+            GoogleDriveService.recordDeletedNote(doomedId);
           }
+          queueProjectSync();
         }
         return fixed;
       });
     },
-    [selectedId, selectedProjectId, supabaseConnected, supabaseConfig.autoSync],
+    [selectedId, selectedProjectId, googleConfig.autoSync, queueProjectSync],
   );
 
   const updateTitle = useCallback(
@@ -1277,8 +1133,6 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       setNotes((prev) =>
         prev.map((n) => {
           if (n.id === id) {
-            // 잠금 상태(암호화된 본문)인 경우 제목 변경 차단 (태그 및 메타데이터 무결성 보호)
-            if (CryptoService.isEncrypted(n.content)) return n;
             // 내용 변경이 없으면 updatedAt 갱신 및 동기화 스킵
             if (n.title === title) return n;
             const updated = { ...refreshTags(withHistory(n), title, n.content), updatedAt: Date.now() };
@@ -1351,8 +1205,6 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       setNotes((prev) =>
         prev.map((n) => {
           if (n.id === id) {
-            // 잠금 상태(암호화된 본문)인 경우 알람 설정 변경 차단
-            if (CryptoService.isEncrypted(n.content)) return n;
             const updated = { ...n, reminder, updatedAt: Date.now() };
             queueNoteSync(updated);
             return updated;
@@ -1559,9 +1411,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
           const snap = n.history.find((h) => h.savedAt === savedAt);
           if (!snap) return n;
           const cur: Note = withHistory(n, true);
-          const restoredTags = CryptoService.isEncrypted(snap.content)
-            ? (snap.tags.length > 0 ? snap.tags : n.tags)
-            : (snap.tags.length > 0 ? snap.tags : extractHashtags(snap.title, snap.content));
+          const restoredTags = snap.tags.length > 0 ? snap.tags : extractHashtags(snap.title, snap.content);
           const updated = {
             ...refreshTags(cur, snap.title, snap.content),
             tags: restoredTags,
@@ -1697,52 +1547,35 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     [isFiltering, flat, currentProjectNotes, noteComparator],
   );
 
-  // --- Supabase 동기화 액션 ---
-  const lastSilentSyncAtRef = useRef<number>(0);
-  const syncWithSupabase = useCallback(async (isSilent = false, bypassCooldown = false) => {
-    if (!SupabaseService.isConnected() || isSyncingRef.current) return;
+  // --- Google Drive 동기화 액션 ---
+  const syncWithGoogleDrive = useCallback(async (isSilent = false) => {
+    if (!GoogleDriveService.isConnected() || isSyncingRef.current) return;
 
     // 자동 백그라운드 동기화인 경우, 사용자가 타이핑 중이면 작업 방해 방지를 위해 건너뜀
     if (isSilent && (isLocalSavePendingRef.current || pendingNotesRef.current.size > 0)) {
       return;
     }
-    if (isSilent && !bypassCooldown) {
-      const minInterval = SupabaseService.getRealtimeStatus() === 'connected' ? 300_000 : 60_000;
-      if (Date.now() - lastSilentSyncAtRef.current < minInterval) return;
-    }
-    if (isSilent) {
-      lastSilentSyncAtRef.current = Date.now();
-    }
 
     if (!isSilent) {
       setIsSyncing(true);
-    }
-    isSyncingRef.current = true;
-    if (!isSilent) {
       setSyncError(null);
     }
+    isSyncingRef.current = true;
 
     try {
       const curNotes = notesRef.current;
       const curProjects = projectsRef.current;
-      const res = await SupabaseService.syncAll(curNotes, curProjects);
+      const res = await GoogleDriveService.syncAll(curNotes, curProjects);
       if (res.success) {
-        setSupabaseConfigState(SupabaseService.getConfig());
+        setGoogleConfigState(GoogleDriveService.getConfig());
         if (!res.hasRemoteChanges) {
           return;
         }
-        let syncedNotes = res.notes;
-        if (CryptoService.isUnlocked()) {
-          syncedNotes = await CryptoService.decryptNotes(syncedNotes);
-        }
-        if (syncedNotes.some((n) => CryptoService.isEncrypted(n.content)) || CryptoService.isMasterPasswordSet()) {
-          setIsMasterSet(true);
-        }
-        const sortedNotes = syncedNotes.sort(sortNotes);
+        const sortedNotes = res.notes.sort(sortNotes);
         setNotes(sortedNotes);
         setProjects(res.projects);
         NoteRepository.saveProjects(res.projects);
-        setSupabaseConfigState(SupabaseService.getConfig());
+        setGoogleConfigState(GoogleDriveService.getConfig());
 
         // 선택 상태 보정: 동기화 후 현재 선택된 프로젝트와 노트가 유효하지 않으면 서버 데이터 기준으로 안전하게 재선택
         const currentProjId = selectedProjectIdRef.current;
@@ -1762,7 +1595,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         }
       } else {
         if (!isSilent) {
-          setSyncError(res.error || '동기화 중 오류가 발생했습니다.');
+          setSyncError(res.error || 'Google Drive 동기화 중 오류가 발생했습니다.');
         }
       }
     } catch (err: unknown) {
@@ -1777,157 +1610,95 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const saveSupabaseConfig = useCallback(async (newConfig: SupabaseConfig) => {
-    SupabaseService.saveConfig(newConfig);
-    setSupabaseConfigState(newConfig);
+  syncWithGoogleDriveRef.current = syncWithGoogleDrive;
+
+  const saveGoogleConfig = useCallback((patch: Partial<GoogleDriveConfig>) => {
+    const updated = GoogleDriveService.saveConfig(patch);
+    setGoogleConfigState(updated);
   }, []);
 
-  const disconnectSupabase = useCallback(() => {
-    const disabledConfig: SupabaseConfig = {
-      ...supabaseConfig,
-      enabled: false,
-    };
-    SupabaseService.saveConfig(disabledConfig);
-    setSupabaseConfigState(disabledConfig);
-    setSyncError(null);
-  }, [supabaseConfig]);
-
-  // Supabase 최초 기동 시 1회만 클라우드 데이터와 양방향 동기화
-  const initialSupabaseSyncedRef = useRef(false);
-  useEffect(() => {
-    if (!ready || initialSupabaseSyncedRef.current) return;
-    if (supabaseConfig.enabled && SupabaseService.isConnected()) {
-      initialSupabaseSyncedRef.current = true;
-      void syncWithSupabase();
+  const loginGoogle = useCallback(async () => {
+    const res = await GoogleDriveService.login();
+    if (res.success) {
+      setGoogleConfigState(GoogleDriveService.getConfig());
+      void syncWithGoogleDrive(false);
     }
-  }, [ready, supabaseConfig.enabled, syncWithSupabase]);
+    return res;
+  }, [syncWithGoogleDrive]);
 
-  // --- Supabase Realtime 리스너: 다른 기기에서 DB 변경 시 즉각 자동 반영 ---
+  const logoutGoogle = useCallback(() => {
+    GoogleDriveService.logout();
+    setGoogleConfigState(GoogleDriveService.getConfig());
+    setGuestMode(false);
+    setSyncError(null);
+  }, []);
+
+  // Google Drive 최초 기동 시 1회만 클라우드 데이터와 양방향 동기화
+  const initialGoogleSyncedRef = useRef(false);
   useEffect(() => {
-    if (!ready || !supabaseConnected || !supabaseConfig.autoSync) return;
+    if (!ready || initialGoogleSyncedRef.current) return;
+    if (googleConfig.enabled && GoogleDriveService.isConnected()) {
+      initialGoogleSyncedRef.current = true;
+      void syncWithGoogleDrive(true);
+    }
+  }, [ready, googleConfig.enabled, syncWithGoogleDrive]);
 
-    const unsubscribe = SupabaseService.subscribeToRealtime(async (change) => {
-      if (change.type === 'sync_needed') {
-        void syncWithSupabase(true, true);
-        return;
+  // --- Google Drive 다중 기기 자동 동기화 트리거 및 사용자 설정 주기별 폴링 ---
+  useEffect(() => {
+    if (!ready || !googleConnected || !googleConfig.autoSync) return;
+
+    // 1. 창 포커스 복귀 시
+    const onFocus = async () => {
+      if (await GoogleDriveService.hasRemoteChangesQuick()) {
+        void syncWithGoogleDrive(true);
       }
-
-      if (change.type === 'project') {
-        if (change.action === 'DELETE') {
-          setProjects((prev) => {
-            const next = prev.filter((p) => p.id !== change.id);
-            NoteRepository.saveProjects(next);
-            return next;
-          });
-          if (selectedProjectIdRef.current === change.id) {
-            setSelectedProjectId(DEFAULT_PROJECT_ID);
-          }
-        } else {
-          setProjects((prev) => {
-            const exists = prev.some((p) => p.id === change.project.id);
-            const next = exists
-              ? prev.map((p) => (p.id === change.project.id ? change.project : p))
-              : [...prev, change.project];
-            NoteRepository.saveProjects(next);
-            return next;
-          });
-        }
-        SupabaseService.updateLastSyncedAt();
-        setSupabaseConfigState(SupabaseService.getConfig());
-        return;
-      }
-
-      if (change.type === 'note') {
-        if (change.action === 'DELETE') {
-          const doomedId = change.id;
-          setNotes((prev) => prev.filter((n) => n.id !== doomedId));
-          if (selectedIdRef.current === doomedId) {
-            const remaining = notesRef.current.filter((n) => n.id !== doomedId);
-            setSelectedId(remaining[0]?.id ?? null);
-          }
-          SupabaseService.updateLastSyncedAt();
-          setSupabaseConfigState(SupabaseService.getConfig());
-          return;
-        }
-
-        // INSERT 또는 UPDATE
-        const remoteNote = change.note;
-        if (remoteNote.id === '__bullsnote_security_verifier__') return;
-
-        // 로컬에서 사용자가 방금 입력 중인 노트인 경우 덮어쓰기 방지
-        if (pendingNotesRef.current.has(remoteNote.id)) {
-          return;
-        }
-
-        setNotes((prev) => {
-          const local = prev.find((n) => n.id === remoteNote.id);
-          // 로컬 노트가 더 최신이거나 같으면 무시
-          if (local && local.updatedAt >= remoteNote.updatedAt) {
-            return prev;
-          }
-          const next = local
-            ? prev.map((n) =>
-                n.id === remoteNote.id
-                  ? { ...remoteNote, history: n.history, todoMeta: remoteNote.todoMeta ?? n.todoMeta }
-                  : n,
-              )
-            : [remoteNote, ...prev];
-          const sorted = next.sort(sortNotes);
-          return sorted;
-        });
-
-        SupabaseService.updateLastSyncedAt();
-        setSupabaseConfigState(SupabaseService.getConfig());
-      }
-    });
-
-    return () => {
-      unsubscribe();
     };
-  }, [ready, supabaseConnected, supabaseConfig.autoSync, syncWithSupabase]);
-
-  // --- 다중 기기 자동 동기화 트리거: 포커스, 탭 가시성, 네트워크 재연결, 30초 주기 하이브리드 폴링 ---
-  useEffect(() => {
-    if (!ready || !supabaseConnected || !supabaseConfig.autoSync) return;
-
-    // 1. 창 포커스 복귀 시 (다른 기기에서 수정한 뒤 이 기기로 돌아왔을 때)
-    const onFocus = () => void syncWithSupabase(true);
 
     // 2. 브라우저 탭 활성화 시
-    const onVisibilityChange = () => {
+    const onVisibilityChange = async () => {
       if (document.visibilityState === 'visible') {
-        void syncWithSupabase(true);
+        if (await GoogleDriveService.hasRemoteChangesQuick()) {
+          void syncWithGoogleDrive(true);
+        }
       }
     };
 
     // 3. 인터넷 재연결 시 (오프라인 -> 온라인)
-    const onOnline = () => void syncWithSupabase(true, true);
-
-    // 4. Realtime 웹소켓이 비연결 상태일 때만 3분 주기로 백업 폴링 (연결 상태에서는 불필요한 폴링 0건)
-    const syncInterval = setInterval(() => {
-      if (
-        document.visibilityState === 'visible' &&
-        SupabaseService.getRealtimeStatus() !== 'connected'
-      ) {
-        void syncWithSupabase(true);
-      }
-    }, 180000);
+    const onOnline = () => void syncWithGoogleDrive(true);
 
     window.addEventListener('focus', onFocus);
     document.addEventListener('visibilitychange', onVisibilityChange);
     window.addEventListener('online', onOnline);
 
+    // 4. 사용자가 설정한 주기(pollingIntervalMs)로 백그라운드 초경량 헤더 체크
+    let syncInterval: ReturnType<typeof setInterval> | null = null;
+    const intervalMs = googleConfig.pollingIntervalMs;
+    if (intervalMs && intervalMs > 0) {
+      syncInterval = setInterval(async () => {
+        if (
+          document.visibilityState === 'visible' &&
+          !isLocalSavePendingRef.current &&
+          pendingNotesRef.current.size === 0
+        ) {
+          const hasRemote = await GoogleDriveService.hasRemoteChangesQuick();
+          if (hasRemote) {
+            void syncWithGoogleDrive(true);
+          }
+        }
+      }, intervalMs);
+    }
+
     return () => {
-      clearInterval(syncInterval);
+      if (syncInterval) clearInterval(syncInterval);
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVisibilityChange);
       window.removeEventListener('online', onOnline);
     };
-  }, [ready, supabaseConnected, supabaseConfig.autoSync, syncWithSupabase]);
+  }, [ready, googleConnected, googleConfig.autoSync, googleConfig.pollingIntervalMs, syncWithGoogleDrive]);
 
-  const [supabaseModalOpened, setSupabaseModalOpened] = useState(false);
-  const openSupabaseModal = useCallback(() => setSupabaseModalOpened(true), []);
-  const closeSupabaseModal = useCallback(() => setSupabaseModalOpened(false), []);
+  const [googleSyncModalOpened, setGoogleSyncModalOpened] = useState(false);
+  const openGoogleSyncModal = useCallback(() => setGoogleSyncModalOpened(true), []);
+  const closeGoogleSyncModal = useCallback(() => setGoogleSyncModalOpened(false), []);
 
   const addAttachment = useCallback(
     (noteId: string, attachment: NoteAttachment) => {
@@ -1945,9 +1716,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       const att = targetNote?.attachments?.find((a) => a.id === attachmentId);
       if (att && att.storagePath) {
         try {
-          await SupabaseService.deleteAttachment(att.storagePath);
+          await GoogleDriveService.deleteAttachment(att.storagePath);
         } catch (e) {
-          console.warn('[Supabase] 첨부파일 삭제 예외:', e);
+          console.warn('[GoogleDrive] 첨부파일 삭제 예외:', e);
         }
       }
       mutate(noteId, (n) => {
@@ -2104,6 +1875,38 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     [queueNoteSync],
   );
 
+  const hasEncryptedNotes = useMemo(() => hasAnyEncryptedNotes(notes), [notes]);
+
+  const decryptAllLegacyNotes = useCallback(
+    async (password: string): Promise<{ success: boolean; count: number }> => {
+      const res = await recoverEncryptedNotes(notesRef.current, password);
+      if (!res.success) {
+        return { success: false, count: 0 };
+      }
+
+      // 복호화된 본문 중 마크다운/일반 텍스트가 있으면 BlockNote JSON으로 안전하게 변환
+      const headless = await getHeadless();
+      const normalized = await Promise.all(
+        res.notes.map(async (n) => {
+          if (!isBlocksJson(n.content) && !hasLegacyEncryptedText(n.content)) {
+            const blocks = await headless.toBlocks(n.content);
+            const contentJson = JSON.stringify(blocks);
+            return { ...n, content: contentJson, tags: extractHashtags(n.title, contentJson) };
+          }
+          return n;
+        }),
+      );
+
+      setNotes(normalized);
+      NoteRepository.save(normalized);
+      if (GoogleDriveService.isConnected()) {
+        void syncWithGoogleDriveRef.current(false);
+      }
+      return { success: true, count: res.recoveredCount };
+    },
+    [],
+  );
+
   const selected = useMemo(() => notes.find((n) => n.id === selectedId) ?? null, [notes, selectedId]);
 
   const value = useMemo(
@@ -2138,15 +1941,18 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       vaultError,
       storageError,
       activeAlarmNote,
-      supabaseConnected,
-      supabaseConfig,
-      realtimeStatus,
+      googleConnected,
+      googleConfig,
+      guestMode,
+      enterGuestMode,
       isSyncing,
       syncError,
-      lastSyncedAt: supabaseConfig.lastSyncedAt,
+      lastSyncedAt: googleConfig.lastSyncedAt,
       projectSortOption,
       noteSortOption,
       sortedProjects,
+      hasEncryptedNotes,
+      decryptAllLegacyNotes,
       setProjectSortOption,
       setNoteSortOption,
       select,
@@ -2178,21 +1984,13 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       updateProject,
       deleteProject,
       moveNoteToProject,
-      saveSupabaseConfig,
-      syncWithSupabase,
-      disconnectSupabase,
-      isMasterSet,
-      isUnlocked,
-      securityModalOpened,
-      openSecurityModal,
-      closeSecurityModal,
-      setupMasterPassword,
-      unlockMasterPassword,
-      lockMasterPassword,
-      removeMasterPassword,
-      supabaseModalOpened,
-      openSupabaseModal,
-      closeSupabaseModal,
+      saveGoogleConfig,
+      syncWithGoogleDrive,
+      loginGoogle,
+      logoutGoogle,
+      googleSyncModalOpened,
+      openGoogleSyncModal,
+      closeGoogleSyncModal,
       addAttachment,
       removeAttachment,
       geminiModalOpened,
@@ -2232,9 +2030,10 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       vaultError,
       storageError,
       activeAlarmNote,
-      supabaseConnected,
-      supabaseConfig,
-      realtimeStatus,
+      googleConnected,
+      googleConfig,
+      guestMode,
+      enterGuestMode,
       isSyncing,
       syncError,
       select,
@@ -2263,26 +2062,20 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       updateProject,
       deleteProject,
       moveNoteToProject,
-      saveSupabaseConfig,
-      syncWithSupabase,
-      disconnectSupabase,
+      saveGoogleConfig,
+      syncWithGoogleDrive,
+      loginGoogle,
+      logoutGoogle,
       projectSortOption,
       noteSortOption,
       sortedProjects,
+      hasEncryptedNotes,
+      decryptAllLegacyNotes,
       setProjectSortOption,
       setNoteSortOption,
-      isMasterSet,
-      isUnlocked,
-      securityModalOpened,
-      openSecurityModal,
-      closeSecurityModal,
-      setupMasterPassword,
-      unlockMasterPassword,
-      lockMasterPassword,
-      removeMasterPassword,
-      supabaseModalOpened,
-      openSupabaseModal,
-      closeSupabaseModal,
+      googleSyncModalOpened,
+      openGoogleSyncModal,
+      closeGoogleSyncModal,
       addAttachment,
       removeAttachment,
       selectedDate,

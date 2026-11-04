@@ -36,7 +36,7 @@ import React, { useEffect, useState } from 'react';
 import { useNotes } from '../controller/NotesController';
 import { DEFAULT_GEMINI_MODELS, GeminiConfig, GeminiService } from '../model/GeminiService';
 import { SHORTCUTS } from '../model/shortcutUtils';
-import { SecretInput } from './SupabaseSettingsModal';
+import { SecretInput } from './SecretInput';
 
 interface GeminiAiModalProps {
   opened: boolean;

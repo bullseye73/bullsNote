@@ -315,7 +315,7 @@ export interface Note {
   parentId: string | null;
   /** 최신순 스냅샷 (최대 MAX_HISTORY개) */
   history: NoteSnapshot[];
-  /** 첨부 파일 목록 (Supabase Storage 등) */
+  /** 첨부 파일 목록 (Google Drive Storage 등) */
   attachments?: NoteAttachment[];
   /** 할일 관리 메타데이터 (할일 항목일 경우) */
   todoMeta?: TodoMeta;
@@ -551,10 +551,12 @@ export function findBacklinks(notes: Note[], targetNoteId: string): Note[] {
   });
 }
 
-/** URL이 Supabase 등 클라우드 스토리지 첨부파일 URL인지 확인 */
+/** URL이 Google Drive 등 클라우드 스토리지 첨부파일 URL인지 확인 */
 export function isAttachmentUrl(url?: string | null): boolean {
   if (!url) return false;
   return (
+    url.includes('drive.google.com') ||
+    url.includes('googleapis.com/drive') ||
     url.includes('bullsnote-attachments') ||
     url.includes('/storage/v1/object/public/') ||
     url.includes('#deleted') ||

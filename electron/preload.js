@@ -1,10 +1,9 @@
-// preload: renderer 격리 유지, 필요시 안전한 API만 노출
+// preload: renderer 격리 유지, 필요시 안전한 API만 노출 (sandbox 환경 호환을 위해 외부 파일 require 금지)
 const { contextBridge, ipcRenderer } = require('electron');
-const packageJson = require('../package.json');
 
 contextBridge.exposeInMainWorld('bullsNote', {
   platform: process.platform,
-  version: packageJson.version || '0.1.0',
+  version: '1.1.1',
   setTitleBarTheme: (isDark) => ipcRenderer.invoke('window:setTitleBarTheme', Boolean(isDark)),
   notification: {
     show: (data) => ipcRenderer.invoke('notification:show', data),
@@ -29,5 +28,9 @@ contextBridge.exposeInMainWorld('bullsNote', {
   },
   print: {
     exportPdf: (title) => ipcRenderer.invoke('print:exportPdf', { title }),
+  },
+  googleAuth: {
+    startLogin: (opts) => ipcRenderer.invoke('googleAuth:startLogin', opts),
+    refreshToken: (opts) => ipcRenderer.invoke('googleAuth:refreshToken', opts),
   },
 });

@@ -32,7 +32,6 @@ import {
 import { useState, useCallback, useMemo } from 'react';
 import { PastelColorConfig, PASTEL_COLORS, getPastelConfig, TreeNode } from '../model/Note';
 import { useNotes } from '../controller/NotesController';
-import { CryptoService } from '../model/CryptoService';
 import { getSearchSnippet } from '../model/SearchService';
 import { HighlightText } from './HighlightText';
 import { formatDateTimeIso } from '../model/dateUtils';
@@ -68,14 +67,9 @@ function RowActions({
     notes,
     projects,
     moveNoteToProject,
-    isMasterSet,
-    isUnlocked,
   } = useNotes();
   const note = notes.find((n) => n.id === id)!;
-  const isNoteLocked =
-    note &&
-    ((!isUnlocked && (isMasterSet || CryptoService.isEncrypted(note.content))) ||
-      CryptoService.isEncrypted(note.content));
+  const isNoteLocked = false;
   const isSystemGroup = isSystemGroupNote(note);
 
   return (
@@ -334,7 +328,7 @@ function TreeRow({
   onDragEnd: () => void;
   descendantCounts: Map<string, number>;
 }) {
-  const { selectedId, select, isUnlocked, isMasterSet } = useNotes();
+  const { selectedId, select } = useNotes();
   const scheme = useComputedColorScheme('light', { getInitialValueInEffect: true });
   const isDark = scheme === 'dark';
 
@@ -344,9 +338,7 @@ function TreeRow({
   const cfg = getPastelConfig(n.color);
   const isSystemGroup = isSystemGroupNote(n);
 
-  const isNoteLocked =
-    (!isUnlocked && (isMasterSet || CryptoService.isEncrypted(n.content))) ||
-    CryptoService.isEncrypted(n.content);
+  const isNoteLocked = false;
 
   const isDragging = draggingId === n.id;
   const isOver = dropTargetId === n.id && draggingId !== n.id;

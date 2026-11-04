@@ -1,6 +1,6 @@
 # BullsNote — PC 지식관리 메모장 (Notion-like + 해시태그)
 
-Windows / Linux / macOS 멀티 플랫폼 지원. MVC 패턴 + 로컬 파일 볼트 + Supabase 클라우드 동기화 지원.
+Windows / Linux / macOS 멀티 플랫폼 지원. MVC 패턴 + 로컬 파일 볼트 + Google Drive 클라우드 동기화 지원.
 
 ---
 
@@ -9,17 +9,18 @@ Windows / Linux / macOS 멀티 플랫폼 지원. MVC 패턴 + 로컬 파일 볼�
 - **Mantine 7 (MIT, 무료)**: 반응형 UI 컴포넌트, AppShell 레이아웃, 다크/라이트 모드 테마.
 - **BlockNote 0.55 + ariakit 스킨**: 노션식 블록 에디터, `/` 슬래시 메뉴(표·코드·이미지·파일), 드래그 앤 드롭 정렬.
 - **Shiki 4 (MIT)**: 19개 언어 코드 블록 문법 강조 (라이트/다크 테마 동시 지원).
-- **Supabase Cloud Sync**: 로컬-클라우드 양방향 증분 동기화, 오프라인 퍼스트, 유휴 시 0-트래픽 최적화.
+- **Google Drive Cloud Sync**: Google 계정 OAuth 원클릭 로그인, Google Drive를 개인 DB 및 파일 스토리지로 무료(15GB) 활용, 3-way 병합, 사용자 설정 주기별 스마트 폴링, 유휴 시 0-트래픽 최적화.
+- **Gemini AI**: 개인 Gemini API Key 기반 맞춤형 AI 어시스턴트 (클립보드 요약, 작성 보조 등).
 - **Tabler Icons (MIT)**: 직관적인 아이콘 세트.
 
 ---
 
 ## 📁 MVC 아키텍처 매핑
 ```
-src/model/      → M: Note.ts, HashtagService.ts, NoteRepository.ts, SupabaseService.ts (도메인+영속성+동기화)
-src/view/       → V: SidebarView, NoteListView, NoteEditorView, SupabaseSettingsModal, ErrorBoundary (표현 계층)
+src/model/      → M: Note.ts, HashtagService.ts, NoteRepository.ts, GoogleDriveService.ts (도메인+영속성+동기화)
+src/view/       → V: SidebarView, NoteListView, NoteEditorView, GoogleSyncModal, ErrorBoundary (표현 계층)
 src/controller/ → C: NotesController.tsx (useNotes 컨텍스트, 상태 관리 및 액션)
-electron/       → 데스크톱 셸 (main.js, preload.js, vault-ipc.js, tray.js)
+electron/       → 데스크톱 셸 (main.js, preload.js, vault-ipc.js, google-auth-ipc.js, tray.js)
 ```
 
 ---
@@ -38,9 +39,10 @@ electron/       → 데스크톱 셸 (main.js, preload.js, vault-ipc.js, tray.js
   - **클립보드 복사**: 마크다운(`.md`), 서식 유지 HTML(이메일/노션/워드용), 일반 텍스트 복사.
   - **파일 내보내기 및 OS 공유**: 마크다운 파일(`.md`), HTML 웹페이지(`.html`) 다운로드 및 시스템 공유 창 지원.
 - **알람 & 리마인더**: 특정 날짜/시간 알림, 반복 알람(매일/평일/매주/매월), OS 시스템 알림창 및 트레이 연동.
-- **이중 저장소 지원**:
-  1. **로컬 파일 볼트(Local File Vault)**: `내 문서/BullsNote` 폴더에 `.md` 마크다운 + frontmatter 형태로 파일 저장 (OneDrive/Dropbox 연동 가능).
-  2. **Supabase 클라우드 동기화**: 프로젝트 URL과 Anon Key 입력만으로 클라우드 양방향 동기화. 변경 시에만 가볍게 증분 전송되며 평상시 통신이 전혀 없는 초경량 아키텍처.
+- **클라우드 및 로컬 이중 저장소 지원**:
+  1. **로컬 파일 볼트(Local File Vault)**: `내 문서/BullsNote` 폴더에 `.md` 마크다운 + frontmatter 형태로 파일 저장.
+  2. **Google Drive 클라우드 동기화**: Google 계정 OAuth 원클릭 연동으로 본인의 Google Drive를 무료 DB 및 첨부파일 스토리지로 활용. 동기화 폴링 주기를 설정에서 변경 가능.
+- **종단간 암호화(E2EE)**: 마스터 비밀번호 설정 시 모든 노트 본문이 AES-GCM 256비트로 암호화되어 Google Drive와 로컬에 안전하게 보관.
 
 ---
 
@@ -120,4 +122,4 @@ npm run dist:mac
   *(또는 '시스템 설정 > 개인정보 보호 및 보안 > 보안' 섹션에서 '확인 없이 열기'를 클릭하여 허용할 수도 있습니다)*
 - **NSIS 캐시 오류**: Windows에서 NSIS 생성 시 오류가 발생하면 `%LOCALAPPDATA%\electron-builder\Cache\nsis` 폴더를 삭제 후 재시도하세요.
 - **Electron 바이너리 다운로드 실패**: `npm install --ignore-scripts` 후 `node node_modules/electron/install.js`를 별도로 실행하세요.
-- **Supabase CSP 오류 해결**: Supabase 통신은 `index.html`의 CSP 정책(`connect-src https: wss:`)에 허용되어 있습니다.
+- **Google Drive 및 Gemini CSP 정책**: Google Drive API 및 Gemini AI 통신은 `index.html`의 CSP 정책(`connect-src https: wss:`)에 허용되어 있습니다.

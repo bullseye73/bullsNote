@@ -162,10 +162,10 @@ export function getNoteSlashMenuItems(
       },
     },
     {
-      title: '파일 첨부 (Supabase Storage)',
+      title: '파일 첨부 (Google Drive Storage)',
       subtext: '클라우드 스토리지에 파일을 업로드하고 본문에 연결합니다',
       badge: '스토리지',
-      aliases: ['파일', '첨부', 'file', 'upload', 'attach', '스토리지'],
+      aliases: ['파일', '첨부', 'file', 'upload', 'attach', '스토리지', '드라이브'],
       group: '미디어 및 파일',
       icon: <IconPaperclip size={18} color="var(--mantine-color-teal-6)" />,
       onItemClick: () => {

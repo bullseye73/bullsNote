@@ -1,6 +1,5 @@
 // MODEL: 스마트 검색 엔진 (초성 검색, 다중 토큰 AND, 연산자 파싱, 관련도 랭킹, 문맥 스니펫)
 import { Note, Project } from './Note';
-import { CryptoService } from './CryptoService';
 import { noteBodyText } from './HashtagService';
 
 // 한글 초성 목록 (19개)
@@ -314,10 +313,7 @@ export function searchNotes(
     const matchedTokens: string[] = [];
 
     const title = note.title || '';
-    const notePlainContent =
-      !CryptoService.isEncrypted(note.content) && !CryptoService.isCorruptedPlaceholder(note.content)
-        ? noteBodyText(note.content)
-        : '';
+    const notePlainContent = noteBodyText(note.content);
     const noteTagsStr = note.tags.join(' ');
     const projName = projectMap.get(note.projectId || 'default')?.name || '';
     const attachmentNames = (note.attachments || []).map((a) => a.name).join(' ');
@@ -411,10 +407,6 @@ export function getSearchSnippet(
   tokens: string[],
   maxLen = 120,
 ): string {
-  if (CryptoService.isEncrypted(content) || CryptoService.isCorruptedPlaceholder(content)) {
-    return '🔒 암호화된 노트입니다.';
-  }
-
   const plain = noteBodyText(content);
   if (!plain) return '내용 없음';
 

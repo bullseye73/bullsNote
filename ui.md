@@ -66,7 +66,7 @@ OS 고유의 룩앤필(macOS의 Frosted Glass / Windows 11의 Mica & Fluent)을 
 |  • 01_Projects (6)|   URL, API Key 저장       |                                         |
 |  • 02_Areas    (5)|   10월 22일 수정          | BullsNote                               |
 |  • 03_Archive (10)|                           |                                         |
-|  • 04_Resources(5)| 📄 주간 회의록            | Supabase 연동 및 Gemini API 설정 안내...|
+|  • 04_Resources(5)| 📄 주간 회의록            | Google Drive 연동 및 Gemini API 설정 안내...|
 |                   |   팀 전원 안건 릴리즈     |                                         |
 | 📅 Daily Notes    |                           | [선택 영역 시 플로팅 서식바 B I U S ` ] |
 | 🤖 Gemini AI      | 📄 worklog 관리           |                                         |
@@ -87,7 +87,7 @@ OS 고유의 룩앤필(macOS의 Frosted Glass / Windows 11의 Mica & Fluent)을 
 3. **통합 검색(Command Palette) 중심 네비게이션**:
    - 상단 헤더의 복잡한 버튼들을 `⌘ + K` (Windows/Linux: `Ctrl + K`) 단축키 중심의 팝업 검색창으로 흡수하여 에디터 캔버스를 극대화.
 4. **민감 정보 마스킹 UI 지원**:
-   - API Key나 Supabase URL 같은 민감 데이터는 기본적으로 마스킹(`••••••••`) 처리하고, 호버/클릭 시 복사 및 열람할 수 있는 `Secret Input` 컴포넌트 도입.
+   - API Key나 비밀번호 같은 민감 데이터는 기본적으로 마스킹(`••••••••`) 처리하고, 호버/클릭 시 복사 및 열람할 수 있는 `Secret Input` 컴포넌트 도입.
 
 ---
 

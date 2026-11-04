@@ -21,6 +21,31 @@ export interface PrintApi {
   exportPdf(title: string): Promise<{ success: boolean; filePath?: string; canceled?: boolean; error?: string }>;
 }
 
+export interface GoogleAuthResult {
+  success: boolean;
+  error?: string;
+  accessToken?: string;
+  refreshToken?: string;
+  expiresAt?: number;
+  user?: {
+    email: string;
+    name: string;
+    picture?: string;
+  };
+}
+
+export interface GoogleRefreshTokenResult {
+  success: boolean;
+  error?: string;
+  accessToken?: string;
+  expiresAt?: number;
+}
+
+export interface GoogleAuthApi {
+  startLogin(opts?: { clientId?: string; clientSecret?: string }): Promise<GoogleAuthResult>;
+  refreshToken(opts: { clientId?: string; clientSecret?: string; refreshToken: string }): Promise<GoogleRefreshTokenResult>;
+}
+
 declare global {
   interface Window {
     bullsNote?: {
@@ -29,6 +54,7 @@ declare global {
       vault?: VaultApi;
       notification?: NotificationApi;
       print?: PrintApi;
+      googleAuth?: GoogleAuthApi;
     };
   }
 }

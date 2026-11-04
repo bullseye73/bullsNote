@@ -3,12 +3,27 @@ const path = require('path');
 const fs = require('fs');
 const packageJson = require('../package.json');
 const { registerVaultIpc } = require('./vault-ipc');
+const { registerGoogleAuthIpc } = require('./google-auth-ipc');
 const { setupTray } = require('./tray');
 
 const isDev = !app.isPackaged;
 
+// 중복 실행 방지: 이미 실행 중인 인스턴스가 있으면 기존 창을 활성화하고 새 인스턴스는 종료
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  app.quit();
+}
+
 let mainWindow = null;
 let trayCtl = { tray: null, requestQuit: () => app.quit(), isQuitting: () => true };
+
+app.on('second-instance', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  }
+});
 
 function setupAppMenu() {
   const isMac = process.platform === 'darwin';
@@ -93,6 +108,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: false,
       spellcheck: true,
     },
     autoHideMenuBar: true,
@@ -146,6 +162,18 @@ function createWindow() {
 
   // 외부 링크 클릭 시 새 Electron 창 대신 시스템 기본 브라우저로 오픈
   win.webContents.setWindowOpenHandler(({ url }) => {
+    // Google OAuth 팝업 허용 (Google Identity Services 및 OAuth 팝업)
+    if (url.startsWith('https://accounts.google.com/')) {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          width: 520,
+          height: 680,
+          autoHideMenuBar: true,
+        },
+      };
+    }
+
     // 내부 URL 또는 노트 내부 링크(#note-, note://)인 경우 외부 브라우저 오픈 차단
     const isDevUrl = isDev && url.startsWith('http://localhost:5190');
     const isInternalNote = url.includes('#note-') || url.startsWith('note:');
@@ -209,6 +237,7 @@ function createWindow() {
 app.whenReady().then(() => {
   setupAppMenu();
   registerVaultIpc(app);
+  registerGoogleAuthIpc(app);
 
   ipcMain.handle('window:setTitleBarTheme', (_event, isDark) => {
     if (!mainWindow || mainWindow.isDestroyed()) return false;
@@ -287,8 +316,21 @@ app.whenReady().then(() => {
   trayCtl = setupTray({ app }, () => mainWindow);
   createWindow();
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      createWindow();
+    } else {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    }
   });
+});
+
+// Cmd+Q 또는 app.quit() 호출 시 트레이 숨김 방지 플래그 활성화
+app.on('before-quit', () => {
+  if (trayCtl && typeof trayCtl.markQuitting === 'function') {
+    trayCtl.markQuitting();
+  }
 });
 
 // 트레이 상주를 위해 창이 모두 닫혀도 종료하지 않음 (종료는 트레이 메뉴)

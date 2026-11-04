@@ -1,6 +1,7 @@
 // VIEW: 좌측 사이드바 (프로젝트/폴더 중심 탐색 + Daily Notes/AI/즐겨찾기/할일 + 하단 달력·태그 팝오버)
 import {
   ActionIcon,
+  Avatar,
   Badge,
   Button,
   Divider,
@@ -8,6 +9,7 @@ import {
   Menu,
   Modal,
   NavLink,
+  Paper,
   Popover,
   ScrollArea,
   SimpleGrid,
@@ -19,6 +21,7 @@ import {
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import {
+  IconBrandGoogle,
   IconCalendar,
   IconCalendarEvent,
   IconCommand,
@@ -69,10 +72,10 @@ const POPULAR_ICONS = [
 ];
 
 interface SidebarViewProps {
-  onOpenSupabaseModal?: () => void;
+  onOpenGoogleSyncModal?: () => void;
 }
 
-export function SidebarView({ onOpenSupabaseModal: _onOpenSupabaseModal }: SidebarViewProps) {
+export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: SidebarViewProps) {
   const {
     projects,
     sortedProjects,
@@ -106,6 +109,8 @@ export function SidebarView({ onOpenSupabaseModal: _onOpenSupabaseModal }: Sideb
     storageError,
     chooseVault,
     resync,
+    googleConfig,
+    openGoogleSyncModal,
   } = useNotes();
 
   // 모든 검색/태그/날짜/퀵필터 조건을 일괄 초기화하여 대상 목록을 온전히 표시
@@ -182,8 +187,44 @@ export function SidebarView({ onOpenSupabaseModal: _onOpenSupabaseModal }: Sideb
     [sortedProjects]
   );
 
+  const user = googleConfig?.user;
+
   return (
     <Stack gap={8} p="xs" h="100%" style={{ backgroundColor: 'var(--bn-surface-sidebar)' }}>
+      {/* 구글 계정 프로필 카드 */}
+      {user && (
+        <Paper
+          p={6}
+          radius="md"
+          withBorder
+          onClick={_onOpenGoogleSyncModal || openGoogleSyncModal}
+          style={{
+            cursor: 'pointer',
+            backgroundColor: 'var(--bn-card-bg)',
+            borderColor: 'var(--bn-border-subtle)',
+          }}
+        >
+          <Group gap="xs" wrap="nowrap" justify="space-between">
+            <Group gap="xs" wrap="nowrap" style={{ minWidth: 0, flex: 1 }}>
+              <Avatar src={user.picture} size={24} radius="xl" color="blue">
+                <IconBrandGoogle size={14} />
+              </Avatar>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <Text size="xs" fw={700} truncate>
+                  {user.name || 'Google 사용자'}
+                </Text>
+                <Text size="10px" c="dimmed" truncate>
+                  {user.email}
+                </Text>
+              </div>
+            </Group>
+            <Badge size="xs" variant="light" color="teal">
+              Drive
+            </Badge>
+          </Group>
+        </Paper>
+      )}
+
       {/* 상단 검색 입력 + 새 노트 버튼 */}
       <div>
         <Group gap={6} wrap="nowrap">

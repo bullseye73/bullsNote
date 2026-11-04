@@ -23,17 +23,12 @@ const REPEAT_OPTIONS = [
   { value: 'monthly', label: '매월 같은 날짜/시간' },
 ];
 
-import { CryptoService } from '../model/CryptoService';
-
 export function ReminderPopover({ note, disabled }: { note: Note; disabled?: boolean }) {
-  const { setReminder, isMasterSet, isUnlocked } = useNotes();
+  const { setReminder } = useNotes();
   const [opened, setOpened] = useState(false);
   const cfg = getPastelConfig(note.color);
 
-  const isLocked =
-    disabled ||
-    (!isUnlocked && (isMasterSet || CryptoService.isEncrypted(note.content))) ||
-    CryptoService.isEncrypted(note.content);
+  const isLocked = Boolean(disabled);
 
   const hasActiveReminder = !!note.reminder && !note.reminder.dismissed;
 

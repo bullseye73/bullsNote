@@ -1,6 +1,5 @@
 // MODEL: 노트 트리 계층 구조 분석, 자손 계산, 관계 탐색 및 요약 텍스트 최적화 유틸리티
 import { Note } from './Note';
-import { CryptoService } from './CryptoService';
 import { noteBodyText } from './HashtagService';
 
 export interface NoteHierarchy {
@@ -116,9 +115,7 @@ const excerptCache = new Map<string, string>();
  */
 export function cleanExcerpt(content: string, title?: string): string {
   if (!content) return '';
-  if (CryptoService.isEncrypted(content) || CryptoService.isCorruptedPlaceholder(content)) {
-    return '🔒 암호화된 노트';
-  }
+  if (content.includes('ENC:v1:')) return '🔒 암호화된 노트 (복구 대기 중)';
 
   // 캐시 키: 본문 해시 대체 (길이 + 앞 64자 + 뒤 64자 + title)
   const cacheKey = `${content.length}:${content.slice(0, 64)}:${content.slice(-64)}:${title || ''}`;

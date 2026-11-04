@@ -113,6 +113,9 @@ function setupTray(deps, getWindow) {
       quitting = true;
       app.quit();
     },
+    markQuitting: () => {
+      quitting = true;
+    },
     isQuitting: () => quitting,
   };
 }

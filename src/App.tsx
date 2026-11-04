@@ -3,6 +3,7 @@ import { useEffect } from 'react';
 import {
   ActionIcon,
   AppShell,
+  Avatar,
   Badge,
   Button,
   ColorSchemeScript,
@@ -22,18 +23,14 @@ import { SHORTCUTS } from './model/shortcutUtils';
 import { TODO_PROJECT_ID } from './model/TodoService';
 import { useDisclosure, useHotkeys } from '@mantine/hooks';
 import {
+  IconBrandGoogleDrive,
   IconChevronRight,
-  IconCloudCheck,
-  IconCloudOff,
   IconLayoutSidebarLeftCollapse,
   IconListTree,
-  IconLock,
-  IconLockOpen,
   IconMoon,
   IconPlus,
   IconRefresh,
   IconSearch,
-  IconShieldLock,
   IconSparkles,
   IconSun,
 } from '@tabler/icons-react';
@@ -43,8 +40,8 @@ import { NoteEditorView } from './view/NoteEditorView';
 import { NoteListView } from './view/NoteListView';
 import { SidebarView } from './view/SidebarView';
 import { AlarmModal } from './view/AlarmModal';
-import { SupabaseSettingsModal } from './view/SupabaseSettingsModal';
-import { SecurityModal } from './view/SecurityModal';
+import { GoogleSyncModal } from './view/GoogleSyncModal';
+import { LoginView } from './view/LoginView';
 import { QuickSearchModal } from './view/QuickSearchModal';
 import { GeminiAiModal } from './view/GeminiAiModal';
 import { SortMenu } from './view/SortMenu';
@@ -172,18 +169,14 @@ function Shell() {
     showFavoriteOnly,
     activeTag,
     create,
-    supabaseConnected,
-    realtimeStatus,
+    googleConnected,
+    googleConfig,
+    guestMode,
     isSyncing,
     lastSyncedAt,
-    isMasterSet,
-    isUnlocked,
-    securityModalOpened,
-    openSecurityModal,
-    closeSecurityModal,
-    supabaseModalOpened,
-    openSupabaseModal,
-    closeSupabaseModal,
+    googleSyncModalOpened,
+    openGoogleSyncModal,
+    closeGoogleSyncModal,
     quickSearchModalOpened,
     openQuickSearchModal,
     closeQuickSearchModal,
@@ -251,6 +244,12 @@ function Shell() {
     : activeTag
     ? `#${activeTag}`
     : `${selectedProject?.icon || '📁'} ${selectedProject?.name || '기본 프로젝트'}`;
+
+  const user = googleConfig?.user;
+
+  if (!googleConnected && !guestMode) {
+    return <LoginView />;
+  }
 
   return (
     <AppShell
@@ -406,65 +405,32 @@ function Shell() {
             </Button>
           </Tooltip>
 
-          {/* Supabase 클라우드 동기화 상태 */}
+          {/* Google Drive 클라우드 동기화 및 계정 프로필 */}
           <Tooltip
             label={
-              supabaseConnected
-                ? `Supabase 연동됨 (${lastSyncText}${realtimeStatus === 'connected' ? ' · 실시간 동기화' : ''})`
-                : '로컬 모드 (클릭하여 Supabase 클라우드 연동)'
+              user
+                ? `${user.name || user.email} (${user.email}) · 최근 동기화: ${lastSyncText}`
+                : `Google Drive 연동됨 (${lastSyncText})`
             }
           >
             <Button
               size="compact-xs"
-              variant={supabaseConnected ? 'light' : 'subtle'}
-              color={supabaseConnected ? (realtimeStatus === 'connected' ? 'teal' : 'blue') : 'gray'}
+              variant="light"
+              color="teal"
               leftSection={
                 isSyncing ? (
                   <IconRefresh size={13} className="spin-animation" />
-                ) : supabaseConnected ? (
-                  <IconCloudCheck size={13} />
+                ) : user?.picture ? (
+                  <Avatar src={user.picture} size={16} radius="xl" />
                 ) : (
-                  <IconCloudOff size={13} />
+                  <IconBrandGoogleDrive size={13} />
                 )
               }
-              onClick={openSupabaseModal}
-              styles={{ root: { height: 26, fontSize: 11.5, paddingLeft: 7, paddingRight: 8 } }}
+              onClick={openGoogleSyncModal}
+              styles={{ root: { height: 26, fontSize: 11.5, paddingLeft: 6, paddingRight: 8 } }}
             >
-              {isSyncing
-                ? '동기화 중'
-                : supabaseConnected
-                ? realtimeStatus === 'connected'
-                  ? '동기화됨'
-                  : '클라우드'
-                : '로컬'}
+              {isSyncing ? '동기화 중' : user?.name ? user.name.split(' ')[0] : 'Google Drive'}
             </Button>
-          </Tooltip>
-
-          {/* 종단간 암호화(E2EE) 보안 자물쇠 */}
-          <Tooltip
-            label={
-              !isMasterSet
-                ? '종단간 암호화(E2EE) 설정'
-                : isUnlocked
-                ? '종단간 암호화 보호 중 (클릭하여 잠금/관리)'
-                : '잠김 상태 (클릭하여 잠금 해제)'
-            }
-          >
-            <ActionIcon
-              size={26}
-              variant={isUnlocked ? 'light' : isMasterSet ? 'filled' : 'subtle'}
-              color={isUnlocked ? 'teal' : isMasterSet ? 'orange' : 'gray'}
-              onClick={openSecurityModal}
-              aria-label="보안 설정"
-            >
-              {isUnlocked ? (
-                <IconLockOpen size={14} />
-              ) : isMasterSet ? (
-                <IconLock size={14} />
-              ) : (
-                <IconShieldLock size={14} />
-              )}
-            </ActionIcon>
           </Tooltip>
 
           {/* 다크/라이트 테마 전환 */}
@@ -483,7 +449,7 @@ function Shell() {
       </AppShell.Header>
 
       <AppShell.Navbar>
-        <SidebarView onOpenSupabaseModal={openSupabaseModal} />
+        <SidebarView onOpenGoogleSyncModal={openGoogleSyncModal} />
         {menuOpened && (
           <div style={{ position: 'absolute', top: 0, right: -3, bottom: 0, zIndex: 100 }}>
             <ResizeSplitter
@@ -537,8 +503,7 @@ function Shell() {
         </ErrorBoundary>
       </AppShell.Main>
 
-      <SupabaseSettingsModal opened={supabaseModalOpened} onClose={closeSupabaseModal} />
-      <SecurityModal opened={securityModalOpened} onClose={closeSecurityModal} />
+      <GoogleSyncModal opened={googleSyncModalOpened} onClose={closeGoogleSyncModal} />
       <QuickSearchModal opened={quickSearchModalOpened} onClose={closeQuickSearchModal} />
       <GeminiAiModal opened={geminiModalOpened} onClose={closeGeminiModal} initialTab={geminiModalTab} />
     </AppShell>

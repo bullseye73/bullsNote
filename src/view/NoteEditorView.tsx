@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  Alert,
   Badge,
   Button,
   Chip,
@@ -12,7 +13,6 @@ import {
   Stack,
   Text,
   TextInput,
-  ThemeIcon,
   Tooltip,
   useComputedColorScheme,
 } from '@mantine/core';
@@ -31,7 +31,6 @@ import {
   IconGitCompare,
   IconHash,
   IconHistory,
-  IconLock,
   IconLockOpen,
   IconMarkdown,
   IconPalette,
@@ -74,7 +73,7 @@ import {
 } from '../model/Note';
 import { isBlocksJson, noteBodyText, parseBlocks } from '../model/HashtagService';
 import { useNotes } from '../controller/NotesController';
-import { CryptoService } from '../model/CryptoService';
+import { hasLegacyEncryptedText } from '../model/LegacyDecryptor';
 import { ErrorBoundary } from './ErrorBoundary';
 import { EditorToolbar } from './EditorToolbar';
 import { ReminderPopover } from './ReminderPopover';
@@ -91,7 +90,7 @@ import { AiActionType } from '../model/GeminiService';
 import { SHORTCUTS } from '../model/shortcutUtils';
 import { NoteBacklinksView } from './NoteBacklinksView';
 import { NoteAttachmentsView } from './NoteAttachmentsView';
-import { SupabaseService } from '../model/SupabaseService';
+import { GoogleDriveService } from '../model/GoogleDriveService';
 import { createSyntaxExtension, getAppSchema } from '../model/codeHighlight';
 import {
   canNativeShare,
@@ -141,9 +140,8 @@ function BlockEditor({
     notes,
     projects,
     setActiveTag,
-    supabaseConnected,
-    supabaseConfig,
-    openSupabaseModal,
+    googleConnected,
+    openGoogleSyncModal,
     addAttachment,
     searchTokens,
     setSearch,
@@ -175,17 +173,17 @@ function BlockEditor({
     lastEmittedRef.current = note.content;
   }, [note.id]);
 
-  // Supabase 스토리지 연동 여부에 따른 파일 업로드 핸들러
+  // Google Drive 스토리지 연동 여부에 따른 파일 업로드 핸들러
   const handleUploadFile = useCallback(
     async (file: File): Promise<string> => {
-      // 1. Supabase 연동 상태이면 클라우드 스토리지로 업로드
-      if (supabaseConnected && supabaseConfig.enabled) {
+      // 1. Google Drive 연동 상태이면 클라우드 스토리지로 업로드
+      if (googleConnected) {
         try {
-          const att = await SupabaseService.uploadAttachment(note.id, file);
+          const att = await GoogleDriveService.uploadAttachment(note.id, file);
           addAttachment(note.id, att);
           return att.url;
         } catch (err) {
-          console.error('Supabase 스토리지 업로드 실패:', err);
+          console.error('Google Drive 스토리지 업로드 실패:', err);
           if (file.type.startsWith('image/')) {
             return uploadFileAsDataUrl(file);
           }
@@ -194,18 +192,18 @@ function BlockEditor({
         }
       }
 
-      // 2. Supabase 미연동 상태
+      // 2. Google Drive 미연동 상태
       if (file.type.startsWith('image/')) {
         // 이미지는 로컬 dataURL로 삽입 허용
         return uploadFileAsDataUrl(file);
       }
 
       // 일반 파일은 업로드 차단 및 설정 모달 유도
-      alert('파일 업로드 기능은 Supabase 클라우드 스토리지가 연동된 상태에서 사용할 수 있습니다. Supabase 설정을 완료해주세요.');
-      openSupabaseModal();
-      throw new Error('Supabase 미연동으로 파일 업로드 제한됨');
+      alert('파일 업로드 기능은 Google Drive가 연동된 상태에서 사용할 수 있습니다. Google Drive 설정을 완료해주세요.');
+      openGoogleSyncModal();
+      throw new Error('Google Drive 미연동으로 파일 업로드 제한됨');
     },
-    [supabaseConnected, supabaseConfig.enabled, note.id, addAttachment, openSupabaseModal]
+    [googleConnected, note.id, addAttachment, openGoogleSyncModal]
   );
 
   // 에디터 내 링크 클릭 핸들러: 내부 노트 링크는 브라우저를 열지 않고 내부 이동만 수행
@@ -288,13 +286,13 @@ function BlockEditor({
 
   // / 슬래시 메뉴에서 파일 첨부 선택 시
   const handleAttachFromSlash = useCallback(() => {
-    if (!supabaseConnected || !supabaseConfig.enabled) {
-      alert('파일 첨부 기능은 Supabase 클라우드 스토리지가 연동된 상태에서 사용할 수 있습니다. Supabase 설정을 완료해주세요.');
-      openSupabaseModal();
+    if (!googleConnected) {
+      alert('파일 첨부 기능은 Google Drive가 연동된 상태에서 사용할 수 있습니다. Google Drive 설정을 완료해주세요.');
+      openGoogleSyncModal();
       return;
     }
     hiddenFileInputRef.current?.click();
-  }, [supabaseConnected, supabaseConfig.enabled, openSupabaseModal]);
+  }, [googleConnected, openGoogleSyncModal]);
 
   // 숨겨진 input에서 파일 선택 시 본문에 노션 스타일 file 블록 삽입
   const handleFilePickedFromInput = useCallback(
@@ -423,7 +421,7 @@ function BlockEditor({
     [editor, note.id, updateContent]
   );
 
-  // 외부 변경(히스토리 복원, vault poll, supabase sync, onResetNote 등)을 에디터 문서에 반영
+  // 외부 변경(히스토리 복원, vault poll, google drive sync, onResetNote 등)을 에디터 문서에 반영
   useEffect(() => {
     // 에디터 자신이 직렬화해서 내보낸 내용과 동일하면 외부 변경이 아님
     if (note.content === lastEmittedRef.current) {
@@ -1072,11 +1070,9 @@ export function NoteEditorView() {
     toggleFavorite,
     setActiveTag,
     restoreHistory,
-    isMasterSet,
-    isUnlocked,
     storageError,
-    unlockMasterPassword,
-    openSecurityModal,
+    hasEncryptedNotes,
+    decryptAllLegacyNotes,
   } = useNotes();
   const [historyOpen, setHistoryOpen] = useState(false);
   const [diffTargetSnapshot, setDiffTargetSnapshot] = useState<{
@@ -1087,29 +1083,29 @@ export function NoteEditorView() {
   const [currentEditor, setCurrentEditor] = useState<AnyEditor | null>(null);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
 
-  // 에디터 내 빠른 잠금 해제 상태
-  const [quickPassword, setQuickPassword] = useState('');
-  const [quickError, setQuickError] = useState<string | null>(null);
-  const [quickLoading, setQuickLoading] = useState(false);
+  const [recoveryPw, setRecoveryPw] = useState('');
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
+  const [recoveryLoading, setRecoveryLoading] = useState(false);
 
-  const handleQuickUnlock = async () => {
-    if (!quickPassword) {
-      setQuickError('마스터 비밀번호를 입력해주세요.');
+  const handleRecoverNotes = async () => {
+    if (!recoveryPw) {
+      setRecoveryError('이전에 설정하셨던 마스터 비밀번호를 입력해주세요.');
       return;
     }
-    setQuickError(null);
-    setQuickLoading(true);
+    setRecoveryError(null);
+    setRecoveryLoading(true);
     try {
-      const ok = await unlockMasterPassword(quickPassword);
-      if (ok) {
-        setQuickPassword('');
+      const res = await decryptAllLegacyNotes(recoveryPw);
+      if (res.success) {
+        setRecoveryPw('');
+        showFeedback(`${res.count}개 노트의 원문이 영구 복구되었습니다!`);
       } else {
-        setQuickError('비밀번호가 올바르지 않습니다.');
+        setRecoveryError('비밀번호가 일치하지 않습니다. 이전에 설정한 마스터 비밀번호를 다시 확인해주세요.');
       }
     } catch {
-      setQuickError('잠금 해제 중 오류가 발생했습니다.');
+      setRecoveryError('복호화 중 오류가 발생했습니다.');
     } finally {
-      setQuickLoading(false);
+      setRecoveryLoading(false);
     }
   };
 
@@ -1218,11 +1214,7 @@ export function NoteEditorView() {
   const pathNodes = getPathNodes(notes, selected.id);
 
   const colorCfg = getPastelConfig(selected.color);
-
-  // 마스터 비밀번호로 잠긴 상태이거나 본문이 암호화되어 있는 경우 메타데이터 편집 비활성화
-  const isNoteLocked =
-    (!isUnlocked && (isMasterSet || CryptoService.isEncrypted(selected.content))) ||
-    CryptoService.isEncrypted(selected.content);
+  const isNoteLocked = false;
 
   // ready 이후에만 렌더되므로 content는 블록 JSON이 보장됨 (손상 시 문단 폴백)
   const editorKey = `${selected.id}`;
@@ -1556,9 +1548,7 @@ export function NoteEditorView() {
           <Text size="11.5px" c="dimmed">
             생성 {new Date(selected.createdAt).toLocaleString('ko-KR')} · 수정{' '}
             {new Date(selected.updatedAt).toLocaleString('ko-KR')} ·{' '}
-            {CryptoService.isEncrypted(selected.content)
-              ? '🔒 암호화됨'
-              : `${noteBodyText(selected.content).length}자`}
+            {`${noteBodyText(selected.content).length}자`}
           </Text>
         </Group>
         {storageError && (
@@ -1579,10 +1569,47 @@ export function NoteEditorView() {
             ⚠️ {storageError}
           </Badge>
         )}
+
+        {(hasEncryptedNotes || hasLegacyEncryptedText(selected.content)) && (
+          <Alert
+            color="orange"
+            variant="light"
+            title="🔒 기존 암호화된 노트 원문 복구 (1회 영구 해제)"
+            mb="xs"
+          >
+            <Stack gap="xs">
+              <Text size="xs">
+                이전에 설정하셨던 <strong>마스터 비밀번호</strong>를 입력하시면, 암호화되어 있는 모든 노트의 본문과 히스토리를 <strong>즉시 원래 평문으로 영구 복원</strong>하고 저장합니다.
+              </Text>
+              <Group gap="xs" align="flex-start">
+                <PasswordInput
+                  placeholder="이전 마스터 비밀번호 입력"
+                  value={recoveryPw}
+                  onChange={(e) => setRecoveryPw(e.currentTarget.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void handleRecoverNotes();
+                  }}
+                  error={recoveryError}
+                  size="xs"
+                  style={{ flex: 1, maxWidth: 320 }}
+                  autoFocus
+                />
+                <Button
+                  size="xs"
+                  color="orange"
+                  loading={recoveryLoading}
+                  leftSection={<IconLockOpen size={14} />}
+                  onClick={handleRecoverNotes}
+                >
+                  모든 노트 원문 복구하기
+                </Button>
+              </Group>
+            </Stack>
+          </Alert>
+        )}
       </div>
 
-      {(!isUnlocked && (isMasterSet || CryptoService.isEncrypted(selected.content))) ||
-      CryptoService.isEncrypted(selected.content) ? (
+      {hasLegacyEncryptedText(selected.content) ? (
         <div
           style={{
             flex: 1,
@@ -1591,55 +1618,13 @@ export function NoteEditorView() {
             alignItems: 'center',
             justifyContent: 'center',
             padding: 32,
-            backgroundColor: 'var(--mantine-color-gray-0)',
+            backgroundColor: 'var(--bn-surface-list)',
             borderRadius: 8,
           }}
         >
-          <Stack align="center" gap="md" style={{ maxWidth: 440, width: '100%', textAlign: 'center' }}>
-            <ThemeIcon size={64} radius="xl" color="orange" variant="light">
-              <IconLock size={36} />
-            </ThemeIcon>
-            <div>
-              <Text fw={700} size="lg">
-                노트 본문이 암호화되어 있습니다
-              </Text>
-              <Text size="sm" c="dimmed" mt={6}>
-                안전한 보안을 위해 본문이 AES-GCM 256비트로 암호화되어 보호 중입니다.
-                마스터 비밀번호를 입력하면 내용을 확인하고 편집할 수 있습니다.
-              </Text>
-            </div>
-
-            <Group gap={8} style={{ width: '100%', maxWidth: 360 }} justify="center">
-              <PasswordInput
-                placeholder="마스터 비밀번호 입력"
-                value={quickPassword}
-                onChange={(e) => setQuickPassword(e.currentTarget.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void handleQuickUnlock();
-                }}
-                style={{ flex: 1 }}
-                error={quickError}
-                autoFocus
-              />
-              <Button
-                color="orange"
-                onClick={handleQuickUnlock}
-                loading={quickLoading}
-                leftSection={<IconLockOpen size={16} />}
-              >
-                잠금 해제
-              </Button>
-            </Group>
-
-            <Button
-              variant="subtle"
-              size="xs"
-              color="gray"
-              onClick={openSecurityModal}
-            >
-              보안 설정 창 열기
-            </Button>
-          </Stack>
+          <Text size="sm" c="dimmed" ta="center">
+            상단 주황색 복구 배너에 이전 마스터 비밀번호를 입력하면 이 노트의 원문이 즉시 복원됩니다.
+          </Text>
         </div>
       ) : diffTargetSnapshot ? (
         <InlineHistoryDiffView
