@@ -151,12 +151,12 @@ class GoogleDriveServiceImpl {
   }
 
   /** 유효한 Access Token 반환 (만료 시 자동 갱신) */
-  async getValidAccessToken(): Promise<string | null> {
+  async getValidAccessToken(forceRefresh = false): Promise<string | null> {
     const tokens = this.getTokens();
     if (!tokens) return null;
 
-    // 만료 1분 전까지 유효로 판단
-    if (Date.now() < tokens.expiresAt - 60_000) {
+    // 만료 1분 전까지 유효로 판단 (강제 갱신이 아닌 경우)
+    if (!forceRefresh && Date.now() < tokens.expiresAt - 60_000) {
       return tokens.accessToken;
     }
 
@@ -182,6 +182,47 @@ class GoogleDriveServiceImpl {
     }
 
     return null;
+  }
+
+  /** Google Drive API 에러 응답을 사용자가 이해하고 즉시 조치할 수 있는 한글 메시지로 변환 */
+  private formatDriveApiError(status: number, rawText: string, context: string): string {
+    try {
+      const parsed = JSON.parse(rawText);
+      const errObj = parsed?.error;
+      const message: string = errObj?.message || rawText;
+      const details: any[] = Array.isArray(errObj?.details) ? errObj.details : [];
+      const errors: any[] = Array.isArray(errObj?.errors) ? errObj.errors : [];
+
+      const isServiceDisabled =
+        message.includes('Google Drive API has not been used') ||
+        message.includes('it is disabled') ||
+        details.some((d) => d?.reason === 'SERVICE_DISABLED') ||
+        errors.some((e) => e?.reason === 'accessNotConfigured');
+
+      if (isServiceDisabled) {
+        const urlMatch = message.match(/https:\/\/console\.developers\.google\.com\/apis\/api\/drive\.googleapis\.com\/overview\?project=[0-9]+/);
+        const enableUrl =
+          urlMatch?.[0] || 'https://console.cloud.google.com/apis/library/drive.googleapis.com';
+        return `[Google Drive API 미활성화] 현재 Google Cloud 프로젝트에서 'Google Drive API'가 꺼져 있어 파일을 생성/조회할 수 없습니다.\n아래 링크를 열어 [사용(Enable)] 버튼을 누른 뒤 1~2분 후 다시 [지금 동기화]를 눌러주세요:\n${enableUrl}`;
+      }
+
+      const isInsufficientScope =
+        message.includes('insufficient authentication scopes') ||
+        details.some((d) => d?.reason === 'ACCESS_TOKEN_SCOPE_INSUFFICIENT') ||
+        errors.some((e) => e?.reason === 'insufficientPermissions');
+
+      if (isInsufficientScope) {
+        return `[Google Drive 권한 부족] 로그인 동의 화면에서 Google Drive 파일 접근 권한이 허용되지 않았습니다. 우측의 [연동 해제]를 누른 뒤 다시 로그인하면서 'Google Drive 파일 보기, 편집, 생성, 삭제' 체크박스를 꼭 체크해주세요.`;
+      }
+
+      if (status === 401) {
+        return 'Google Drive 인증 토큰이 만료되었습니다. [연동 해제] 후 다시 로그인해주세요.';
+      }
+
+      return `${context} (${status}): ${message}`;
+    } catch {
+      return `${context} (${status}): ${rawText}`;
+    }
   }
 
   /** Google 계정 OAuth 로그인 실행 */
@@ -336,8 +377,8 @@ class GoogleDriveServiceImpl {
     options: RequestInit = {},
     isUpload = false,
   ): Promise<Response> {
-    const token = await this.getValidAccessToken();
-    if (!token) throw new Error('Google 계정 인증이 만료되었거나 연동되지 않았습니다.');
+    let token = await this.getValidAccessToken(false);
+    if (!token) throw new Error('Google 계정 인증이 만료되었거나 연동되지 않았습니다. 다시 로그인해주세요.');
 
     const baseUrl = isUpload
       ? 'https://www.googleapis.com/upload/drive/v3'
@@ -347,10 +388,18 @@ class GoogleDriveServiceImpl {
     const headers = new Headers(options.headers || {});
     headers.set('Authorization', `Bearer ${token}`);
 
-    const res = await fetch(url, { ...options, headers });
+    let res = await fetch(url, { ...options, headers });
     if (res.status === 401) {
-      // 401 발생 시 토큰 초기화 고려
-      throw new Error('Google Drive 인증 토큰이 만료되었습니다. 다시 로그인해주세요.');
+      // 401 발생 시 Refresh Token으로 1회 강제 재발급 후 재시도
+      const refreshedToken = await this.getValidAccessToken(true);
+      if (refreshedToken) {
+        token = refreshedToken;
+        headers.set('Authorization', `Bearer ${token}`);
+        res = await fetch(url, { ...options, headers });
+      }
+      if (res.status === 401) {
+        throw new Error('Google Drive 인증 토큰이 만료되었습니다. [연동 해제] 후 다시 로그인해주세요.');
+      }
     }
     return res;
   }
@@ -363,11 +412,14 @@ class GoogleDriveServiceImpl {
     }
 
     const searchRes = await this.driveFetch(`/files?q=${encodeURIComponent(q)}&fields=files(id,name)`);
-    if (searchRes.ok) {
-      const data = await searchRes.json();
-      if (Array.isArray(data.files) && data.files.length > 0) {
-        return data.files[0].id;
-      }
+    if (!searchRes.ok) {
+      const errText = await searchRes.text();
+      throw new Error(this.formatDriveApiError(searchRes.status, errText, `Google Drive 폴더("${name}") 조회 실패`));
+    }
+
+    const data = await searchRes.json();
+    if (Array.isArray(data.files) && data.files.length > 0) {
+      return data.files[0].id;
     }
 
     // 폴더가 없으면 새로 생성
@@ -387,7 +439,7 @@ class GoogleDriveServiceImpl {
 
     if (!createRes.ok) {
       const err = await createRes.text();
-      throw new Error(`Google Drive 폴더("${name}") 생성 실패: ${err}`);
+      throw new Error(this.formatDriveApiError(createRes.status, err, `Google Drive 폴더("${name}") 생성 실패`));
     }
 
     const folder = await createRes.json();
@@ -415,7 +467,10 @@ class GoogleDriveServiceImpl {
   private async getRemoteDbFileInfo(folderId: string): Promise<{ id: string; modifiedTime: string } | null> {
     const q = `'${folderId}' in parents and name = 'bullsnote_db.json' and trashed = false`;
     const res = await this.driveFetch(`/files?q=${encodeURIComponent(q)}&fields=files(id,name,modifiedTime)`);
-    if (!res.ok) return null;
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(this.formatDriveApiError(res.status, errText, 'Google Drive DB 메타데이터 조회 실패'));
+    }
     const data = await res.json();
     if (Array.isArray(data.files) && data.files.length > 0) {
       return { id: data.files[0].id, modifiedTime: data.files[0].modifiedTime };
@@ -426,7 +481,10 @@ class GoogleDriveServiceImpl {
   /** 원격 DB 내용 다운로드 */
   private async downloadRemoteDb(fileId: string): Promise<RemoteBullsNoteDb | null> {
     const res = await this.driveFetch(`/files/${fileId}?alt=media`);
-    if (!res.ok) return null;
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(this.formatDriveApiError(res.status, errText, 'Google Drive DB 다운로드 실패'));
+    }
     try {
       return await res.json();
     } catch {
@@ -456,7 +514,7 @@ class GoogleDriveServiceImpl {
       );
       if (!res.ok) {
         const err = await res.text();
-        throw new Error(`Google Drive DB 파일 업데이트 실패: ${err}`);
+        throw new Error(this.formatDriveApiError(res.status, err, 'Google Drive DB 파일 업데이트 실패'));
       }
       return { id: existingFileId };
     } else {
@@ -490,7 +548,7 @@ class GoogleDriveServiceImpl {
 
       if (!res.ok) {
         const err = await res.text();
-        throw new Error(`Google Drive DB 파일 생성 실패: ${err}`);
+        throw new Error(this.formatDriveApiError(res.status, err, 'Google Drive DB 파일 생성 실패'));
       }
       const data = await res.json();
       return { id: data.id };

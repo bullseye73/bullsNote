@@ -59,6 +59,7 @@ export function GoogleSyncModal({ opened, onClose }: GoogleSyncModalProps) {
     googleConnected,
     googleConfig,
     isSyncing,
+    syncError,
     lastSyncedAt,
     syncWithGoogleDrive,
     loginGoogle,
@@ -82,8 +83,11 @@ export function GoogleSyncModal({ opened, onClose }: GoogleSyncModalProps) {
       setCustomClientId(cfg.customClientId || '');
       setCustomClientSecret(cfg.customClientSecret || '');
       setLoginError(null);
+      if (googleConnected && !cfg.lastSyncedAt && !isSyncing) {
+        void syncWithGoogleDrive(false);
+      }
     }
-  }, [opened, googleConfig]);
+  }, [opened, googleConfig, googleConnected, isSyncing, syncWithGoogleDrive]);
 
   const handleLogin = async () => {
     setIsLoggingIn(true);
@@ -213,7 +217,7 @@ export function GoogleSyncModal({ opened, onClose }: GoogleSyncModalProps) {
                       )
                     }
                     disabled={isSyncing}
-                    onClick={() => syncWithGoogleDrive()}
+                    onClick={() => void syncWithGoogleDrive(false)}
                   >
                     {isSyncing ? '동기화 중...' : '지금 동기화'}
                   </Button>
@@ -228,6 +232,43 @@ export function GoogleSyncModal({ opened, onClose }: GoogleSyncModalProps) {
                   </Button>
                 </Group>
               </Group>
+
+              {syncError && (
+                <Alert
+                  icon={<IconAlertCircle size={16} />}
+                  color="red"
+                  title="Google Drive 동기화 실패"
+                  mt={4}
+                  styles={{ message: { fontSize: 12, whiteSpace: 'pre-line', wordBreak: 'break-word' } }}
+                >
+                  <Stack gap="xs">
+                    <Text size="xs">{syncError}</Text>
+                    {(() => {
+                      const urlMatch = syncError.match(/https:\/\/console\.(?:developers|cloud)\.google\.com\/[^\s]+/);
+                      const consoleUrl =
+                        urlMatch?.[0] ||
+                        (syncError.includes('Google Drive API')
+                          ? 'https://console.cloud.google.com/apis/library/drive.googleapis.com'
+                          : null);
+                      if (!consoleUrl) return null;
+                      return (
+                        <Button
+                          component="a"
+                          href={consoleUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          size="xs"
+                          color="red"
+                          variant="filled"
+                          leftSection={<IconExternalLink size={14} />}
+                        >
+                          Google Cloud 콘솔에서 Google Drive API [사용(Enable)] 켜기
+                        </Button>
+                      );
+                    })()}
+                  </Stack>
+                </Alert>
+              )}
             </Stack>
           ) : (
             <Stack gap="sm" align="center" py="xs">

@@ -110,6 +110,8 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
     chooseVault,
     resync,
     googleConfig,
+    isSyncing,
+    syncError,
     openGoogleSyncModal,
   } = useNotes();
 
@@ -218,8 +220,12 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
                 </Text>
               </div>
             </Group>
-            <Badge size="xs" variant="light" color="teal">
-              Drive
+            <Badge
+              size="xs"
+              variant="light"
+              color={syncError ? 'red' : isSyncing ? 'blue' : 'teal'}
+            >
+              {syncError ? '오류' : isSyncing ? '동기화중' : 'Drive'}
             </Badge>
           </Group>
         </Paper>

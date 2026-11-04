@@ -1549,7 +1549,15 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   // --- Google Drive 동기화 액션 ---
   const syncWithGoogleDrive = useCallback(async (isSilent = false) => {
-    if (!GoogleDriveService.isConnected() || isSyncingRef.current) return;
+    if (!GoogleDriveService.isConnected()) return;
+
+    // 이미 동기화가 진행 중인 경우, 사용자가 수동으로 버튼을 눌렀다면 로딩 표시만 활성화하고 대기
+    if (isSyncingRef.current) {
+      if (!isSilent) {
+        setIsSyncing(true);
+      }
+      return;
+    }
 
     // 자동 백그라운드 동기화인 경우, 사용자가 타이핑 중이면 작업 방해 방지를 위해 건너뜀
     if (isSilent && (isLocalSavePendingRef.current || pendingNotesRef.current.size > 0)) {
@@ -1567,6 +1575,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       const curProjects = projectsRef.current;
       const res = await GoogleDriveService.syncAll(curNotes, curProjects);
       if (res.success) {
+        setSyncError(null);
         setGoogleConfigState(GoogleDriveService.getConfig());
         if (!res.hasRemoteChanges) {
           return;
@@ -1594,18 +1603,12 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
           setSelectedId(projectNotes[0]?.id ?? sortedNotes[0]?.id ?? null);
         }
       } else {
-        if (!isSilent) {
-          setSyncError(res.error || 'Google Drive 동기화 중 오류가 발생했습니다.');
-        }
+        setSyncError(res.error || 'Google Drive 동기화 중 오류가 발생했습니다.');
       }
     } catch (err: unknown) {
-      if (!isSilent) {
-        setSyncError(err instanceof Error ? err.message : String(err));
-      }
+      setSyncError(err instanceof Error ? err.message : String(err));
     } finally {
-      if (!isSilent) {
-        setIsSyncing(false);
-      }
+      setIsSyncing(false);
       isSyncingRef.current = false;
     }
   }, []);
