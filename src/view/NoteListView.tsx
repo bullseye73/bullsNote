@@ -15,6 +15,7 @@ import {
 import {
   IconChevronDown,
   IconChevronRight,
+  IconCloudUpload,
   IconCopy,
   IconDots,
   IconGripVertical,
@@ -37,6 +38,7 @@ import { HighlightText } from './HighlightText';
 import { formatDateTimeIso } from '../model/dateUtils';
 import { isSystemGroupNote, GROUP_ID_TO_STATUS } from '../model/TodoService';
 import { buildNoteHierarchy, cleanExcerpt } from '../model/treeUtils';
+import { GoogleDriveService } from '../model/GoogleDriveService';
 
 function RowActions({
   id,
@@ -466,6 +468,19 @@ function TreeRow({
                 그룹
               </Badge>
             )}
+            {!isSystemGroup && GoogleDriveService.isNoteUnsynced(n) && (
+              <Tooltip label="미동기화 노트 (Google Drive 동기화 완료 시 자동으로 표시가 사라집니다)">
+                <Badge
+                  size="xs"
+                  variant="light"
+                  color="orange"
+                  leftSection={<IconCloudUpload size={10} />}
+                  style={{ flexShrink: 0, paddingLeft: 4, paddingRight: 5 }}
+                >
+                  미동기화
+                </Badge>
+              </Tooltip>
+            )}
             {n.reminder && !n.reminder.dismissed && (
               <Tooltip
                 label={`알람: ${new Date(n.reminder.targetAt).toLocaleString('ko-KR', {
@@ -800,6 +815,19 @@ export function NoteListView() {
                     >
                       <HighlightText text={n.title || '제목 없음'} tokens={searchTokens} />
                     </Text>
+                    {!isSystemGroupNote(n) && GoogleDriveService.isNoteUnsynced(n) && (
+                      <Tooltip label="미동기화 노트 (Google Drive 동기화 완료 시 자동으로 표시가 사라집니다)">
+                        <Badge
+                          size="xs"
+                          variant="light"
+                          color="orange"
+                          leftSection={<IconCloudUpload size={10} />}
+                          style={{ flexShrink: 0, paddingLeft: 4, paddingRight: 5 }}
+                        >
+                          미동기화
+                        </Badge>
+                      </Tooltip>
+                    )}
                   </Group>
                   {n.reminder && !n.reminder.dismissed && (
                     <Tooltip

@@ -1,9 +1,13 @@
-// MODEL: Google Drive 클라우드 동기화 및 스토리지 서비스 (REST API v3 기반, 무의존성 native fetch)
+// MODEL: Google Drive 클라우드 동기화 및 스토리지 서비스 (대안 2: index.json + notes/ 개별 노트 증분 동기화 + attachments/ 분리)
 import { createNoteId, Note, NoteAttachment, Project } from './Note';
 
 const CONFIG_STORAGE_KEY = 'bullsnote.googledrive.config.v1';
 const TOKENS_STORAGE_KEY = 'bullsnote.googledrive.tokens.v1';
 const DELETED_RECORDS_KEY = 'bullsnote.googledrive.deleted.v1';
+const SYNCED_MAP_KEY = 'bullsnote.googledrive.syncedmap.v1';
+
+/** 클라우드에 업로드할 노트당 최대 히스토리 스냅샷 개수 (로컬은 30개 유지, 클라우드 개별 파일은 경량화) */
+const CLOUD_MAX_HISTORY = 5;
 
 export interface GoogleUserInfo {
   email: string;
@@ -41,6 +45,7 @@ export interface DeletedRecord {
   deletedAt: number;
 }
 
+/** 구버전(v2) 단일 파일 DB 포맷 (자동 마이그레이션 호환용) */
 export interface RemoteBullsNoteDb {
   app: 'BullsNote';
   version: number;
@@ -51,19 +56,97 @@ export interface RemoteBullsNoteDb {
   deletedProjects?: DeletedRecord[];
 }
 
+/** 대안 2(v3): 개별 노트 메타데이터 인덱스 엔트리 */
+export interface RemoteNoteIndexEntry {
+  id: string;
+  fileId: string;
+  updatedAt: number;
+  title: string;
+  projectId: string;
+}
+
+/** 대안 2(v3): 경량 인덱스 파일 (BullsNote/index.json) */
+export interface RemoteIndexDb {
+  app: 'BullsNote';
+  version: 3;
+  lastModified: number;
+  projects: Project[];
+  noteIndex: Record<string, RemoteNoteIndexEntry>;
+  deletedNotes?: DeletedRecord[];
+  deletedProjects?: DeletedRecord[];
+}
+
+export interface LocalNoteSyncMeta {
+  syncedAt: number;
+  fileId?: string;
+}
+
 export interface SyncResult {
   success: boolean;
   error?: string;
   notes: Note[];
   projects: Project[];
   hasRemoteChanges: boolean;
+  uploadedCount?: number;
+  downloadedCount?: number;
+}
+
+/** Google Drive URL에서 파일 ID 추출 */
+export function extractDriveFileIdFromUrl(url: string): string | null {
+  if (!url || typeof url !== 'string') return null;
+  const m1 = url.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/);
+  if (m1?.[1]) return m1[1];
+  const m2 = url.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (m2?.[1] && url.includes('drive.google.com')) return m2[1];
+  return null;
+}
+
+/** 동시성 제한 병렬 실행 헬퍼 */
+async function runWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let idx = 0;
+  const runners = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (idx < items.length) {
+      const current = idx++;
+      results[current] = await worker(items[current]);
+    }
+  });
+  await Promise.all(runners);
+  return results;
+}
+
+/** data:image/...;base64,... 문자열을 File 객체로 변환 */
+function dataUrlToFile(dataUrl: string, fileName: string): File | null {
+  try {
+    const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl);
+    if (!match) return null;
+    const mime = match[1];
+    const b64 = match[2];
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return new File([bytes], fileName, { type: mime });
+  } catch {
+    return null;
+  }
 }
 
 class GoogleDriveServiceImpl {
   private bullsNoteFolderId: string | null = null;
+  private notesFolderId: string | null = null;
   private attachmentsFolderId: string | null = null;
-  private dbFileId: string | null = null;
+  private indexFileId: string | null = null;
   private isSyncing = false;
+
+  /** 노트 내 이미지 표시를 위한 Drive FileId -> ObjectURL 메모리 캐시 */
+  private attachmentBlobUrlCache = new Map<string, string>();
+  private inFlightBlobPromises = new Map<string, Promise<string>>();
 
   getConfig(): GoogleDriveConfig {
     try {
@@ -117,6 +200,41 @@ class GoogleDriveServiceImpl {
     return Boolean(cfg.enabled && tokens?.accessToken);
   }
 
+  /** 로컬 노트별 동기화 완료 상태 맵 조회 */
+  getSyncedMap(): Record<string, LocalNoteSyncMeta> {
+    try {
+      const raw = localStorage.getItem(SYNCED_MAP_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') return parsed;
+      }
+    } catch {
+      /* ignore */
+    }
+    return {};
+  }
+
+  saveSyncedMap(map: Record<string, LocalNoteSyncMeta>): void {
+    try {
+      localStorage.setItem(SYNCED_MAP_KEY, JSON.stringify(map));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  /** 특정 노트의 마지막 클라우드 동기화 타임스탬프 반환 */
+  getNoteSyncedAt(noteId: string): number | null {
+    const map = this.getSyncedMap();
+    return map[noteId]?.syncedAt ?? null;
+  }
+
+  /** 해당 노트가 아직 Google Drive와 동기화되지 않았는지(수정 후 미업로드 상태인지) 여부 판별 */
+  isNoteUnsynced(note: Note): boolean {
+    if (note.systemGroupType) return false;
+    const syncedAt = Math.max(note.syncedAt || 0, this.getNoteSyncedAt(note.id) || 0);
+    return !syncedAt || note.updatedAt > syncedAt;
+  }
+
   getDeletedRecords(): { notes: DeletedRecord[]; projects: DeletedRecord[] } {
     try {
       const raw = localStorage.getItem(DELETED_RECORDS_KEY);
@@ -137,7 +255,6 @@ class GoogleDriveServiceImpl {
     const current = this.getDeletedRecords();
     const filtered = current.notes.filter((r) => r.id !== id);
     filtered.push({ id, deletedAt: Date.now() });
-    // 최근 500개만 유지
     if (filtered.length > 500) filtered.splice(0, filtered.length - 500);
     localStorage.setItem(DELETED_RECORDS_KEY, JSON.stringify({ ...current, notes: filtered }));
   }
@@ -200,7 +317,9 @@ class GoogleDriveServiceImpl {
         errors.some((e) => e?.reason === 'accessNotConfigured');
 
       if (isServiceDisabled) {
-        const urlMatch = message.match(/https:\/\/console\.developers\.google\.com\/apis\/api\/drive\.googleapis\.com\/overview\?project=[0-9]+/);
+        const urlMatch = message.match(
+          /https:\/\/console\.developers\.google\.com\/apis\/api\/drive\.googleapis\.com\/overview\?project=[0-9]+/,
+        );
         const enableUrl =
           urlMatch?.[0] || 'https://console.cloud.google.com/apis/library/drive.googleapis.com';
         return `[Google Drive API 미활성화] 현재 Google Cloud 프로젝트에서 'Google Drive API'가 꺼져 있어 파일을 생성/조회할 수 없습니다.\n아래 링크를 열어 [사용(Enable)] 버튼을 누른 뒤 1~2분 후 다시 [지금 동기화]를 눌러주세요:\n${enableUrl}`;
@@ -232,7 +351,8 @@ class GoogleDriveServiceImpl {
     if (!cfg.customClientId) {
       return {
         success: false,
-        error: 'Google OAuth Client ID가 입력되지 않았습니다. Google Cloud Console에서 데스크톱 클라이언트 ID를 발급받아 입력해주세요.',
+        error:
+          'Google OAuth Client ID가 입력되지 않았습니다. Google Cloud Console에서 데스크톱 클라이언트 ID를 발급받아 입력해주세요.',
       };
     }
 
@@ -263,8 +383,9 @@ class GoogleDriveServiceImpl {
 
         // 캐시 리셋
         this.bullsNoteFolderId = null;
+        this.notesFolderId = null;
         this.attachmentsFolderId = null;
-        this.dbFileId = null;
+        this.indexFileId = null;
 
         return { success: true, user };
       } catch (e) {
@@ -286,8 +407,10 @@ class GoogleDriveServiceImpl {
     }
 
     // 2. 일반 웹 브라우저 환경: 구글 공식 Google Identity Services(GIS) initTokenClient 프로토콜 사용
-    // (구글 정책상 response_type=token 호출 시 400 unsupported_response_type이 발생하므로 최신 GIS 사용)
-    const googleAccounts = typeof window !== 'undefined' ? (window as unknown as { google?: { accounts?: { oauth2?: any } } }).google?.accounts?.oauth2 : undefined;
+    const googleAccounts =
+      typeof window !== 'undefined'
+        ? (window as unknown as { google?: { accounts?: { oauth2?: any } } }).google?.accounts?.oauth2
+        : undefined;
 
     if (googleAccounts) {
       return new Promise((resolve) => {
@@ -299,7 +422,12 @@ class GoogleDriveServiceImpl {
               'https://www.googleapis.com/auth/userinfo.profile',
               'https://www.googleapis.com/auth/userinfo.email',
             ].join(' '),
-            callback: async (tokenRes: { access_token?: string; expires_in?: number; error?: string; error_description?: string }) => {
+            callback: async (tokenRes: {
+              access_token?: string;
+              expires_in?: number;
+              error?: string;
+              error_description?: string;
+            }) => {
               if (tokenRes.error || !tokenRes.access_token) {
                 resolve({
                   success: false,
@@ -335,8 +463,9 @@ class GoogleDriveServiceImpl {
 
               this.saveConfig({ enabled: true, user: userInfo });
               this.bullsNoteFolderId = null;
+              this.notesFolderId = null;
               this.attachmentsFolderId = null;
-              this.dbFileId = null;
+              this.indexFileId = null;
 
               resolve({ success: true, user: userInfo });
             },
@@ -354,7 +483,8 @@ class GoogleDriveServiceImpl {
 
     return {
       success: false,
-      error: 'Google Identity 라이브러리가 로드되지 않았습니다. 페이지를 새로고침하거나 데스크톱 앱(npm run electron:dev)에서 실행해주세요.',
+      error:
+        'Google Identity 라이브러리가 로드되지 않았습니다. 페이지를 새로고침하거나 데스크톱 앱(npm run electron:dev)에서 실행해주세요.',
     };
   }
 
@@ -367,8 +497,9 @@ class GoogleDriveServiceImpl {
       lastSyncedAt: null,
     });
     this.bullsNoteFolderId = null;
+    this.notesFolderId = null;
     this.attachmentsFolderId = null;
-    this.dbFileId = null;
+    this.indexFileId = null;
   }
 
   /** Google Drive REST API 호출 헬퍼 */
@@ -390,7 +521,6 @@ class GoogleDriveServiceImpl {
 
     let res = await fetch(url, { ...options, headers });
     if (res.status === 401) {
-      // 401 발생 시 Refresh Token으로 1회 강제 재발급 후 재시도
       const refreshedToken = await this.getValidAccessToken(true);
       if (refreshedToken) {
         token = refreshedToken;
@@ -422,7 +552,6 @@ class GoogleDriveServiceImpl {
       return data.files[0].id;
     }
 
-    // 폴더가 없으면 새로 생성
     const metadata: Record<string, unknown> = {
       name,
       mimeType: 'application/vnd.google-apps.folder',
@@ -454,7 +583,16 @@ class GoogleDriveServiceImpl {
     return id;
   }
 
-  /** attachments 폴더 id 획득 */
+  /** BullsNote/notes 폴더 id 획득 (개별 노트 파일 저장용) */
+  async getNotesFolderId(): Promise<string> {
+    if (this.notesFolderId) return this.notesFolderId;
+    const rootId = await this.getBullsNoteFolderId();
+    const id = await this.getOrCreateFolder('notes', rootId);
+    this.notesFolderId = id;
+    return id;
+  }
+
+  /** BullsNote/attachments 폴더 id 획득 (첨부파일 및 이미지 저장용) */
   async getAttachmentsFolderId(): Promise<string> {
     if (this.attachmentsFolderId) return this.attachmentsFolderId;
     const rootId = await this.getBullsNoteFolderId();
@@ -463,13 +601,16 @@ class GoogleDriveServiceImpl {
     return id;
   }
 
-  /** 원격 DB 파일 메타데이터 조회 */
-  private async getRemoteDbFileInfo(folderId: string): Promise<{ id: string; modifiedTime: string } | null> {
-    const q = `'${folderId}' in parents and name = 'bullsnote_db.json' and trashed = false`;
+  /** 특정 폴더 내 파일명으로 메타데이터 조회 */
+  private async getFileInfoByName(
+    folderId: string,
+    fileName: string,
+  ): Promise<{ id: string; modifiedTime: string } | null> {
+    const q = `'${folderId}' in parents and name = '${fileName}' and trashed = false`;
     const res = await this.driveFetch(`/files?q=${encodeURIComponent(q)}&fields=files(id,name,modifiedTime)`);
     if (!res.ok) {
       const errText = await res.text();
-      throw new Error(this.formatDriveApiError(res.status, errText, 'Google Drive DB 메타데이터 조회 실패'));
+      throw new Error(this.formatDriveApiError(res.status, errText, `Google Drive 파일("${fileName}") 조회 실패`));
     }
     const data = await res.json();
     if (Array.isArray(data.files) && data.files.length > 0) {
@@ -478,31 +619,33 @@ class GoogleDriveServiceImpl {
     return null;
   }
 
-  /** 원격 DB 내용 다운로드 */
-  private async downloadRemoteDb(fileId: string): Promise<RemoteBullsNoteDb | null> {
+  /** JSON 파일 다운로드 헬퍼 */
+  private async downloadJsonFile<T>(fileId: string, label: string): Promise<T | null> {
     const res = await this.driveFetch(`/files/${fileId}?alt=media`);
+    if (res.status === 404) return null;
     if (!res.ok) {
       const errText = await res.text();
-      throw new Error(this.formatDriveApiError(res.status, errText, 'Google Drive DB 다운로드 실패'));
+      throw new Error(this.formatDriveApiError(res.status, errText, `${label} 다운로드 실패`));
     }
     try {
-      return await res.json();
+      return (await res.json()) as T;
     } catch {
       return null;
     }
   }
 
-  /** 원격 DB 업로드 (신규 생성 또는 기존 파일 패치) */
-  private async uploadRemoteDb(
+  /** JSON 파일 생성 또는 업데이트 헬퍼 (existingFileId가 있으면 PATCH, 없으면 Multipart POST) */
+  private async uploadJsonFile(
     folderId: string,
+    fileName: string,
     existingFileId: string | null,
-    db: RemoteBullsNoteDb,
+    payload: unknown,
+    label: string,
   ): Promise<{ id: string }> {
-    const jsonStr = JSON.stringify(db);
+    const jsonStr = JSON.stringify(payload);
     const blob = new Blob([jsonStr], { type: 'application/json' });
 
     if (existingFileId) {
-      // 기존 파일 내용 업데이트 (PATCH)
       const res = await this.driveFetch(
         `/files/${existingFileId}?uploadType=media`,
         {
@@ -512,61 +655,159 @@ class GoogleDriveServiceImpl {
         },
         true,
       );
-      if (!res.ok) {
-        const err = await res.text();
-        throw new Error(this.formatDriveApiError(res.status, err, 'Google Drive DB 파일 업데이트 실패'));
+      if (res.ok) {
+        return { id: existingFileId };
       }
-      return { id: existingFileId };
-    } else {
-      // 신규 파일 업로드 (Multipart)
-      const boundary = '-------BullsNoteBoundary' + Math.random().toString(36).substring(2);
-      const metadata = {
-        name: 'bullsnote_db.json',
-        parents: [folderId],
-        mimeType: 'application/json',
-      };
-
-      const multipartBody = [
-        `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(
-          metadata,
-        )}\r\n`,
-        `--${boundary}\r\nContent-Type: application/json\r\n\r\n${jsonStr}\r\n`,
-        `--${boundary}--`,
-      ].join('');
-
-      const res = await this.driveFetch(
-        '/files?uploadType=multipart',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': `multipart/related; boundary=${boundary}`,
-          },
-          body: multipartBody,
-        },
-        true,
-      );
-
-      if (!res.ok) {
+      // 만약 원격 파일이 수동 삭제되어 404인 경우 아래 신규 생성으로 폴백
+      if (res.status !== 404) {
         const err = await res.text();
-        throw new Error(this.formatDriveApiError(res.status, err, 'Google Drive DB 파일 생성 실패'));
+        throw new Error(this.formatDriveApiError(res.status, err, `${label} 업데이트 실패`));
       }
-      const data = await res.json();
-      return { id: data.id };
     }
+
+    const boundary = '-------BullsNoteBoundary' + Math.random().toString(36).substring(2);
+    const metadata = {
+      name: fileName,
+      parents: [folderId],
+      mimeType: 'application/json',
+    };
+
+    const multipartBody = [
+      `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n`,
+      `--${boundary}\r\nContent-Type: application/json\r\n\r\n${jsonStr}\r\n`,
+      `--${boundary}--`,
+    ].join('');
+
+    const res = await this.driveFetch(
+      '/files?uploadType=multipart',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': `multipart/related; boundary=${boundary}`,
+        },
+        body: multipartBody,
+      },
+      true,
+    );
+
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(this.formatDriveApiError(res.status, err, `${label} 생성 실패`));
+    }
+    const data = await res.json();
+    return { id: data.id };
+  }
+
+  /** 개별 노트 파일 업로드 (클라우드에는 최근 CLOUD_MAX_HISTORY개의 히스토리만 유지하여 용량 최적화) */
+  private async uploadSingleNote(
+    notesFolderId: string,
+    note: Note,
+    existingFileId?: string | null,
+  ): Promise<{ fileId: string; note: Note }> {
+    // 업로드 전 본문 내 인라인 data:image/... Base64 이미지가 있다면 자동으로 attachments/ 폴더로 분리 업로드
+    const processedNote = await this.extractAndUploadInlineImages(note);
+
+    let targetFileId = existingFileId || null;
+    const fileName = `note_${processedNote.id}.json`;
+    if (!targetFileId) {
+      const found = await this.getFileInfoByName(notesFolderId, fileName);
+      if (found) targetFileId = found.id;
+    }
+
+    const cloudNotePayload: Note = {
+      ...processedNote,
+      history: Array.isArray(processedNote.history)
+        ? processedNote.history.slice(0, CLOUD_MAX_HISTORY)
+        : [],
+      syncedAt: processedNote.updatedAt,
+    };
+
+    const uploaded = await this.uploadJsonFile(
+      notesFolderId,
+      fileName,
+      targetFileId,
+      cloudNotePayload,
+      `노트("${processedNote.title || processedNote.id}")`,
+    );
+
+    return {
+      fileId: uploaded.id,
+      note: { ...processedNote, syncedAt: processedNote.updatedAt },
+    };
+  }
+
+  /**
+   * 노트 본문(BlockNote JSON 또는 마크다운) 내의 Base64 인라인 이미지(data:image/...)를
+   * 자동으로 BullsNote/attachments/ 폴더에 업로드하고 링크로 치환
+   */
+  private async extractAndUploadInlineImages(note: Note): Promise<Note> {
+    if (!note.content || !note.content.includes('data:image/')) {
+      return note;
+    }
+
+    let modified = false;
+    const nextAttachments: NoteAttachment[] = [...(note.attachments || [])];
+
+    // 1. BlockNote JSON 배열인 경우
+    try {
+      const blocks = JSON.parse(note.content);
+      if (Array.isArray(blocks)) {
+        let imgCounter = 0;
+        const traverse = async (items: any[]) => {
+          for (const block of items) {
+            if (
+              block &&
+              block.type === 'image' &&
+              typeof block.props?.url === 'string' &&
+              block.props.url.startsWith('data:image/')
+            ) {
+              const extMatch = /^data:image\/([a-zA-Z0-9+.-]+);base64,/.exec(block.props.url);
+              const rawExt = extMatch?.[1] === 'jpeg' ? 'jpg' : extMatch?.[1] || 'png';
+              const safeExt = rawExt.replace(/[^a-zA-Z0-9]/g, '') || 'png';
+              const fileName = block.props.name || `image_${Date.now()}_${++imgCounter}.${safeExt}`;
+              const file = dataUrlToFile(block.props.url, fileName);
+              if (file) {
+                const att = await this.uploadAttachment(note.id, file);
+                nextAttachments.push(att);
+                block.props.url = att.url;
+                if (!block.props.name) block.props.name = att.name;
+                modified = true;
+              }
+            }
+            if (Array.isArray(block?.children) && block.children.length > 0) {
+              await traverse(block.children);
+            }
+          }
+        };
+        await traverse(blocks);
+
+        if (modified) {
+          return {
+            ...note,
+            content: JSON.stringify(blocks),
+            attachments: nextAttachments,
+          };
+        }
+      }
+    } catch {
+      /* ignore JSON parse error */
+    }
+
+    return note;
   }
 
   /**
    * 폴링 시 초경량 변경 감지 (트래픽 최소화)
-   * 원격 bullsnote_db.json의 modifiedTime만 조회하여 로컬 lastSyncedAt보다 최신인지만 확인
+   * 원격 index.json의 modifiedTime만 조회하여 로컬 lastSyncedAt보다 최신인지만 확인
    */
   async hasRemoteChangesQuick(): Promise<boolean> {
     if (!this.isConnected()) return false;
     try {
       const folderId = await this.getBullsNoteFolderId();
-      const fileInfo = await this.getRemoteDbFileInfo(folderId);
+      const fileInfo = await this.getFileInfoByName(folderId, 'index.json');
       if (!fileInfo) return false;
 
-      this.dbFileId = fileInfo.id;
+      this.indexFileId = fileInfo.id;
       const remoteMtime = new Date(fileInfo.modifiedTime).getTime();
       const lastSyncedAt = this.getConfig().lastSyncedAt || 0;
 
@@ -578,11 +819,18 @@ class GoogleDriveServiceImpl {
   }
 
   /**
-   * 전체 양방향 동기화 (3-Way Merge)
+   * 대안 2: 하이브리드 인덱스(index.json) + 개별 노트 파일(notes/note_<id>.json) 증분 동기화
+   * - 변경된(미동기화) 노트만 개별 업로드하고, 원격에서 변경된 노트만 개별 다운로드합니다.
    */
   async syncAll(localNotes: Note[], localProjects: Project[]): Promise<SyncResult> {
     if (!this.isConnected()) {
-      return { success: false, error: 'Google 계정이 연동되지 않았습니다.', notes: localNotes, projects: localProjects, hasRemoteChanges: false };
+      return {
+        success: false,
+        error: 'Google 계정이 연동되지 않았습니다.',
+        notes: localNotes,
+        projects: localProjects,
+        hasRemoteChanges: false,
+      };
     }
     if (this.isSyncing) {
       return { success: true, notes: localNotes, projects: localProjects, hasRemoteChanges: false };
@@ -590,147 +838,329 @@ class GoogleDriveServiceImpl {
 
     this.isSyncing = true;
     try {
-      const folderId = await this.getBullsNoteFolderId();
-      const fileInfo = await this.getRemoteDbFileInfo(folderId);
+      const rootFolderId = await this.getBullsNoteFolderId();
+      const notesFolderId = await this.getNotesFolderId();
       const deletedRecords = this.getDeletedRecords();
+      const syncedMap = this.getSyncedMap();
 
-      let mergedNotes: Note[] = [...localNotes];
-      let mergedProjects: Project[] = [...localProjects];
+      let indexInfo = await this.getFileInfoByName(rootFolderId, 'index.json');
+      let remoteIndex: RemoteIndexDb | null = null;
+
+      if (indexInfo) {
+        this.indexFileId = indexInfo.id;
+        remoteIndex = await this.downloadJsonFile<RemoteIndexDb>(indexInfo.id, 'Google Drive 인덱스(index.json)');
+      } else {
+        // 구버전(v2) 단일 파일 bullsnote_db.json이 존재하는지 확인 후 자동 마이그레이션
+        const legacyInfo = await this.getFileInfoByName(rootFolderId, 'bullsnote_db.json');
+        if (legacyInfo) {
+          const legacyDb = await this.downloadJsonFile<RemoteBullsNoteDb>(
+            legacyInfo.id,
+            '구버전 Google Drive DB',
+          );
+          if (legacyDb && Array.isArray(legacyDb.notes)) {
+            const migratedIndex: Record<string, RemoteNoteIndexEntry> = {};
+            await runWithConcurrency(legacyDb.notes, 4, async (rn) => {
+              const { fileId } = await this.uploadSingleNote(notesFolderId, rn, null);
+              migratedIndex[rn.id] = {
+                id: rn.id,
+                fileId,
+                updatedAt: rn.updatedAt,
+                title: rn.title,
+                projectId: rn.projectId || 'default',
+              };
+            });
+            remoteIndex = {
+              app: 'BullsNote',
+              version: 3,
+              lastModified: Date.now(),
+              projects: Array.isArray(legacyDb.projects) ? legacyDb.projects : localProjects,
+              noteIndex: migratedIndex,
+              deletedNotes: legacyDb.deletedNotes || [],
+              deletedProjects: legacyDb.deletedProjects || [],
+            };
+          }
+        }
+      }
+
       let hasRemoteChanges = false;
-      let shouldUpload = false;
+      let shouldUpdateIndex = false;
+      let uploadedCount = 0;
+      let downloadedCount = 0;
 
-      if (!fileInfo) {
-        // 원격에 DB가 전혀 없는 경우: 로컬 전체 데이터를 원격에 최초 업로드
-        const initialDb: RemoteBullsNoteDb = {
+      // 1. 원격에 index.json이 전혀 없는 최초 동기화인 경우: 로컬 노트 중 필요한 노트만 병렬 업로드
+      if (!remoteIndex) {
+        const newNoteIndex: Record<string, RemoteNoteIndexEntry> = {};
+        const updatedLocalNotes: Note[] = [...localNotes];
+
+        await runWithConcurrency(
+          updatedLocalNotes.map((n, i) => ({ n, i })),
+          4,
+          async ({ n, i }) => {
+            const { fileId, note: uploadedNote } = await this.uploadSingleNote(
+              notesFolderId,
+              n,
+              syncedMap[n.id]?.fileId,
+            );
+            updatedLocalNotes[i] = uploadedNote;
+            newNoteIndex[uploadedNote.id] = {
+              id: uploadedNote.id,
+              fileId,
+              updatedAt: uploadedNote.updatedAt,
+              title: uploadedNote.title,
+              projectId: uploadedNote.projectId || 'default',
+            };
+            syncedMap[uploadedNote.id] = {
+              syncedAt: uploadedNote.updatedAt,
+              fileId,
+            };
+            uploadedCount += 1;
+          },
+        );
+
+        const initialIndex: RemoteIndexDb = {
           app: 'BullsNote',
-          version: 2,
+          version: 3,
           lastModified: Date.now(),
           projects: localProjects,
-          notes: localNotes,
+          noteIndex: newNoteIndex,
           deletedNotes: deletedRecords.notes,
           deletedProjects: deletedRecords.projects,
         };
-        const created = await this.uploadRemoteDb(folderId, null, initialDb);
-        this.dbFileId = created.id;
-      } else {
-        this.dbFileId = fileInfo.id;
-        const remoteDb = await this.downloadRemoteDb(fileInfo.id);
 
-        if (!remoteDb || !Array.isArray(remoteDb.notes) || !Array.isArray(remoteDb.projects)) {
-          throw new Error('Google Drive의 BullsNote 데이터 파일 형식이 올바르지 않습니다.');
+        const createdIndex = await this.uploadJsonFile(
+          rootFolderId,
+          'index.json',
+          null,
+          initialIndex,
+          'Google Drive 인덱스(index.json)',
+        );
+        this.indexFileId = createdIndex.id;
+        this.saveSyncedMap(syncedMap);
+        this.saveConfig({ lastSyncedAt: Date.now() });
+
+        return {
+          success: true,
+          notes: updatedLocalNotes,
+          projects: localProjects,
+          hasRemoteChanges: true, // syncedAt 및 인라인 이미지 치환 반영을 위해 상태 갱신
+          uploadedCount,
+          downloadedCount: 0,
+        };
+      }
+
+      // --- 2. 프로젝트 3-Way 병합 ---
+      const projectMap = new Map<string, Project>();
+      const localDeletedProjectIds = new Set(deletedRecords.projects.map((r) => r.id));
+      const remoteDeletedProjectMap = new Map(
+        (remoteIndex.deletedProjects || []).map((r) => [r.id, r.deletedAt]),
+      );
+
+      for (const rp of remoteIndex.projects || []) {
+        const localDel = deletedRecords.projects.find((d) => d.id === rp.id);
+        if (localDel && localDel.deletedAt >= rp.updatedAt) {
+          shouldUpdateIndex = true;
+          continue;
+        }
+        projectMap.set(rp.id, rp);
+      }
+
+      for (const lp of localProjects) {
+        const remoteDelAt = remoteDeletedProjectMap.get(lp.id);
+        if (remoteDelAt && remoteDelAt >= lp.updatedAt) {
+          hasRemoteChanges = true;
+          continue;
         }
 
-        // --- 1. 프로젝트 3-way 병합 ---
-        const projectMap = new Map<string, Project>();
-        const localDeletedProjectIds = new Set(deletedRecords.projects.map((r) => r.id));
-        const remoteDeletedProjectMap = new Map((remoteDb.deletedProjects || []).map((r) => [r.id, r.deletedAt]));
+        const existing = projectMap.get(lp.id);
+        if (!existing) {
+          projectMap.set(lp.id, lp);
+          shouldUpdateIndex = true;
+        } else if (lp.updatedAt > existing.updatedAt) {
+          projectMap.set(lp.id, lp);
+          shouldUpdateIndex = true;
+        } else if (existing.updatedAt > lp.updatedAt) {
+          hasRemoteChanges = true;
+        }
+      }
+      const mergedProjects = Array.from(projectMap.values());
 
-        // 원격 프로젝트 반영
-        for (const rp of remoteDb.projects) {
-          // 로컬에서 이미 삭제된 경우 확인
-          const localDel = deletedRecords.projects.find((d) => d.id === rp.id);
-          if (localDel && localDel.deletedAt >= rp.updatedAt) {
-            shouldUpload = true;
-            continue;
+      // --- 3. 개별 노트 증분 비교 및 동기화 (변경된 노트만 업로드/다운로드) ---
+      const nextNoteIndex: Record<string, RemoteNoteIndexEntry> = { ...(remoteIndex.noteIndex || {}) };
+      const localNoteMap = new Map<string, Note>(localNotes.map((n) => [n.id, n]));
+      const localDeletedNoteMap = new Map(deletedRecords.notes.map((r) => [r.id, r.deletedAt]));
+      const remoteDeletedNoteMap = new Map(
+        (remoteIndex.deletedNotes || []).map((r) => [r.id, r.deletedAt]),
+      );
+
+      const finalNotesMap = new Map<string, Note>();
+      const toDownload: RemoteNoteIndexEntry[] = [];
+      const toUpload: Array<{ note: Note; existingFileId?: string }> = [];
+      const toDeleteRemoteFileIds: string[] = [];
+      let hasSyncStampUpdates = false;
+
+      // 3-1. 원격 인덱스에 있는 노트들 검사
+      for (const [noteId, remoteEntry] of Object.entries(remoteIndex.noteIndex || {})) {
+        const localDelAt = localDeletedNoteMap.get(noteId);
+        if (localDelAt && localDelAt >= remoteEntry.updatedAt) {
+          // 로컬에서 삭제된 노트 -> 원격 파일도 삭제 예약 및 인덱스에서 제거
+          delete nextNoteIndex[noteId];
+          if (remoteEntry.fileId) toDeleteRemoteFileIds.push(remoteEntry.fileId);
+          delete syncedMap[noteId];
+          shouldUpdateIndex = true;
+          continue;
+        }
+
+        const localNote = localNoteMap.get(noteId);
+        if (!localNote) {
+          // 로컬에 없는 원격 신규 노트 -> 다운로드 대상
+          toDownload.push(remoteEntry);
+        } else if (remoteEntry.updatedAt > localNote.updatedAt) {
+          // 원격이 더 최신인 노트 -> 다운로드 대상
+          toDownload.push(remoteEntry);
+        } else if (localNote.updatedAt > remoteEntry.updatedAt) {
+          // 로컬이 더 최신인 노트 -> 업로드 대상
+          toUpload.push({ note: localNote, existingFileId: remoteEntry.fileId });
+        } else {
+          // 양쪽 updatedAt이 동일함 -> 네트워크 전송 없이 동기화 완료 마킹만 보장!
+          const prevSyncedAt = Math.max(localNote.syncedAt || 0, syncedMap[noteId]?.syncedAt || 0);
+          if (prevSyncedAt < localNote.updatedAt) {
+            hasSyncStampUpdates = true;
           }
-          projectMap.set(rp.id, rp);
+          syncedMap[noteId] = { syncedAt: localNote.updatedAt, fileId: remoteEntry.fileId };
+          finalNotesMap.set(noteId, { ...localNote, syncedAt: localNote.updatedAt });
         }
+      }
 
-        // 로컬 프로젝트 비교 병합
-        for (const lp of localProjects) {
-          // 원격에서 삭제된 경우
-          const remoteDelAt = remoteDeletedProjectMap.get(lp.id);
-          if (remoteDelAt && remoteDelAt >= lp.updatedAt) {
+      // 3-2. 로컬에만 존재하는 노트들 검사
+      for (const ln of localNotes) {
+        if (remoteIndex.noteIndex && remoteIndex.noteIndex[ln.id]) {
+          continue; // 이미 위 3-1에서 처리됨
+        }
+        const remoteDelAt = remoteDeletedNoteMap.get(ln.id);
+        if (remoteDelAt && remoteDelAt >= ln.updatedAt) {
+          // 원격에서 삭제된 노트 -> 로컬에서도 제거
+          delete syncedMap[ln.id];
+          hasRemoteChanges = true;
+          continue;
+        }
+        // 로컬에서 새로 작성된 미동기화 노트 -> 업로드 대상
+        toUpload.push({ note: ln, existingFileId: syncedMap[ln.id]?.fileId });
+      }
+
+      // 3-3. 원격 삭제 파일 정리 (백그라운드 비차단)
+      if (toDeleteRemoteFileIds.length > 0) {
+        await runWithConcurrency(toDeleteRemoteFileIds, 4, async (fid) => {
+          try {
+            await this.driveFetch(`/files/${fid}`, { method: 'DELETE' });
+          } catch {
+            /* ignore */
+          }
+        });
+      }
+
+      // 3-4. 변경된 원격 노트만 병렬 다운로드
+      if (toDownload.length > 0) {
+        await runWithConcurrency(toDownload, 4, async (entry) => {
+          const downloaded = await this.downloadJsonFile<Note>(
+            entry.fileId,
+            `노트("${entry.title || entry.id}")`,
+          );
+          if (downloaded && downloaded.id) {
+            const localExisting = localNoteMap.get(downloaded.id);
+            // 로컬 히스토리와 병합하여 로컬 30개 히스토리 보존
+            const mergedHistory = localExisting?.history?.length
+              ? [
+                  ...(downloaded.history || []),
+                  ...localExisting.history.filter(
+                    (lh) => !(downloaded.history || []).some((dh) => dh.savedAt === lh.savedAt),
+                  ),
+                ].slice(0, 30)
+              : downloaded.history || [];
+
+            const syncedNote: Note = {
+              ...downloaded,
+              history: mergedHistory,
+              syncedAt: downloaded.updatedAt,
+            };
+            finalNotesMap.set(downloaded.id, syncedNote);
+            syncedMap[downloaded.id] = { syncedAt: downloaded.updatedAt, fileId: entry.fileId };
+            downloadedCount += 1;
             hasRemoteChanges = true;
-            continue;
           }
+        });
+      }
 
-          const existing = projectMap.get(lp.id);
-          if (!existing) {
-            // 로컬에만 있음 -> 추가
-            projectMap.set(lp.id, lp);
-            shouldUpload = true;
-          } else if (lp.updatedAt > existing.updatedAt) {
-            // 로컬이 더 최신
-            projectMap.set(lp.id, lp);
-            shouldUpload = true;
-          } else if (existing.updatedAt > lp.updatedAt) {
-            // 원격이 더 최신
-            hasRemoteChanges = true;
-          }
-        }
-        mergedProjects = Array.from(projectMap.values());
+      // 3-5. 변경된(미동기화) 로컬 노트만 병렬 업로드
+      if (toUpload.length > 0) {
+        await runWithConcurrency(toUpload, 4, async ({ note, existingFileId }) => {
+          const { fileId, note: uploadedNote } = await this.uploadSingleNote(
+            notesFolderId,
+            note,
+            existingFileId,
+          );
+          finalNotesMap.set(uploadedNote.id, uploadedNote);
+          nextNoteIndex[uploadedNote.id] = {
+            id: uploadedNote.id,
+            fileId,
+            updatedAt: uploadedNote.updatedAt,
+            title: uploadedNote.title,
+            projectId: uploadedNote.projectId || 'default',
+          };
+          syncedMap[uploadedNote.id] = {
+            syncedAt: uploadedNote.updatedAt,
+            fileId,
+          };
+          uploadedCount += 1;
+          shouldUpdateIndex = true;
+          hasSyncStampUpdates = true;
+        });
+      }
 
-        // --- 2. 노트 3-way 병합 ---
-        const noteMap = new Map<string, Note>();
-        const localDeletedNoteMap = new Map(deletedRecords.notes.map((r) => [r.id, r.deletedAt]));
-        const remoteDeletedNoteMap = new Map((remoteDb.deletedNotes || []).map((r) => [r.id, r.deletedAt]));
-
-        // 원격 노트 반영
-        for (const rn of remoteDb.notes) {
-          const localDelAt = localDeletedNoteMap.get(rn.id);
-          if (localDelAt && localDelAt >= rn.updatedAt) {
-            shouldUpload = true;
-            continue;
-          }
-          noteMap.set(rn.id, rn);
-        }
-
-        // 로컬 노트 비교 병합
-        for (const ln of localNotes) {
-          const remoteDelAt = remoteDeletedNoteMap.get(ln.id);
-          if (remoteDelAt && remoteDelAt >= ln.updatedAt) {
-            hasRemoteChanges = true;
-            continue;
-          }
-
-          const existing = noteMap.get(ln.id);
-          if (!existing) {
-            noteMap.set(ln.id, ln);
-            shouldUpload = true;
-          } else if (ln.updatedAt > existing.updatedAt) {
-            noteMap.set(ln.id, ln);
-            shouldUpload = true;
-          } else if (existing.updatedAt > ln.updatedAt) {
-            hasRemoteChanges = true;
-          }
-        }
-        mergedNotes = Array.from(noteMap.values());
-
-        // 로컬 삭제 이력과 원격 삭제 이력 합산
+      // 3-6. 인덱스 파일(index.json)은 변경사항이 있을 때만 업데이트
+      if (shouldUpdateIndex) {
         const mergedDeletedNotes = [
           ...deletedRecords.notes,
-          ...(remoteDb.deletedNotes || []).filter((r) => !localDeletedNoteMap.has(r.id)),
+          ...(remoteIndex.deletedNotes || []).filter((r) => !localDeletedNoteMap.has(r.id)),
         ].slice(-500);
 
         const mergedDeletedProjects = [
           ...deletedRecords.projects,
-          ...(remoteDb.deletedProjects || []).filter((r) => !localDeletedProjectIds.has(r.id)),
+          ...(remoteIndex.deletedProjects || []).filter((r) => !localDeletedProjectIds.has(r.id)),
         ].slice(-200);
 
-        // 로컬 변경사항이 있거나 동기화된 결과가 원격과 다르면 원격에 재업로드
-        if (shouldUpload || hasRemoteChanges) {
-          const updatedDb: RemoteBullsNoteDb = {
-            app: 'BullsNote',
-            version: 2,
-            lastModified: Date.now(),
-            projects: mergedProjects,
-            notes: mergedNotes,
-            deletedNotes: mergedDeletedNotes,
-            deletedProjects: mergedDeletedProjects,
-          };
-          await this.uploadRemoteDb(folderId, fileInfo.id, updatedDb);
-        }
+        const updatedIndex: RemoteIndexDb = {
+          app: 'BullsNote',
+          version: 3,
+          lastModified: Date.now(),
+          projects: mergedProjects,
+          noteIndex: nextNoteIndex,
+          deletedNotes: mergedDeletedNotes,
+          deletedProjects: mergedDeletedProjects,
+        };
+
+        const savedIndex = await this.uploadJsonFile(
+          rootFolderId,
+          'index.json',
+          this.indexFileId,
+          updatedIndex,
+          'Google Drive 인덱스(index.json)',
+        );
+        this.indexFileId = savedIndex.id;
       }
 
       const now = Date.now();
+      this.saveSyncedMap(syncedMap);
       this.saveConfig({ lastSyncedAt: now });
+
+      const mergedNotes = Array.from(finalNotesMap.values());
 
       return {
         success: true,
         notes: mergedNotes,
         projects: mergedProjects,
-        hasRemoteChanges,
+        hasRemoteChanges: hasRemoteChanges || hasSyncStampUpdates,
+        uploadedCount,
+        downloadedCount,
       };
     } catch (err) {
       console.error('Google Drive syncAll error:', err);
@@ -747,7 +1177,8 @@ class GoogleDriveServiceImpl {
   }
 
   /**
-   * 첨부파일 업로드 (BullsNote/attachments 폴더에 저장)
+   * 첨부파일 및 이미지를 BullsNote/attachments 폴더에 분리 업로드
+   * - 이미지 파일인 경우 업로드 즉시 메모리 ObjectURL 캐시에 등록하여 노트 본문에서 즉시 보이도록 처리
    */
   async uploadAttachment(noteId: string, file: File): Promise<NoteAttachment> {
     const attFolderId = await this.getAttachmentsFolderId();
@@ -789,11 +1220,25 @@ class GoogleDriveServiceImpl {
 
     if (!res.ok) {
       const errText = await res.text();
-      throw new Error(`Google Drive 파일 업로드 실패: ${errText}`);
+      throw new Error(this.formatDriveApiError(res.status, errText, 'Google Drive 첨부파일 업로드 실패'));
     }
 
     const data = await res.json();
     const fileId = data.id as string;
+
+    // 이미지/미디어 파일이면 즉시 로컬 Blob URL을 캐싱하여 노트 에디터에서 0ms로 표시되도록 함
+    if (
+      file.type.startsWith('image/') ||
+      file.type.startsWith('video/') ||
+      file.type.startsWith('audio/')
+    ) {
+      try {
+        const localBlobUrl = URL.createObjectURL(file);
+        this.attachmentBlobUrlCache.set(fileId, localBlobUrl);
+      } catch {
+        /* ignore */
+      }
+    }
 
     return {
       id: createNoteId(),
@@ -807,12 +1252,59 @@ class GoogleDriveServiceImpl {
   }
 
   /**
+   * 노트 본문 내 Google Drive 이미지/파일 URL을 에디터 표시용 URL로 변환 (BlockNote resolveFileUrl 연동)
+   * - attachments/ 폴더에 업로드된 비공개 Google Drive 이미지를 OAuth 토큰으로 안전하게 가져와 노트 본문에 직접 렌더링합니다.
+   * - 일반 문서/압축 파일은 링크(https://drive.google.com/file/d/.../view)를 그대로 반환합니다.
+   */
+  async resolveDriveFileUrl(url: string): Promise<string> {
+    if (!url || typeof url !== 'string') return url;
+    if (url.startsWith('data:') || url.startsWith('blob:')) return url;
+
+    const fileId = extractDriveFileIdFromUrl(url);
+    if (!fileId) return url;
+
+    const cached = this.attachmentBlobUrlCache.get(fileId);
+    if (cached) return cached;
+
+    if (!this.isConnected()) return url;
+
+    const existingPromise = this.inFlightBlobPromises.get(fileId);
+    if (existingPromise) return existingPromise;
+
+    const promise = (async () => {
+      try {
+        const blob = await this.downloadAttachment(fileId);
+        // 이미지, 비디오, 오디오인 경우 Blob ObjectURL을 생성하여 에디터 내부에 바로 렌더링
+        if (
+          blob.type.startsWith('image/') ||
+          blob.type.startsWith('video/') ||
+          blob.type.startsWith('audio/') ||
+          blob.type === 'application/octet-stream'
+        ) {
+          const blobUrl = URL.createObjectURL(blob);
+          this.attachmentBlobUrlCache.set(fileId, blobUrl);
+          return blobUrl;
+        }
+        return url;
+      } catch {
+        return url;
+      } finally {
+        this.inFlightBlobPromises.delete(fileId);
+      }
+    })();
+
+    this.inFlightBlobPromises.set(fileId, promise);
+    return promise;
+  }
+
+  /**
    * 첨부파일 다운로드 (Blob 반환)
    */
   async downloadAttachment(storagePath: string): Promise<Blob> {
     const res = await this.driveFetch(`/files/${storagePath}?alt=media`);
     if (!res.ok) {
-      throw new Error(`Google Drive 파일 다운로드 실패 (${res.status})`);
+      const errText = await res.text();
+      throw new Error(this.formatDriveApiError(res.status, errText, 'Google Drive 첨부파일 다운로드 실패'));
     }
     return res.blob();
   }
@@ -822,6 +1314,11 @@ class GoogleDriveServiceImpl {
    */
   async deleteAttachment(storagePath: string): Promise<void> {
     try {
+      const cachedUrl = this.attachmentBlobUrlCache.get(storagePath);
+      if (cachedUrl) {
+        URL.revokeObjectURL(cachedUrl);
+        this.attachmentBlobUrlCache.delete(storagePath);
+      }
       await this.driveFetch(`/files/${storagePath}`, { method: 'DELETE' });
     } catch (e) {
       console.warn('Google Drive 파일 삭제 실패 (무시됨):', e);

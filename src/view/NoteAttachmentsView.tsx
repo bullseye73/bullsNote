@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   ActionIcon,
+  Anchor,
   Badge,
   Button,
   Collapse,
@@ -19,11 +20,13 @@ import {
   IconChevronUp,
   IconCloudUpload,
   IconDownload,
+  IconExternalLink,
   IconFile,
   IconFileTypeDoc,
   IconFileTypePdf,
   IconFileTypeXls,
   IconFileTypeZip,
+  IconLink,
   IconPaperclip,
   IconPhoto,
   IconPlus,
@@ -37,6 +40,8 @@ import { GoogleDriveService } from '../model/GoogleDriveService';
 interface NoteAttachmentsViewProps {
   note: Note;
   onAttachmentDeleted?: (att: NoteAttachment) => void;
+  onAttachmentUploaded?: (att: NoteAttachment) => void;
+  onInsertAttachmentToNote?: (att: NoteAttachment) => void;
 }
 
 /** 파일 크기 포맷 (Byte -> KB / MB) */
@@ -68,7 +73,12 @@ function getFileIcon(fileName: string, mimeType?: string) {
   return <IconFile size={20} color="var(--mantine-color-gray-6)" />;
 }
 
-export function NoteAttachmentsView({ note, onAttachmentDeleted }: NoteAttachmentsViewProps) {
+export function NoteAttachmentsView({
+  note,
+  onAttachmentDeleted,
+  onAttachmentUploaded,
+  onInsertAttachmentToNote,
+}: NoteAttachmentsViewProps) {
   const {
     googleConnected,
     openGoogleSyncModal,
@@ -111,6 +121,7 @@ export function NoteAttachmentsView({ note, onAttachmentDeleted }: NoteAttachmen
         }
         const att = await GoogleDriveService.uploadAttachment(note.id, file);
         addAttachment(note.id, att);
+        onAttachmentUploaded?.(att);
       }
     } catch (err) {
       console.error('파일 업로드 오류:', err);
@@ -345,9 +356,31 @@ export function NoteAttachmentsView({ note, onAttachmentDeleted }: NoteAttachmen
                   <Group gap="xs" wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
                     {getFileIcon(att.name, att.type)}
                     <Stack gap={1} style={{ flex: 1, minWidth: 0 }}>
-                      <Text size="sm" fw={500} truncate title={att.name}>
-                        {att.name}
-                      </Text>
+                      <Group gap={6} wrap="nowrap">
+                        <Anchor
+                          href={att.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          size="sm"
+                          fw={500}
+                          truncate
+                          title={`${att.name} (클릭하여 Google Drive 링크 열기)`}
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: 4, minWidth: 0 }}
+                        >
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {att.name}
+                          </span>
+                          <IconExternalLink size={12} style={{ flexShrink: 0, opacity: 0.7 }} />
+                        </Anchor>
+                        <Badge
+                          size="xs"
+                          variant="light"
+                          color={att.type?.startsWith('image/') ? 'grape' : 'teal'}
+                          style={{ flexShrink: 0 }}
+                        >
+                          {att.type?.startsWith('image/') ? '노트 이미지' : 'attachments/ 링크'}
+                        </Badge>
+                      </Group>
                       <Group gap="xs">
                         <Text size="xs" c="dimmed">
                           {formatFileSize(att.size)}
@@ -360,6 +393,26 @@ export function NoteAttachmentsView({ note, onAttachmentDeleted }: NoteAttachmen
                   </Group>
 
                   <Group gap={6} wrap="nowrap">
+                    {onInsertAttachmentToNote && (
+                      <Tooltip
+                        label={
+                          att.type?.startsWith('image/')
+                            ? '노트 본문에 이미지 삽입'
+                            : '노트 본문에 첨부파일 링크 삽입'
+                        }
+                      >
+                        <ActionIcon
+                          size="md"
+                          variant="light"
+                          color={att.type?.startsWith('image/') ? 'grape' : 'teal'}
+                          onClick={() => onInsertAttachmentToNote(att)}
+                          aria-label="본문에 삽입"
+                        >
+                          {att.type?.startsWith('image/') ? <IconPhoto size={16} /> : <IconLink size={16} />}
+                        </ActionIcon>
+                      </Tooltip>
+                    )}
+
                     <Tooltip label="파일 다운로드">
                       <ActionIcon
                         size="md"

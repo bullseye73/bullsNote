@@ -557,6 +557,10 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
                 pinned: parsed.pinned,
                 favorite: parsed.favorite,
                 parentId: parsed.parentId,
+                attachments: parsed.attachments,
+                todoMeta: parsed.todoMeta,
+                systemGroupType: parsed.systemGroupType,
+                syncedAt: GoogleDriveService.getNoteSyncedAt(parsed.id) ?? undefined,
                 history: histories[parsed.id] ?? [],
                 createdAt: parsed.createdAt,
                 updatedAt: parsed.updatedAt,
@@ -709,6 +713,10 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
                 pinned: parsed.pinned,
                 favorite: parsed.favorite,
                 parentId: parsed.parentId,
+                attachments: parsed.attachments,
+                todoMeta: parsed.todoMeta,
+                systemGroupType: parsed.systemGroupType,
+                syncedAt: GoogleDriveService.getNoteSyncedAt(parsed.id) ?? undefined,
                 history: histories[parsed.id] ?? [],
                 createdAt: parsed.createdAt,
                 updatedAt: parsed.updatedAt,
@@ -743,6 +751,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
                       pinned: parsed.pinned,
                       favorite: parsed.favorite,
                       parentId: parsed.parentId,
+                      attachments: parsed.attachments ?? n.attachments,
+                      todoMeta: parsed.todoMeta ?? n.todoMeta,
+                      systemGroupType: parsed.systemGroupType ?? n.systemGroupType,
                       updatedAt: parsed.updatedAt,
                     }
                   : n,
@@ -1580,7 +1591,15 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         if (!res.hasRemoteChanges) {
           return;
         }
-        const sortedNotes = res.notes.sort(sortNotes);
+        const latestLocalMap = new Map(notesRef.current.map((n) => [n.id, n]));
+        const reconciledNotes = res.notes.map((syncedNote) => {
+          const latestLocal = latestLocalMap.get(syncedNote.id);
+          if (latestLocal && latestLocal.updatedAt > syncedNote.updatedAt) {
+            return { ...latestLocal, syncedAt: syncedNote.syncedAt };
+          }
+          return syncedNote;
+        });
+        const sortedNotes = reconciledNotes.sort(sortNotes);
         setNotes(sortedNotes);
         setProjects(res.projects);
         NoteRepository.saveProjects(res.projects);

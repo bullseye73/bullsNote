@@ -1,5 +1,5 @@
 // MODEL: 파일 볼트 포맷 (frontmatter + Markdown) - 순수 함수만
-import { DEFAULT_PROJECT_ID, DEFAULT_PROJECTS, Note, NoteReminder, NoteSnapshot, Project } from './Note';
+import { DEFAULT_PROJECT_ID, DEFAULT_PROJECTS, Note, NoteAttachment, NoteReminder, NoteSnapshot, Project, TodoMeta, TodoStatus } from './Note';
 
 export interface ParsedNoteFile {
   id: string;
@@ -11,6 +11,9 @@ export interface ParsedNoteFile {
   pinned: boolean;
   favorite: boolean;
   tags: string[];
+  attachments?: NoteAttachment[];
+  todoMeta?: TodoMeta;
+  systemGroupType?: TodoStatus;
   createdAt: number;
   updatedAt: number;
   body: string;
@@ -41,6 +44,9 @@ export function serializeNoteFile(note: Note, body: string): string {
     `pinned: ${esc(note.pinned)}`,
     `favorite: ${esc(note.favorite)}`,
     `tags: ${esc(note.tags)}`,
+    `attachments: ${esc(note.attachments || [])}`,
+    `todoMeta: ${esc(note.todoMeta || null)}`,
+    `systemGroupType: ${esc(note.systemGroupType || null)}`,
     `createdAt: ${esc(note.createdAt)}`,
     `updatedAt: ${esc(note.updatedAt)}`,
     '---',
@@ -71,6 +77,17 @@ export function parseNoteFile(id: string, text: string): ParsedNoteFile | null {
     typeof (meta.reminder as Record<string, unknown>).targetAt === 'number'
       ? (meta.reminder as NoteReminder)
       : null;
+  const attachments = Array.isArray(meta.attachments)
+    ? (meta.attachments as NoteAttachment[])
+    : [];
+  const todoMeta =
+    typeof meta.todoMeta === 'object' && meta.todoMeta !== null
+      ? (meta.todoMeta as TodoMeta)
+      : undefined;
+  const systemGroupType =
+    typeof meta.systemGroupType === 'string'
+      ? (meta.systemGroupType as TodoStatus)
+      : undefined;
   return {
     id,
     title: str(meta.title, '제목 없음'),
@@ -81,6 +98,9 @@ export function parseNoteFile(id: string, text: string): ParsedNoteFile | null {
     pinned: meta.pinned === true,
     favorite: meta.favorite === true,
     tags: Array.isArray(meta.tags) ? meta.tags.filter((t): t is string => typeof t === 'string') : [],
+    attachments,
+    todoMeta,
+    systemGroupType,
     createdAt: num(meta.createdAt),
     updatedAt: num(meta.updatedAt),
     body: m[2].replace(/\s+$/, ''),

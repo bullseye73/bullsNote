@@ -86,6 +86,10 @@ function migrate(raw: unknown): Note[] {
           typeof (n as { systemGroupType?: unknown }).systemGroupType === 'string'
             ? ((n as { systemGroupType: TodoStatus }).systemGroupType as TodoStatus)
             : GROUP_ID_TO_STATUS[n.id as string],
+        syncedAt:
+          typeof (n as { syncedAt?: unknown }).syncedAt === 'number'
+            ? (n as { syncedAt: number }).syncedAt
+            : undefined,
         createdAt: typeof n.createdAt === 'number' ? n.createdAt : now,
         updatedAt: typeof n.updatedAt === 'number' ? n.updatedAt : now,
       } as Note;

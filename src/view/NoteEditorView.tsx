@@ -23,6 +23,7 @@ import {
   IconChecklist,
   IconChevronDown,
   IconChevronUp,
+  IconCloudUpload,
   IconCode,
   IconCopy,
   IconDownload,
@@ -257,17 +258,84 @@ function BlockEditor({
     []
   );
 
+  const handleResolveFileUrl = useCallback(
+    async (url: string) => {
+      if (!url || url.startsWith('data:') || url.startsWith('blob:')) return url;
+      const matchedAtt = (note.attachments || []).find(
+        (a) => a.url === url || (a.storagePath && url.includes(a.storagePath))
+      );
+      if (matchedAtt && matchedAtt.type && !matchedAtt.type.startsWith('image/') && !url.includes('#image')) {
+        return url;
+      }
+      return GoogleDriveService.resolveDriveFileUrl(url);
+    },
+    [note.attachments]
+  );
+
   const editor = useCreateBlockNote(
     {
       schema: getAppSchema() as never,
       initialContent,
       uploadFile: handleUploadFile,
+      resolveFileUrl: handleResolveFileUrl,
       extensions,
       links: {
         onClick: handleLinkClick,
       },
     },
     [note.id]
+  );
+
+  // 첨부파일/이미지를 본문에 삽입 (이미지는 노트에서 바로 볼 수 있도록 image 블록, 일반 파일은 클릭 가능한 링크로 표시)
+  const insertAttachmentBlockOrLink = useCallback(
+    (att: NoteAttachment) => {
+      try {
+        const cursorBlock = editor.getTextCursorPosition()?.block || editor.document[editor.document.length - 1];
+        const isImage =
+          att.type?.startsWith('image/') ||
+          /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(att.name || '');
+
+        if (isImage) {
+          editor.insertBlocks(
+            [
+              {
+                type: 'image',
+                props: {
+                  url: att.url,
+                  name: att.name,
+                  caption: '',
+                },
+              } as never,
+            ],
+            cursorBlock,
+            'after'
+          );
+        } else {
+          editor.insertBlocks(
+            [
+              {
+                type: 'paragraph',
+                content: [
+                  {
+                    type: 'link',
+                    href: att.url,
+                    content: `📎 ${att.name}`,
+                  },
+                ],
+              } as never,
+            ],
+            cursorBlock,
+            'after'
+          );
+        }
+        const json = JSON.stringify(editor.document);
+        lastEmittedRef.current = json;
+        updateContent(note.id, json);
+      } catch (err) {
+        console.warn('첨부파일 본문 삽입 실패:', err);
+      }
+    },
+    [editor, note.id, updateContent]
   );
 
   // 에디터 인스턴스 상위 등록 및 노트 진입 시 즉시 쓰기 모드(자동 포커스) 보장
@@ -294,27 +362,50 @@ function BlockEditor({
     hiddenFileInputRef.current?.click();
   }, [googleConnected, openGoogleSyncModal]);
 
-  // 숨겨진 input에서 파일 선택 시 본문에 노션 스타일 file 블록 삽입
+  // 숨겨진 input에서 파일 선택 시: 이미지는 에디터에서 바로 보이도록 image 블록, 일반 첨부파일은 링크로 삽입
   const handleFilePickedFromInput = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
       try {
         const url = await handleUploadFile(file);
-        editor.insertBlocks(
-          [
-            {
-              type: 'file',
-              props: {
-                url,
-                name: file.name,
-                caption: '',
-              },
-            } as never,
-          ],
-          editor.getTextCursorPosition().block,
-          'after'
-        );
+        const isImage =
+          file.type.startsWith('image/') ||
+          /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(file.name || '');
+        const cursorBlock = editor.getTextCursorPosition()?.block || editor.document[editor.document.length - 1];
+        if (isImage) {
+          editor.insertBlocks(
+            [
+              {
+                type: 'image',
+                props: {
+                  url,
+                  name: file.name,
+                  caption: '',
+                },
+              } as never,
+            ],
+            cursorBlock,
+            'after'
+          );
+        } else {
+          editor.insertBlocks(
+            [
+              {
+                type: 'paragraph',
+                content: [
+                  {
+                    type: 'link',
+                    href: url,
+                    content: `📎 ${file.name}`,
+                  },
+                ],
+              } as never,
+            ],
+            cursorBlock,
+            'after'
+          );
+        }
       } catch {
         // 오류 처리는 handleUploadFile에서 수행
       } finally {
@@ -1024,6 +1115,8 @@ function BlockEditor({
               <NoteAttachmentsView
                 note={note}
                 onAttachmentDeleted={handleAttachmentDeleted}
+                onAttachmentUploaded={insertAttachmentBlockOrLink}
+                onInsertAttachmentToNote={insertAttachmentBlockOrLink}
               />
 
               {/* 이 노트를 참조(링크)하고 있는 백링크 목록 */}
@@ -1290,6 +1383,18 @@ export function NoteEditorView() {
             })}
           </Group>
           <Group gap="xs">
+            {GoogleDriveService.isNoteUnsynced(selected) && (
+              <Tooltip label="Google Drive에 아직 동기화되지 않은 변경사항이 있습니다 (동기화 완료 시 자동으로 사라집니다)">
+                <Badge
+                  size="xs"
+                  variant="light"
+                  color="orange"
+                  leftSection={<IconCloudUpload size={11} />}
+                >
+                  미동기화
+                </Badge>
+              </Tooltip>
+            )}
             {selected.reminder && !selected.reminder.dismissed && (
               <Badge
                 size="xs"

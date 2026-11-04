@@ -321,6 +321,8 @@ export interface Note {
   todoMeta?: TodoMeta;
   /** 시스템 관리 상위 그룹 여부 ('todo' | 'doing' | 'done' | 'drop') */
   systemGroupType?: TodoStatus;
+  /** 마지막으로 Google Drive 클라우드와 동기화 완료된 시점의 updatedAt 타임스탬프 */
+  syncedAt?: number;
   createdAt: number;
   updatedAt: number;
 }
