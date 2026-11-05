@@ -182,14 +182,14 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
     try {
       const saved = localStorage.getItem('bullsnote.projects.collapsed');
       if (saved) return new Set<string>(JSON.parse(saved));
-    } catch {}
+    } catch { }
     return new Set<string>();
   });
 
   useEffect(() => {
     try {
       localStorage.setItem('bullsnote.projects.collapsed', JSON.stringify([...collapsedProjects]));
-    } catch {}
+    } catch { }
   }, [collapsedProjects]);
 
   const toggleProjectCollapse = useCallback((projectId: string) => {
@@ -677,33 +677,33 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
                     <NavLink
                       label={proj.name}
                       leftSection={
-                        <Group gap={2} wrap="nowrap" style={{ marginRight: -2 }}>
-                          {hasChildren ? (
-                            <ActionIcon
-                              size={16}
-                              variant="subtle"
-                              color="gray"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                toggleProjectCollapse(proj.id);
-                              }}
-                              aria-label={isCollapsed ? '하위 폴더 펼치기' : '하위 폴더 접기'}
-                            >
-                              {isCollapsed ? (
-                                <IconChevronRight size={12} />
-                              ) : (
-                                <IconChevronDown size={12} />
-                              )}
-                            </ActionIcon>
-                          ) : (
-                            <span style={{ width: 16, display: 'inline-block' }} />
-                          )}
-                          {proj.icon ? (
-                            <span style={{ fontSize: 14.5, lineHeight: 1 }}>
-                              {proj.icon}
-                            </span>
-                          ) : null}
-                        </Group>
+                        hasChildren || proj.icon ? (
+                          <Group gap={2} wrap="nowrap" style={{ marginRight: -2 }}>
+                            {hasChildren && (
+                              <ActionIcon
+                                size={16}
+                                variant="subtle"
+                                color="gray"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleProjectCollapse(proj.id);
+                                }}
+                                aria-label={isCollapsed ? '하위 폴더 펼치기' : '하위 폴더 접기'}
+                              >
+                                {isCollapsed ? (
+                                  <IconChevronRight size={12} />
+                                ) : (
+                                  <IconChevronDown size={12} />
+                                )}
+                              </ActionIcon>
+                            )}
+                            {proj.icon ? (
+                              <span style={{ fontSize: 14.5, lineHeight: 1 }}>
+                                {proj.icon}
+                              </span>
+                            ) : null}
+                          </Group>
+                        ) : undefined
                       }
                       active={isSelected}
                       onClick={() => {
@@ -712,7 +712,7 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
                         selectProject(proj.id);
                       }}
                       styles={{
-                        root: { borderRadius: 8, padding: '5px 6px' },
+                        root: { borderRadius: 8, padding: '5px 8px' },
                         label: {
                           fontSize: 12.8,
                           fontWeight: isSelected ? 600 : 400,
