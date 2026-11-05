@@ -49,6 +49,7 @@
   "build": {
     "appId": "com.bullsnote.app",
     "productName": "BullsNote",
+    "icon": "electron/assets/icon",
     "publish": {
       "provider": "github",
       "owner": "bullseye73",
@@ -74,6 +75,7 @@
         "AppImage",
         "deb"
       ],
+      "icon": "electron/assets/icon.png",
       "category": "Utility",
       "maintainer": "BullsNote <bullseye73@gmail.com>"
     },
@@ -81,7 +83,8 @@
       "target": [
         "dmg",
         "zip"
-      ]
+      ],
+      "icon": "electron/assets/icon.icns"
     }
   },
   "optionalDependencies": {

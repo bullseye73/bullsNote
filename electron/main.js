@@ -7,6 +7,10 @@ const { registerGoogleAuthIpc } = require('./google-auth-ipc');
 const { setupTray } = require('./tray');
 
 const isDev = !app.isPackaged;
+app.name = 'BullsNote';
+if (process.platform === 'win32' && typeof app.setAppUserModelId === 'function') {
+  app.setAppUserModelId('com.bullsnote.app');
+}
 
 // 중복 실행 방지: 이미 실행 중인 인스턴스가 있으면 기존 창을 활성화하고 새 인스턴스는 종료
 const gotTheLock = app.requestSingleInstanceLock();
@@ -80,8 +84,16 @@ function setupAppMenu() {
   Menu.setApplicationMenu(menu);
 }
 
+function getPlatformIconPath() {
+  const fileName =
+    process.platform === 'win32'
+      ? 'icon.ico'
+      : 'icon.png';
+  return path.join(__dirname, 'assets', fileName);
+}
+
 function createWindow() {
-  const iconPath = path.join(__dirname, 'assets', 'icon.png');
+  const iconPath = getPlatformIconPath();
   const appVersion = packageJson.version || '1.1.1';
   const isDark = nativeTheme.shouldUseDarkColors;
   const isMac = process.platform === 'darwin';
@@ -235,6 +247,26 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  // macOS Dock 및 앱 정보창(About) 아이콘 명시적 적용 (개발/프로덕션 모두 지원)
+  if (process.platform === 'darwin') {
+    const macPngPath = path.join(__dirname, 'assets', 'icon.png');
+    try {
+      const dockIcon = nativeImage.createFromPath(macPngPath);
+      if (app.dock && !dockIcon.isEmpty()) {
+        app.dock.setIcon(dockIcon);
+      }
+      if (typeof app.setAboutPanelOptions === 'function') {
+        app.setAboutPanelOptions({
+          applicationName: 'BullsNote',
+          applicationVersion: packageJson.version || '1.1.1',
+          iconPath: macPngPath,
+        });
+      }
+    } catch (e) {
+      console.warn('[BullsNote] macOS Dock 아이콘 설정 실패:', e);
+    }
+  }
+
   setupAppMenu();
   registerVaultIpc(app);
   registerGoogleAuthIpc(app);
