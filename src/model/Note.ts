@@ -1,11 +1,22 @@
-// MODEL: 도메인 엔티티 (MVC의 M) - 프로젝트 + 트리(parentId) + 히스토리 지원
+// MODEL: 도메인 엔티티 (MVC의 M) - 프로젝트(계층 트리 지원) + 노트 트리(parentId) + 히스토리 지원
 export interface Project {
   id: string;
   name: string;
   /** 프로젝트 아이콘 (이모지 또는 심볼, 예: 📁, 🚀, 💡, 📝, 🎯 등) */
   icon: string;
+  /** 상위 프로젝트(폴더) ID (최상위 루트는 null 또는 undefined) */
+  parentId?: string | null;
   createdAt: number;
   updatedAt: number;
+}
+
+/** 폴더(프로젝트) 계층 최대 깊이 (0: 대분류/루트, 1: 중분류, 2: 소분류 -> 최대 3단계) */
+export const MAX_PROJECT_DEPTH = 2;
+
+export interface ProjectTreeNode {
+  project: Project;
+  depth: number;
+  children: ProjectTreeNode[];
 }
 
 export const DEFAULT_PROJECT_ID = 'default';
@@ -15,6 +26,7 @@ export const DEFAULT_PROJECTS: Project[] = [
     id: DEFAULT_PROJECT_ID,
     name: '기본 프로젝트',
     icon: '📁',
+    parentId: null,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   },
@@ -532,6 +544,189 @@ export function getPathTitles(notes: Note[], id: string): string[] {
 export function getPathNodes(notes: Note[], id: string): Note[] {
   const byId = new Map(notes.map((n) => [n.id, n]));
   const path: Note[] = [];
+  let cur = byId.get(id);
+  const seen = new Set<string>();
+  while (cur && !seen.has(cur.id)) {
+    seen.add(cur.id);
+    path.unshift(cur);
+    cur = cur.parentId ? byId.get(cur.parentId) : undefined;
+  }
+  return path;
+}
+
+/** 프로젝트 ID 기준 자손 프로젝트 ID 집합 (자기 자신 포함, 순환 참조 방어) */
+export function getProjectDescendantIds(projects: Project[], id: string): Set<string> {
+  const childrenOf = new Map<string, string[]>();
+  for (const p of projects) {
+    const pid = p.parentId ?? null;
+    if (!pid) continue;
+    const arr = childrenOf.get(pid) ?? [];
+    arr.push(p.id);
+    childrenOf.set(pid, arr);
+  }
+  const out = new Set<string>([id]);
+  const stack = [id];
+  while (stack.length > 0) {
+    const cur = stack.pop()!;
+    for (const c of childrenOf.get(cur) ?? []) {
+      if (!out.has(c)) {
+        out.add(c);
+        stack.push(c);
+      }
+    }
+  }
+  return out;
+}
+
+/** 특정 프로젝트의 루트 기준 깊이 반환 (루트 = 0, 중분류 = 1, 소분류 = 2) */
+export function getProjectDepth(projects: Project[], id: string): number {
+  const byId = new Map(projects.map((p) => [p.id, p]));
+  let depth = 0;
+  let cur = byId.get(id);
+  const seen = new Set<string>();
+  while (cur && cur.parentId && byId.has(cur.parentId)) {
+    if (seen.has(cur.id)) break;
+    seen.add(cur.id);
+    depth++;
+    cur = byId.get(cur.parentId);
+  }
+  return depth;
+}
+
+/** 특정 프로젝트 하위의 최대 서브트리 높이 (자식이 없으면 0, 손자가 있으면 2) */
+export function getProjectSubtreeHeight(projects: Project[], id: string): number {
+  const childrenOf = new Map<string, string[]>();
+  for (const p of projects) {
+    if (!p.parentId) continue;
+    const arr = childrenOf.get(p.parentId) ?? [];
+    arr.push(p.id);
+    childrenOf.set(p.parentId, arr);
+  }
+  const visited = new Set<string>();
+  const calc = (curId: string): number => {
+    if (visited.has(curId)) return 0;
+    visited.add(curId);
+    const kids = childrenOf.get(curId) ?? [];
+    if (kids.length === 0) return 0;
+    let maxChild = 0;
+    for (const k of kids) {
+      maxChild = Math.max(maxChild, 1 + calc(k));
+    }
+    return maxChild;
+  };
+  return calc(id);
+}
+
+/** 프로젝트 상위 폴더 지정 가능 여부 검증 (순환 참조 및 최대 3단계 깊이 제한 검증) */
+export function canSetProjectParent(
+  projects: Project[],
+  projectId: string | null,
+  targetParentId: string | null,
+): { allowed: boolean; reason?: string } {
+  if (!targetParentId) return { allowed: true };
+  if (projectId && projectId === targetParentId) {
+    return { allowed: false, reason: '자기 자신을 상위 폴더로 지정할 수 없습니다.' };
+  }
+  if (projectId) {
+    const descendants = getProjectDescendantIds(projects, projectId);
+    if (descendants.has(targetParentId)) {
+      return { allowed: false, reason: '하위 폴더를 상위 폴더로 이동할 수 없습니다.' };
+    }
+  }
+  const parentDepth = getProjectDepth(projects, targetParentId);
+  const subtreeHeight = projectId ? getProjectSubtreeHeight(projects, projectId) : 0;
+  if (parentDepth + 1 + subtreeHeight > MAX_PROJECT_DEPTH) {
+    return {
+      allowed: false,
+      reason: '폴더 계층은 최대 3단계(대분류 → 중분류 → 소분류)까지만 만들 수 있습니다.',
+    };
+  }
+  return { allowed: true };
+}
+
+/** 평탄 프로젝트 배열 -> 계층 트리 변환 (순환 방어 + 최대 깊이 보정 + 형제 정렬) */
+export function buildProjectTree(
+  projects: Project[],
+  sortFn?: (a: Project, b: Project) => number,
+): ProjectTreeNode[] {
+  const byId = new Map<string, Project>();
+  for (const p of projects) byId.set(p.id, p);
+
+  const isAncestor = (ancestorId: string, startPid: string | null | undefined): boolean => {
+    let cur = startPid ?? null;
+    const seen = new Set<string>();
+    while (cur && byId.has(cur)) {
+      if (cur === ancestorId) return true;
+      if (seen.has(cur)) return true;
+      seen.add(cur);
+      cur = byId.get(cur)?.parentId ?? null;
+    }
+    return false;
+  };
+
+  const nodeMap = new Map<string, ProjectTreeNode>();
+  for (const p of projects) {
+    nodeMap.set(p.id, { project: p, depth: 0, children: [] });
+  }
+
+  const roots: ProjectTreeNode[] = [];
+  for (const node of nodeMap.values()) {
+    const pid = node.project.parentId ?? null;
+    const parent = pid ? nodeMap.get(pid) : undefined;
+    if (
+      parent &&
+      parent.project.id !== node.project.id &&
+      !isAncestor(node.project.id, pid) &&
+      getProjectDepth(projects, node.project.id) <= MAX_PROJECT_DEPTH
+    ) {
+      parent.children.push(node);
+    } else {
+      roots.push(node);
+    }
+  }
+
+  const visited = new Set<string>();
+  const assignDepthAndSort = (list: ProjectTreeNode[], depth: number) => {
+    if (sortFn) {
+      list.sort((a, b) => sortFn(a.project, b.project));
+    }
+    for (const item of list) {
+      item.depth = depth;
+      if (!visited.has(item.project.id)) {
+        visited.add(item.project.id);
+        assignDepthAndSort(item.children, Math.min(MAX_PROJECT_DEPTH, depth + 1));
+      }
+    }
+  };
+  assignDepthAndSort(roots, 0);
+  return roots;
+}
+
+/** 프로젝트 트리를 전위 순회(Pre-order) 평탄 배열로 변환 (드롭다운·이동 메뉴 표시용) */
+export function flattenProjectTree(
+  tree: ProjectTreeNode[],
+): Array<{ project: Project; depth: number; hasChildren: boolean }> {
+  const result: Array<{ project: Project; depth: number; hasChildren: boolean }> = [];
+  const walk = (nodes: ProjectTreeNode[]) => {
+    for (const n of nodes) {
+      result.push({
+        project: n.project,
+        depth: n.depth,
+        hasChildren: n.children.length > 0,
+      });
+      if (n.children.length > 0) {
+        walk(n.children);
+      }
+    }
+  };
+  walk(tree);
+  return result;
+}
+
+/** 루트 폴더부터 현재 폴더까지의 경로 반환 (브레드크럼 표시용) */
+export function getProjectPath(projects: Project[], id: string): Project[] {
+  const byId = new Map(projects.map((p) => [p.id, p]));
+  const path: Project[] = [];
   let cur = byId.get(id);
   const seen = new Set<string>();
   while (cur && !seen.has(cur.id)) {

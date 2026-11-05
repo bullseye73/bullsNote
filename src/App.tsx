@@ -19,6 +19,7 @@ import {
 import '@mantine/core/styles.css';
 import './index.css';
 import { APP_VERSION } from './model/version';
+import { getProjectPath } from './model/Note';
 import { SHORTCUTS } from './model/shortcutUtils';
 import { TODO_PROJECT_ID } from './model/TodoService';
 import { useDisclosure, useHotkeys } from '@mantine/hooks';
@@ -92,7 +93,7 @@ function ListPanel() {
     ? '🏷️'
     : selectedDate
     ? '📅'
-    : selectedProject?.icon || '📁';
+    : selectedProject?.icon || '';
 
   return (
     <div
@@ -111,7 +112,7 @@ function ListPanel() {
         style={{ borderBottom: '1px solid var(--bn-border-subtle)' }}
       >
         <Group gap={6} style={{ minWidth: 0, flex: 1 }}>
-          <span style={{ fontSize: 15, lineHeight: 1 }}>{headerIcon}</span>
+          {headerIcon && <span style={{ fontSize: 15, lineHeight: 1 }}>{headerIcon}</span>}
           <span
             style={{
               fontWeight: 600,
@@ -163,6 +164,7 @@ function Shell() {
   const isDark = computedColorScheme === 'dark';
 
   const {
+    projects,
     selected,
     selectedProject,
     selectedProjectId,
@@ -237,13 +239,20 @@ function Shell() {
     : '동기화 이력 없음';
 
   const isTodoBoard = selectedProjectId === TODO_PROJECT_ID && !showFavoriteOnly;
+  const projectPath = selectedProject ? getProjectPath(projects, selectedProject.id) : [];
+  const formatProjLabel = (p?: { name?: string; icon?: string } | null) =>
+    p ? (p.icon ? `${p.icon} ${p.name}` : p.name || '기본 프로젝트') : '기본 프로젝트';
+  const projectPathText =
+    projectPath.length > 1
+      ? projectPath.map((p) => formatProjLabel(p)).join(' / ')
+      : formatProjLabel(selectedProject);
   const contextLabel = showFavoriteOnly
     ? '⭐ 즐겨찾기'
     : isTodoBoard
     ? '📋 할일관리'
     : activeTag
     ? `#${activeTag}`
-    : `${selectedProject?.icon || '📁'} ${selectedProject?.name || '기본 프로젝트'}`;
+    : projectPathText;
 
   const user = googleConfig?.user;
 

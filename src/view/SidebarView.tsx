@@ -12,6 +12,7 @@ import {
   Paper,
   Popover,
   ScrollArea,
+  Select,
   SimpleGrid,
   Stack,
   Text,
@@ -24,11 +25,16 @@ import {
   IconBrandGoogle,
   IconCalendar,
   IconCalendarEvent,
+  IconChevronDown,
+  IconChevronRight,
   IconCommand,
   IconDots,
   IconFilterOff,
   IconFolder,
+  IconFolderPlus,
   IconHash,
+  IconIndentDecrease,
+  IconIndentIncrease,
   IconPencil,
   IconPlus,
   IconRefresh,
@@ -40,9 +46,16 @@ import {
   IconTrash,
   IconX,
 } from '@tabler/icons-react';
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useNotes } from '../controller/NotesController';
-import { Project } from '../model/Note';
+import {
+  MAX_PROJECT_DEPTH,
+  Project,
+  ProjectTreeNode,
+  canSetProjectParent,
+  flattenProjectTree,
+  getProjectDescendantIds,
+} from '../model/Note';
 import { TODO_PROJECT_ID } from '../model/TodoService';
 import { SHORTCUTS } from '../model/shortcutUtils';
 import { SortMenu } from './SortMenu';
@@ -79,12 +92,16 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
   const {
     projects,
     sortedProjects,
+    projectTree,
     projectSortOption,
     setProjectSortOption,
     selectedProjectId,
     selectProject,
     createProject,
     updateProject,
+    setProjectParent,
+    indentProject,
+    outdentProject,
     deleteProject,
     notes,
     search,
@@ -157,19 +174,50 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
   const [modalOpened, { open: openModal, close: closeModal }] = useDisclosure(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [formName, setFormName] = useState('');
-  const [formIcon, setFormIcon] = useState('📁');
+  const [formIcon, setFormIcon] = useState('');
+  const [formParentId, setFormParentId] = useState<string | null>(null);
 
-  const startCreateProject = () => {
+  // 폴더 트리 접기/펼치기 상태 (localStorage 영구 보존)
+  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem('bullsnote.projects.collapsed');
+      if (saved) return new Set<string>(JSON.parse(saved));
+    } catch {}
+    return new Set<string>();
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('bullsnote.projects.collapsed', JSON.stringify([...collapsedProjects]));
+    } catch {}
+  }, [collapsedProjects]);
+
+  const toggleProjectCollapse = useCallback((projectId: string) => {
+    setCollapsedProjects((prev) => {
+      const next = new Set(prev);
+      if (next.has(projectId)) next.delete(projectId);
+      else next.add(projectId);
+      return next;
+    });
+  }, []);
+
+  // 폴더 드래그 앤 드롭 상태
+  const [draggingProjectId, setDraggingProjectId] = useState<string | null>(null);
+  const [dropTargetProjectId, setDropTargetProjectId] = useState<string | 'ROOT' | null>(null);
+
+  const startCreateProject = (parentId: string | null = null) => {
     setEditingProject(null);
     setFormName('');
-    setFormIcon('📁');
+    setFormIcon('');
+    setFormParentId(parentId);
     openModal();
   };
 
   const startEditProject = (p: Project) => {
     setEditingProject(p);
     setFormName(p.name);
-    setFormIcon(p.icon || '📁');
+    setFormIcon(p.icon || '');
+    setFormParentId(p.parentId ?? null);
     openModal();
   };
 
@@ -177,9 +225,22 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
     const trimmed = formName.trim();
     if (!trimmed) return;
     if (editingProject) {
-      updateProject(editingProject.id, { name: trimmed, icon: formIcon });
+      updateProject(editingProject.id, {
+        name: trimmed,
+        icon: formIcon,
+        parentId: formParentId,
+      });
     } else {
-      createProject(trimmed, formIcon);
+      createProject(trimmed, formIcon, formParentId);
+      // 하위 폴더 생성 시 상위 폴더를 자동으로 펼침
+      if (formParentId) {
+        setCollapsedProjects((prev) => {
+          if (!prev.has(formParentId)) return prev;
+          const next = new Set(prev);
+          next.delete(formParentId);
+          return next;
+        });
+      }
     }
     closeModal();
   };
@@ -188,6 +249,25 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
     () => sortedProjects.filter((p) => p.id !== TODO_PROJECT_ID),
     [sortedProjects]
   );
+
+  // 모달 상위 폴더 드롭다운 선택지 (순환 참조 및 최대 3단계 깊이 초과 후보 제외)
+  const parentSelectOptions = useMemo(() => {
+    const flat = flattenProjectTree(projectTree);
+    const opts: Array<{ value: string; label: string; disabled?: boolean }> = [
+      { value: '__ROOT__', label: '최상위 폴더 (루트)' },
+    ];
+    for (const item of flat) {
+      const check = canSetProjectParent(projects, editingProject?.id ?? null, item.project.id);
+      if (!check.allowed) continue;
+      const prefix = item.depth > 0 ? `${'　'.repeat(item.depth)}└ ` : '';
+      const iconText = item.project.icon ? `${item.project.icon} ` : '';
+      opts.push({
+        value: item.project.id,
+        label: `${prefix}${iconText}${item.project.name}`,
+      });
+    }
+    return opts;
+  }, [projectTree, projects, editingProject]);
 
   const user = googleConfig?.user;
 
@@ -439,11 +519,42 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
 
       <Divider color="var(--bn-border-subtle)" />
 
-      {/* 폴더 / 프로젝트 탐색 섹션 (flex: 1 최대화) */}
-      <Group justify="space-between" px={4}>
-        <Text size="xs" fw={600} c="dimmed" style={{ letterSpacing: '0.2px' }}>
-          폴더 ({regularProjects.length})
-        </Text>
+      {/* 폴더 / 프로젝트 탐색 섹션 (최대 3단계 계층 트리 지원) */}
+      <Group
+        justify="space-between"
+        px={4}
+        py={2}
+        style={{
+          borderRadius: 6,
+          backgroundColor:
+            dropTargetProjectId === 'ROOT' ? 'var(--mantine-color-blue-light)' : undefined,
+          outline:
+            dropTargetProjectId === 'ROOT'
+              ? '1.5px dashed var(--mantine-color-blue-5)'
+              : undefined,
+          transition: 'all 0.12s ease',
+        }}
+        onDragOver={(e) => {
+          if (!draggingProjectId) return;
+          e.preventDefault();
+          setDropTargetProjectId('ROOT');
+        }}
+        onDragLeave={() => {
+          if (dropTargetProjectId === 'ROOT') setDropTargetProjectId(null);
+        }}
+        onDrop={(e) => {
+          if (!draggingProjectId) return;
+          e.preventDefault();
+          setProjectParent(draggingProjectId, null);
+          setDraggingProjectId(null);
+          setDropTargetProjectId(null);
+        }}
+      >
+        <Tooltip label={draggingProjectId ? '여기에 놓으면 최상위(루트) 폴더로 이동합니다' : '최대 3단계 계층 폴더 관리 (드래그 앤 드롭 지원)'}>
+          <Text size="xs" fw={600} c="dimmed" style={{ letterSpacing: '0.2px', cursor: 'default' }}>
+            폴더 ({regularProjects.length})
+          </Text>
+        </Tooltip>
         <Group gap={4}>
           <SortMenu
             sortOption={projectSortOption}
@@ -451,12 +562,12 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
             targetName="프로젝트"
             size="xs"
           />
-          <Tooltip label="새 폴더(프로젝트) 만들기">
+          <Tooltip label="새 최상위 폴더(프로젝트) 만들기">
             <ActionIcon
               size="xs"
               variant="subtle"
               color="blue"
-              onClick={startCreateProject}
+              onClick={() => startCreateProject(null)}
               aria-label="새 프로젝트"
             >
               <IconPlus size={13} />
@@ -467,71 +578,260 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
 
       <ScrollArea style={{ flex: 1, minHeight: 0 }} type="auto" offsetScrollbars>
         <Stack gap={2}>
-          {regularProjects.map((proj) => {
-            const count = notes.filter((n) => (n.projectId || 'default') === proj.id).length;
-            const isSelected = proj.id === selectedProjectId && !showFavoriteOnly;
-            return (
-              <NavLink
-                key={proj.id}
-                label={proj.name}
-                leftSection={<span style={{ fontSize: 15, lineHeight: 1 }}>{proj.icon || '📁'}</span>}
-                active={isSelected}
-                onClick={() => {
-                  setShowFavoriteOnly(false);
-                  resetAllFilters();
-                  selectProject(proj.id);
-                }}
-                styles={{
-                  root: { borderRadius: 8, padding: '6px 8px' },
-                  label: { fontSize: 13, fontWeight: isSelected ? 600 : 400 },
-                }}
-                rightSection={
-                  <Group gap={2} wrap="nowrap" onClick={(e) => e.stopPropagation()}>
-                    <Badge
-                      size="xs"
-                      variant={isSelected ? 'light' : 'subtle'}
-                      color={isSelected ? 'blue' : 'gray'}
-                    >
-                      {count}
-                    </Badge>
-                    <Menu position="bottom-end" withArrow shadow="md" withinPortal>
-                      <Menu.Target>
-                        <ActionIcon size="xs" variant="subtle" color="gray" aria-label="프로젝트 옵션">
-                          <IconDots size={13} />
-                        </ActionIcon>
-                      </Menu.Target>
-                      <Menu.Dropdown>
-                        <Menu.Item leftSection={<IconPencil size={14} />} onClick={() => startEditProject(proj)}>
-                          이름 및 아이콘 수정
-                        </Menu.Item>
-                        <Menu.Divider />
-                        <Menu.Item
-                          color="red"
-                          leftSection={<IconTrash size={14} />}
-                          disabled={projects.length <= 1}
-                          onClick={() => {
-                            if (projects.length <= 1) {
-                              alert('최소 1개의 프로젝트는 유지되어야 합니다.');
-                              return;
-                            }
-                            const msg =
-                              count > 0
-                                ? `"${proj.name}" 프로젝트와 소속된 ${count}개의 노트를 모두 삭제할까요?`
-                                : `"${proj.name}" 프로젝트를 삭제할까요?`;
-                            if (confirm(msg)) {
-                              deleteProject(proj.id);
-                            }
-                          }}
-                        >
-                          프로젝트 삭제
-                        </Menu.Item>
-                      </Menu.Dropdown>
-                    </Menu>
-                  </Group>
-                }
-              />
-            );
-          })}
+          {(() => {
+            const renderProjectNode = (
+              node: ProjectTreeNode,
+              hasPrevSibling: boolean,
+            ): React.ReactNode => {
+              const proj = node.project;
+              const depth = node.depth;
+              const hasChildren = node.children.length > 0;
+              const isCollapsed = collapsedProjects.has(proj.id);
+              const count = notes.filter((n) => (n.projectId || 'default') === proj.id).length;
+              const isSelected = proj.id === selectedProjectId && !showFavoriteOnly;
+
+              const descendantIds = getProjectDescendantIds(projects, proj.id);
+              const subFolderCount = Math.max(0, descendantIds.size - 1);
+              const totalNoteCount = notes.filter((n) =>
+                descendantIds.has(n.projectId || 'default'),
+              ).length;
+
+              const canAddSubFolder = depth < MAX_PROJECT_DEPTH;
+              const isDragging = draggingProjectId === proj.id;
+              const isDropTarget = dropTargetProjectId === proj.id;
+
+              return (
+                <div key={proj.id}>
+                  <div
+                    draggable
+                    onDragStart={(e) => {
+                      e.stopPropagation();
+                      setDraggingProjectId(proj.id);
+                      e.dataTransfer.effectAllowed = 'move';
+                      e.dataTransfer.setData('text/plain', proj.id);
+                    }}
+                    onDragOver={(e) => {
+                      if (!draggingProjectId || draggingProjectId === proj.id) return;
+                      const check = canSetProjectParent(projects, draggingProjectId, proj.id);
+                      if (!check.allowed) return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setDropTargetProjectId(proj.id);
+                    }}
+                    onDragLeave={(e) => {
+                      e.stopPropagation();
+                      if (dropTargetProjectId === proj.id) {
+                        setDropTargetProjectId(null);
+                      }
+                    }}
+                    onDrop={(e) => {
+                      if (!draggingProjectId || draggingProjectId === proj.id) return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      const res = setProjectParent(draggingProjectId, proj.id);
+                      if (!res.success && res.error) {
+                        alert(res.error);
+                      } else {
+                        setCollapsedProjects((prev) => {
+                          if (!prev.has(proj.id)) return prev;
+                          const next = new Set(prev);
+                          next.delete(proj.id);
+                          return next;
+                        });
+                      }
+                      setDraggingProjectId(null);
+                      setDropTargetProjectId(null);
+                    }}
+                    onDragEnd={() => {
+                      setDraggingProjectId(null);
+                      setDropTargetProjectId(null);
+                    }}
+                    style={{
+                      paddingLeft: depth * 14,
+                      position: 'relative',
+                      opacity: isDragging ? 0.45 : 1,
+                      borderRadius: 8,
+                      outline: isDropTarget
+                        ? '1.5px dashed var(--mantine-color-blue-5)'
+                        : undefined,
+                      backgroundColor: isDropTarget
+                        ? 'var(--mantine-color-blue-light)'
+                        : undefined,
+                      transition: 'all 0.12s ease',
+                    }}
+                  >
+                    {depth > 0 && (
+                      <span
+                        aria-hidden
+                        style={{
+                          position: 'absolute',
+                          left: (depth - 1) * 14 + 10,
+                          top: 2,
+                          bottom: 2,
+                          width: 1,
+                          backgroundColor: 'var(--bn-border-subtle)',
+                          pointerEvents: 'none',
+                        }}
+                      />
+                    )}
+                    <NavLink
+                      label={proj.name}
+                      leftSection={
+                        <Group gap={2} wrap="nowrap" style={{ marginRight: -2 }}>
+                          {hasChildren ? (
+                            <ActionIcon
+                              size={16}
+                              variant="subtle"
+                              color="gray"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleProjectCollapse(proj.id);
+                              }}
+                              aria-label={isCollapsed ? '하위 폴더 펼치기' : '하위 폴더 접기'}
+                            >
+                              {isCollapsed ? (
+                                <IconChevronRight size={12} />
+                              ) : (
+                                <IconChevronDown size={12} />
+                              )}
+                            </ActionIcon>
+                          ) : (
+                            <span style={{ width: 16, display: 'inline-block' }} />
+                          )}
+                          {proj.icon ? (
+                            <span style={{ fontSize: 14.5, lineHeight: 1 }}>
+                              {proj.icon}
+                            </span>
+                          ) : null}
+                        </Group>
+                      }
+                      active={isSelected}
+                      onClick={() => {
+                        setShowFavoriteOnly(false);
+                        resetAllFilters();
+                        selectProject(proj.id);
+                      }}
+                      styles={{
+                        root: { borderRadius: 8, padding: '5px 6px' },
+                        label: {
+                          fontSize: 12.8,
+                          fontWeight: isSelected ? 600 : 400,
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                        },
+                      }}
+                      rightSection={
+                        <Group gap={2} wrap="nowrap" onClick={(e) => e.stopPropagation()}>
+                          {hasChildren && isCollapsed && subFolderCount > 0 && (
+                            <Tooltip label={`접힌 하위 폴더 ${subFolderCount}개`}>
+                              <Badge
+                                size="xs"
+                                variant="outline"
+                                color="blue"
+                                style={{ paddingLeft: 4, paddingRight: 4, fontSize: 9.5 }}
+                              >
+                                +{subFolderCount}
+                              </Badge>
+                            </Tooltip>
+                          )}
+                          <Tooltip label={`직속 노트 ${count}개`}>
+                            <Badge
+                              size="xs"
+                              variant={isSelected ? 'light' : 'subtle'}
+                              color={isSelected ? 'blue' : 'gray'}
+                            >
+                              {count}
+                            </Badge>
+                          </Tooltip>
+                          <Menu position="bottom-end" withArrow shadow="md" withinPortal>
+                            <Menu.Target>
+                              <ActionIcon size="xs" variant="subtle" color="gray" aria-label="폴더 옵션">
+                                <IconDots size={13} />
+                              </ActionIcon>
+                            </Menu.Target>
+                            <Menu.Dropdown>
+                              <Menu.Item
+                                leftSection={<IconFolderPlus size={14} />}
+                                disabled={!canAddSubFolder}
+                                onClick={() => startCreateProject(proj.id)}
+                              >
+                                {canAddSubFolder
+                                  ? '하위 폴더 추가'
+                                  : '하위 폴더 추가 (최대 3단계 제한)'}
+                              </Menu.Item>
+                              <Menu.Item
+                                leftSection={<IconPencil size={14} />}
+                                onClick={() => startEditProject(proj)}
+                              >
+                                이름·아이콘·상위 폴더 수정
+                              </Menu.Item>
+                              <Menu.Divider />
+                              <Menu.Label>계층 위치 변경</Menu.Label>
+                              <Menu.Item
+                                leftSection={<IconIndentIncrease size={14} />}
+                                disabled={!hasPrevSibling || depth >= MAX_PROJECT_DEPTH}
+                                onClick={() => indentProject(proj.id)}
+                              >
+                                들여쓰기 (이전 폴더의 하위로)
+                              </Menu.Item>
+                              <Menu.Item
+                                leftSection={<IconIndentDecrease size={14} />}
+                                disabled={depth === 0}
+                                onClick={() => outdentProject(proj.id)}
+                              >
+                                내어쓰기 (상위 단계로)
+                              </Menu.Item>
+                              {depth > 0 && (
+                                <Menu.Item
+                                  leftSection={<IconFolder size={14} />}
+                                  onClick={() => setProjectParent(proj.id, null)}
+                                >
+                                  최상위(루트) 폴더로 이동
+                                </Menu.Item>
+                              )}
+                              <Menu.Divider />
+                              <Menu.Item
+                                color="red"
+                                leftSection={<IconTrash size={14} />}
+                                disabled={regularProjects.length <= 1}
+                                onClick={() => {
+                                  if (regularProjects.length <= 1) {
+                                    alert('최소 1개의 폴더는 유지되어야 합니다.');
+                                    return;
+                                  }
+                                  let msg = `"${proj.name}" 폴더를 삭제할까요?`;
+                                  if (subFolderCount > 0 && totalNoteCount > 0) {
+                                    msg = `"${proj.name}" 폴더와 하위 폴더 ${subFolderCount}개 및 소속된 노트 총 ${totalNoteCount}개를 모두 삭제할까요?`;
+                                  } else if (subFolderCount > 0) {
+                                    msg = `"${proj.name}" 폴더와 하위 폴더 ${subFolderCount}개를 모두 삭제할까요?`;
+                                  } else if (count > 0) {
+                                    msg = `"${proj.name}" 폴더와 소속된 ${count}개의 노트를 모두 삭제할까요?`;
+                                  }
+                                  if (confirm(msg)) {
+                                    deleteProject(proj.id);
+                                  }
+                                }}
+                              >
+                                폴더 삭제{subFolderCount > 0 ? ` (하위 ${subFolderCount}개 포함)` : ''}
+                              </Menu.Item>
+                            </Menu.Dropdown>
+                          </Menu>
+                        </Group>
+                      }
+                    />
+                  </div>
+                  {hasChildren && !isCollapsed && (
+                    <Stack gap={2} mt={2}>
+                      {node.children.map((child, idx) => renderProjectNode(child, idx > 0))}
+                    </Stack>
+                  )}
+                </div>
+              );
+            };
+
+            return projectTree.map((node, idx) => renderProjectNode(node, idx > 0));
+          })()}
         </Stack>
       </ScrollArea>
 
@@ -808,10 +1108,32 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
             }}
           />
 
+          <Select
+            label="상위 폴더 위치 (최대 3단계 계층)"
+            description="최상위 폴더로 만들거나 기존 폴더의 하위 폴더로 배치할 수 있습니다."
+            data={parentSelectOptions}
+            value={formParentId ?? '__ROOT__'}
+            onChange={(val) => setFormParentId(!val || val === '__ROOT__' ? null : val)}
+            allowDeselect={false}
+            size="xs"
+          />
+
           <div>
-            <Text size="sm" fw={500} mb={4}>
-              아이콘 선택
-            </Text>
+            <Group justify="space-between" align="center" mb={4}>
+              <Text size="sm" fw={500}>
+                아이콘 선택 <Text span size="xs" c="dimmed" fw={400}>(선택사항)</Text>
+              </Text>
+              {formIcon && (
+                <Button
+                  size="compact-xs"
+                  variant="subtle"
+                  color="gray"
+                  onClick={() => setFormIcon('')}
+                >
+                  아이콘 없음(해제)
+                </Button>
+              )}
+            </Group>
             <SimpleGrid cols={5} spacing={6} mb={8}>
               {POPULAR_ICONS.map((icon) => (
                 <Button
@@ -820,7 +1142,7 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
                   color="blue"
                   p={4}
                   h={38}
-                  onClick={() => setFormIcon(icon)}
+                  onClick={() => setFormIcon((prev) => (prev === icon ? '' : icon))}
                   style={{ fontSize: 18 }}
                 >
                   {icon}
@@ -828,10 +1150,23 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
               ))}
             </SimpleGrid>
             <TextInput
-              label="직접 이모지 입력"
-              placeholder="예: 🪐, ☕"
+              label="직접 이모지 입력 (선택사항)"
+              placeholder="비워두면 아이콘 없이 폴더 이름만 표시됩니다 (예: 🪐, ☕)"
               value={formIcon}
-              onChange={(e) => setFormIcon(e.currentTarget.value.slice(0, 4) || '📁')}
+              onChange={(e) => setFormIcon(e.currentTarget.value.slice(0, 4))}
+              rightSection={
+                formIcon ? (
+                  <ActionIcon
+                    size="xs"
+                    variant="subtle"
+                    color="gray"
+                    onClick={() => setFormIcon('')}
+                    aria-label="이모지 지우기"
+                  >
+                    <IconX size={12} />
+                  </ActionIcon>
+                ) : undefined
+              }
               size="xs"
             />
           </div>

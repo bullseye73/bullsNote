@@ -31,7 +31,7 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import { useState, useCallback, useMemo } from 'react';
-import { PastelColorConfig, PASTEL_COLORS, getPastelConfig, TreeNode } from '../model/Note';
+import { PastelColorConfig, PASTEL_COLORS, flattenProjectTree, getPastelConfig, TreeNode } from '../model/Note';
 import { useNotes } from '../controller/NotesController';
 import { getSearchSnippet } from '../model/SearchService';
 import { HighlightText } from './HighlightText';
@@ -68,6 +68,7 @@ function RowActions({
     updateColor,
     notes,
     projects,
+    projectTree,
     moveNoteToProject,
   } = useNotes();
   const note = notes.find((n) => n.id === id)!;
@@ -264,13 +265,20 @@ function RowActions({
           {!isSystemGroup && projects.length > 1 && (
             <>
               <Menu.Divider />
-              <Menu.Label>프로젝트 이동</Menu.Label>
-              {projects
-                .filter((p) => p.id !== (note.projectId || 'default'))
-                .map((p) => (
+              <Menu.Label>폴더(프로젝트) 이동</Menu.Label>
+              {flattenProjectTree(projectTree)
+                .filter((item) => item.project.id !== (note.projectId || 'default'))
+                .map(({ project: p, depth }) => (
                   <Menu.Item
                     key={p.id}
-                    leftSection={<span style={{ fontSize: 14 }}>{p.icon}</span>}
+                    leftSection={
+                      depth > 0 || p.icon ? (
+                        <span style={{ fontSize: 14, paddingLeft: depth * 12 }}>
+                          {depth > 0 ? '└ ' : ''}
+                          {p.icon || ''}
+                        </span>
+                      ) : undefined
+                    }
                     onClick={() => moveNoteToProject(id, p.id)}
                   >
                     {p.name}
@@ -804,7 +812,7 @@ export function NoteListView() {
                   <Group gap={6} wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
                     {searchScope === 'all' && proj && (
                       <Badge size="xs" variant="light" color="gray" style={{ flexShrink: 0 }}>
-                        {proj.icon || '📁'} {proj.name}
+                        {proj.icon ? `${proj.icon} ${proj.name}` : proj.name}
                       </Badge>
                     )}
                     <Text

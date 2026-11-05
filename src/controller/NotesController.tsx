@@ -10,11 +10,15 @@ import {
   NoteReminder,
   NoteSnapshot,
   Project,
+  ProjectTreeNode,
+  buildProjectTree,
   buildTree,
+  canSetProjectParent,
   computeNextReminderTime,
   createEmptyNote,
   createProjectId,
   getDescendantIds,
+  getProjectDescendantIds,
   TreeNode,
   SortOption,
   compareProjects,
@@ -121,6 +125,7 @@ export interface NotesState {
   projectSortOption: SortOption;
   noteSortOption: SortOption;
   sortedProjects: Project[];
+  projectTree: ProjectTreeNode[];
   hasEncryptedNotes: boolean;
   googleSyncModalOpened: boolean;
   geminiModalOpened: boolean;
@@ -159,8 +164,11 @@ export interface NotesActions {
   chooseVault(): Promise<void>;
   resync(): Promise<void>;
   selectProject(id: string): void;
-  createProject(name: string, icon?: string): string;
-  updateProject(id: string, patch: Partial<Pick<Project, 'name' | 'icon'>>): void;
+  createProject(name: string, icon?: string, parentId?: string | null): string;
+  updateProject(id: string, patch: Partial<Pick<Project, 'name' | 'icon' | 'parentId'>>): void;
+  setProjectParent(id: string, parentId: string | null): { success: boolean; error?: string };
+  indentProject(id: string): void;
+  outdentProject(id: string): void;
   deleteProject(id: string): void;
   moveNoteToProject(noteId: string, targetProjectId: string): void;
   saveGoogleConfig(config: Partial<GoogleDriveConfig>): void;
@@ -329,6 +337,15 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const sortedProjects = useMemo(() => {
     if (projectSortOption.field === 'none') return projects;
     return [...projects].sort((a, b) => compareProjects(a, b, projectSortOption));
+  }, [projects, projectSortOption]);
+
+  const projectTree = useMemo(() => {
+    const regular = projects.filter((p) => p.id !== TODO_PROJECT_ID);
+    const sortFn =
+      projectSortOption.field === 'none'
+        ? undefined
+        : (a: Project, b: Project) => compareProjects(a, b, projectSortOption);
+    return buildProjectTree(regular, sortFn);
   }, [projects, projectSortOption]);
 
   const noteComparator = useCallback(
@@ -882,12 +899,15 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   );
 
   const createProject = useCallback(
-    (name: string, icon = '📁'): string => {
+    (name: string, icon = '', parentId: string | null = null): string => {
+      const check = canSetProjectParent(projectsRef.current, null, parentId);
+      const validParentId = check.allowed ? parentId : null;
       const id = createProjectId();
       const newProj: Project = {
         id,
         name: name.trim() || '새 프로젝트',
-        icon: icon.trim() || '📁',
+        icon: icon.trim(),
+        parentId: validParentId,
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
@@ -901,14 +921,47 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   );
 
   const updateProject = useCallback(
-    (id: string, patch: Partial<Pick<Project, 'name' | 'icon'>>) => {
+    (id: string, patch: Partial<Pick<Project, 'name' | 'icon' | 'parentId'>>) => {
+      setProjects((prev) => {
+        if (patch.parentId !== undefined) {
+          const check = canSetProjectParent(prev, id, patch.parentId ?? null);
+          if (!check.allowed) {
+            alert(check.reason || '상위 폴더를 변경할 수 없습니다.');
+            return prev;
+          }
+        }
+        return prev.map((p) => {
+          if (p.id === id) {
+            const updated: Project = {
+              ...p,
+              name: patch.name !== undefined ? patch.name.trim() || p.name : p.name,
+              icon: patch.icon !== undefined ? patch.icon.trim() : p.icon,
+              parentId: patch.parentId !== undefined ? patch.parentId ?? null : p.parentId ?? null,
+              updatedAt: Date.now(),
+            };
+            queueProjectSync(updated);
+            return updated;
+          }
+          return p;
+        });
+      });
+    },
+    [queueProjectSync],
+  );
+
+  const setProjectParent = useCallback(
+    (id: string, parentId: string | null): { success: boolean; error?: string } => {
+      const check = canSetProjectParent(projectsRef.current, id, parentId);
+      if (!check.allowed) {
+        return { success: false, error: check.reason };
+      }
       setProjects((prev) =>
         prev.map((p) => {
           if (p.id === id) {
-            const updated = {
+            if ((p.parentId ?? null) === (parentId ?? null)) return p;
+            const updated: Project = {
               ...p,
-              name: patch.name !== undefined ? patch.name.trim() || p.name : p.name,
-              icon: patch.icon !== undefined ? patch.icon.trim() || p.icon : p.icon,
+              parentId: parentId ?? null,
               updatedAt: Date.now(),
             };
             queueProjectSync(updated);
@@ -917,6 +970,70 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
           return p;
         }),
       );
+      return { success: true };
+    },
+    [queueProjectSync],
+  );
+
+  const indentProject = useCallback(
+    (id: string) => {
+      setProjects((prev) => {
+        const regular = prev.filter((p) => p.id !== TODO_PROJECT_ID);
+        const sortFn =
+          projectSortOption.field === 'none'
+            ? undefined
+            : (a: Project, b: Project) => compareProjects(a, b, projectSortOption);
+        const treeNodes = buildProjectTree(regular, sortFn);
+
+        let prevSiblingId: string | null = null;
+        const findSibling = (list: ProjectTreeNode[]): boolean => {
+          for (let i = 0; i < list.length; i++) {
+            if (list[i].project.id === id) {
+              if (i > 0) prevSiblingId = list[i - 1].project.id;
+              return true;
+            }
+            if (findSibling(list[i].children)) return true;
+          }
+          return false;
+        };
+        findSibling(treeNodes);
+        if (!prevSiblingId) return prev;
+
+        const check = canSetProjectParent(prev, id, prevSiblingId);
+        if (!check.allowed) {
+          alert(check.reason || '더 이상 하위 단계로 들여쓰기할 수 없습니다.');
+          return prev;
+        }
+
+        return prev.map((p) => {
+          if (p.id === id) {
+            const updated: Project = { ...p, parentId: prevSiblingId, updatedAt: Date.now() };
+            queueProjectSync(updated);
+            return updated;
+          }
+          return p;
+        });
+      });
+    },
+    [projectSortOption, queueProjectSync],
+  );
+
+  const outdentProject = useCallback(
+    (id: string) => {
+      setProjects((prev) => {
+        const target = prev.find((p) => p.id === id);
+        if (!target || !target.parentId) return prev;
+        const parent = prev.find((p) => p.id === target.parentId);
+        const nextParentId = parent?.parentId ?? null;
+        return prev.map((p) => {
+          if (p.id === id) {
+            const updated: Project = { ...p, parentId: nextParentId, updatedAt: Date.now() };
+            queueProjectSync(updated);
+            return updated;
+          }
+          return p;
+        });
+      });
     },
     [queueProjectSync],
   );
@@ -928,26 +1045,42 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       setProjects((prev) => {
-        if (prev.length <= 1) {
-          alert('최소 1개의 프로젝트는 유지되어야 합니다.');
+        const doomedProjectIds = getProjectDescendantIds(prev, id);
+        const remainingRegular = prev.filter(
+          (p) => p.id !== TODO_PROJECT_ID && !doomedProjectIds.has(p.id),
+        );
+        if (remainingRegular.length < 1) {
+          alert('최소 1개의 일반 폴더(프로젝트)는 유지되어야 합니다.');
           return prev;
         }
-        const remaining = prev.filter((p) => p.id !== id);
-        setNotes((prevNotes) => prevNotes.filter((n) => (n.projectId || DEFAULT_PROJECT_ID) !== id));
-        if (selectedProjectId === id) {
-          const nextProj = remaining[0];
+        const remaining = prev.filter((p) => !doomedProjectIds.has(p.id));
+        const doomedNotes = notesRef.current.filter((n) =>
+          doomedProjectIds.has(n.projectId || DEFAULT_PROJECT_ID),
+        );
+        setNotes((prevNotes) =>
+          prevNotes.filter((n) => !doomedProjectIds.has(n.projectId || DEFAULT_PROJECT_ID)),
+        );
+        if (doomedProjectIds.has(selectedProjectId)) {
+          const nextProj = remainingRegular[0] ?? remaining[0];
           setSelectedProjectId(nextProj.id);
-          const nextNotes = notes.filter((n) => (n.projectId || DEFAULT_PROJECT_ID) === nextProj.id);
+          const nextNotes = notesRef.current.filter(
+            (n) => (n.projectId || DEFAULT_PROJECT_ID) === nextProj.id,
+          );
           setSelectedId(nextNotes[0]?.id ?? null);
         }
         if (GoogleDriveService.isConnected() && googleConfig.autoSync) {
-          GoogleDriveService.recordDeletedProject(id);
+          for (const pid of doomedProjectIds) {
+            GoogleDriveService.recordDeletedProject(pid);
+          }
+          for (const dn of doomedNotes) {
+            GoogleDriveService.recordDeletedNote(dn.id);
+          }
           queueProjectSync();
         }
         return remaining;
       });
     },
-    [selectedProjectId, notes, googleConfig.autoSync, queueProjectSync],
+    [selectedProjectId, googleConfig.autoSync, queueProjectSync],
   );
 
   const moveNoteToProject = useCallback(
@@ -1973,6 +2106,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       projectSortOption,
       noteSortOption,
       sortedProjects,
+      projectTree,
       hasEncryptedNotes,
       decryptAllLegacyNotes,
       setProjectSortOption,
@@ -2004,6 +2138,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       selectProject,
       createProject,
       updateProject,
+      setProjectParent,
+      indentProject,
+      outdentProject,
       deleteProject,
       moveNoteToProject,
       saveGoogleConfig,
@@ -2082,6 +2219,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       selectProject,
       createProject,
       updateProject,
+      setProjectParent,
+      indentProject,
+      outdentProject,
       deleteProject,
       moveNoteToProject,
       saveGoogleConfig,
@@ -2091,6 +2231,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       projectSortOption,
       noteSortOption,
       sortedProjects,
+      projectTree,
       hasEncryptedNotes,
       decryptAllLegacyNotes,
       setProjectSortOption,
