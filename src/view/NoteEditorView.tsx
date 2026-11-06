@@ -168,6 +168,8 @@ function BlockEditor({
   // 에디터 자체 방출 콘텐츠와 외부 변경(히스토리 복원, 동기화 등)을 구분하기 위한 ref
   const lastEmittedRef = useRef<string>(note.content);
   const isApplyingExternalRef = useRef<boolean>(false);
+  const notesRef = useRef<Note[]>(notes);
+  notesRef.current = notes;
 
   // note.id가 변경될 때 (노트 전환 시) lastEmittedRef 동기화
   useEffect(() => {
@@ -343,8 +345,19 @@ function BlockEditor({
     if (editor) {
       onEditorInit?.(editor);
       // 노트 선택 또는 링크 전환 직후 본문으로 커서를 자동 배치하여 쓰기 모드로 진입
+      // 단, 사용자가 이미 입력창(제목, 검색창, 모달 입력 등)에 포커스 중이면 포커스를 빼앗지 않음
       const timer = setTimeout(() => {
         try {
+          const activeEl = document.activeElement as HTMLElement | null;
+          if (
+            activeEl &&
+            (activeEl.tagName === 'INPUT' ||
+              activeEl.tagName === 'TEXTAREA' ||
+              activeEl.tagName === 'SELECT' ||
+              activeEl.closest('[role="dialog"], .mantine-Modal-root, .mantine-Popover-dropdown'))
+          ) {
+            return;
+          }
           editor.focus();
         } catch {}
       }, 50);
@@ -525,19 +538,38 @@ function BlockEditor({
       return;
     }
 
-    const markedBlocks = markDeletedBlocks(blocks, note.attachments, notes);
+    const markedBlocks = markDeletedBlocks(blocks, note.attachments, notesRef.current);
+
+    // 백그라운드 동기화 등으로 replaceBlocks가 실행될 때 에디터가 포커스를 강제로 가로채지 않도록 이전 포커스 상태 보존
+    const prevActive = document.activeElement as HTMLElement | null;
+    const wasEditorFocused = scrollContainerRef.current?.contains(prevActive) ?? false;
 
     isApplyingExternalRef.current = true;
     try {
       editor.replaceBlocks(editor.document, markedBlocks as never);
       lastEmittedRef.current = note.content;
+      if (!wasEditorFocused) {
+        if (
+          prevActive &&
+          prevActive !== document.body &&
+          prevActive !== document.documentElement &&
+          typeof prevActive.focus === 'function'
+        ) {
+          prevActive.focus({ preventScroll: true });
+        } else {
+          const currentActive = document.activeElement as HTMLElement | null;
+          if (currentActive && scrollContainerRef.current?.contains(currentActive)) {
+            currentActive.blur();
+          }
+        }
+      }
     } finally {
       // replaceBlocks로 유발된 동기 이벤트를 무시한 뒤, 비동기 틱까지 안전하게 가드 후 해제
       queueMicrotask(() => {
         isApplyingExternalRef.current = false;
       });
     }
-  }, [note.content, note.attachments, notes, editor]);
+  }, [note.content, note.attachments, editor]);
 
   // 에디터 내부 변경 핸들러: 외부 변경 반영 중에는 호출을 건너뛰어 무한 루프 방지
   const handleEditorChange = useCallback(() => {

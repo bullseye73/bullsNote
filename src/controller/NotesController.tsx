@@ -1746,13 +1746,19 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
           setSelectedProjectId(nextProjId);
         }
 
-        const projectNotes = sortedNotes.filter(
-          (n) => (n.projectId || DEFAULT_PROJECT_ID) === nextProjId,
-        );
+        // 선택 상태 보정:
+        // - 현재 노트가 선택되어 있지 않은 경우(빈 폴더 조회 등): 강제로 다른 폴더의 노트를 선택하지 않고 null 유지
+        // - 현재 선택된 노트가 동기화 후에도 전체 노트 목록에 존재하면(검색/즐겨찾기/날짜/태그 필터 등 포함) 그대로 유지
+        // - 원격에서 삭제되어 더 이상 존재하지 않는 경우에만 현재 폴더의 첫 노트로 폴백
         const currentSelId = selectedIdRef.current;
-        const hasNote = projectNotes.some((n) => n.id === currentSelId);
-        if (!hasNote) {
-          setSelectedId(projectNotes[0]?.id ?? sortedNotes[0]?.id ?? null);
+        if (currentSelId !== null) {
+          const stillExists = sortedNotes.some((n) => n.id === currentSelId);
+          if (!stillExists) {
+            const projectNotes = sortedNotes.filter(
+              (n) => (n.projectId || DEFAULT_PROJECT_ID) === nextProjId,
+            );
+            setSelectedId(projectNotes[0]?.id ?? null);
+          }
         }
       } else {
         setSyncError(res.error || 'Google Drive 동기화 중 오류가 발생했습니다.');
