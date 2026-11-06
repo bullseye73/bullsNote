@@ -20,6 +20,8 @@ jobs:
     steps:
       - name: Check out Git repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -34,6 +36,8 @@ jobs:
             TAG_VERSION="${GITHUB_REF#refs/tags/v}"
             echo "Syncing package.json version to Git tag: $TAG_VERSION"
             npm version "$TAG_VERSION" --no-git-tag-version --allow-same-version
+          else
+            node scripts/sync-version.mjs
           fi
 
       - name: Install dependencies

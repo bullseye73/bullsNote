@@ -94,7 +94,7 @@ function getPlatformIconPath() {
 
 function createWindow() {
   const iconPath = getPlatformIconPath();
-  const appVersion = packageJson.version || '1.1.1';
+  const appVersion = packageJson.version || app.getVersion();
   const isDark = nativeTheme.shouldUseDarkColors;
   const isMac = process.platform === 'darwin';
 
@@ -118,6 +118,7 @@ function createWindow() {
         }),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
+      additionalArguments: [`--app-version=${appVersion}`],
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
@@ -258,7 +259,7 @@ app.whenReady().then(() => {
       if (typeof app.setAboutPanelOptions === 'function') {
         app.setAboutPanelOptions({
           applicationName: 'BullsNote',
-          applicationVersion: packageJson.version || '1.1.1',
+          applicationVersion: packageJson.version || app.getVersion(),
           iconPath: macPngPath,
         });
       }

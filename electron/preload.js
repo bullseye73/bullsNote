@@ -1,9 +1,22 @@
 // preload: renderer 격리 유지, 필요시 안전한 API만 노출 (sandbox 환경 호환을 위해 외부 파일 require 금지)
 const { contextBridge, ipcRenderer } = require('electron');
 
+const argVersion = (process.argv || [])
+  .find((arg) => typeof arg === 'string' && arg.startsWith('--app-version='))
+  ?.split('=')[1];
+
+let resolvedVersion = argVersion || '';
+if (!resolvedVersion) {
+  try {
+    resolvedVersion = require('../package.json').version || '';
+  } catch {
+    resolvedVersion = '';
+  }
+}
+
 contextBridge.exposeInMainWorld('bullsNote', {
   platform: process.platform,
-  version: '1.1.1',
+  version: resolvedVersion,
   setTitleBarTheme: (isDark) => ipcRenderer.invoke('window:setTitleBarTheme', Boolean(isDark)),
   notification: {
     show: (data) => ipcRenderer.invoke('notification:show', data),
