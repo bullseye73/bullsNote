@@ -47,6 +47,7 @@ import {
   TODO_GROUPS,
   GROUP_ID_TO_STATUS,
   extractChecklistFromBlocks,
+  isSystemGroupNote,
 } from '../model/TodoService';
 import { TodoStatus } from '../model/Note';
 import { BlockNoteView } from '@blocknote/ariakit';
@@ -339,31 +340,6 @@ function BlockEditor({
     },
     [editor, note.id, updateContent]
   );
-
-  // 에디터 인스턴스 상위 등록 및 노트 진입 시 즉시 쓰기 모드(자동 포커스) 보장
-  useEffect(() => {
-    if (editor) {
-      onEditorInit?.(editor);
-      // 노트 선택 또는 링크 전환 직후 본문으로 커서를 자동 배치하여 쓰기 모드로 진입
-      // 단, 사용자가 이미 입력창(제목, 검색창, 모달 입력 등)에 포커스 중이면 포커스를 빼앗지 않음
-      const timer = setTimeout(() => {
-        try {
-          const activeEl = document.activeElement as HTMLElement | null;
-          if (
-            activeEl &&
-            (activeEl.tagName === 'INPUT' ||
-              activeEl.tagName === 'TEXTAREA' ||
-              activeEl.tagName === 'SELECT' ||
-              activeEl.closest('[role="dialog"], .mantine-Modal-root, .mantine-Popover-dropdown'))
-          ) {
-            return;
-          }
-          editor.focus();
-        } catch {}
-      }, 50);
-      return () => clearTimeout(timer);
-    }
-  }, [editor, onEditorInit, note.id]);
 
   // / 슬래시 메뉴에서 파일 첨부 선택 시
   const handleAttachFromSlash = useCallback(() => {
@@ -982,10 +958,10 @@ function BlockEditor({
           }}
           onClick={(e) => {
             const target = e.target as HTMLElement;
-            // 내부 링크, 버튼, 입력창, select(코드블록 언어 선택), 툴바, 파일 블록, 태그 뱃지 등이 아닌 빈 공간/패딩 클릭 시에만 쓰기모드로 포커스
+            // 내부 링크, 버튼, 입력창, select(코드블록 언어 선택), 툴바, 파일 블록, 태그 뱃지, 하단 패널 등이 아닌 빈 공간/패딩 클릭 시에만 쓰기모드로 포커스
             if (
               !target.closest(
-                'a, button, input, textarea, select, option, .bn-code-toolbar, [data-content-type="file"], .bn-hashtag-badge'
+                'a, button, input, textarea, select, option, .bn-code-toolbar, [data-content-type="file"], .bn-hashtag-badge, .note-bottom-panels, .backlinks-container'
               )
             ) {
               try {
@@ -1132,7 +1108,8 @@ function BlockEditor({
 
           {/* 노트 하단 영역: 첨부파일 목록 및 백링크 목록 */}
           <div
-            className="no-print"
+            className="no-print note-bottom-panels"
+            onClick={(e) => e.stopPropagation()}
             style={{
               marginTop: 48,
               paddingLeft: 54,
@@ -1331,7 +1308,7 @@ export function NoteEditorView() {
     );
   }
 
-  if (!selected) {
+  if (!selected || isSystemGroupNote(selected)) {
     return (
       <Stack align="center" justify="center" h="100%">
         <Text c="dimmed">노트를 선택하세요.</Text>

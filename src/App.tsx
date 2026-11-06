@@ -73,7 +73,9 @@ function ListPanel() {
   } = useNotes();
 
   const isTodoBoard = selectedProjectId === TODO_PROJECT_ID && !showFavoriteOnly;
-  const projectNotes = notes.filter((n) => (n.projectId || 'default') === selectedProject?.id);
+  const projectNotes = notes.filter(
+    (n) => !n.systemGroupType && (n.projectId || 'default') === selectedProject?.id,
+  );
 
   const headerTitle = showFavoriteOnly
     ? '즐겨찾기 노트'

@@ -343,10 +343,10 @@ function TreeRow({
   const isDark = scheme === 'dark';
 
   const n = node.note;
-  const active = n.id === selectedId;
+  const isSystemGroup = isSystemGroupNote(n);
+  const active = !isSystemGroup && n.id === selectedId;
   const isCollapsed = collapsed.has(n.id);
   const cfg = getPastelConfig(n.color);
-  const isSystemGroup = isSystemGroupNote(n);
 
   const isNoteLocked = false;
 
@@ -399,7 +399,13 @@ function TreeRow({
             : undefined,
           outlineOffset: isOver ? '-2px' : undefined,
         }}
-        onClick={() => select(n.id)}
+        onClick={() => {
+          if (isSystemGroup) {
+            onToggle(n.id);
+          } else {
+            select(n.id);
+          }
+        }}
         py={8}
         px="xs"
       >

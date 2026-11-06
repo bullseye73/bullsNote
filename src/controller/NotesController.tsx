@@ -28,6 +28,7 @@ import {
 } from '../model/Note';
 import {
   TODO_PROJECT_ID,
+  TODO_GROUP_TODO_ID,
   ensureTodoProjectAndGroups,
   createTodoNotes,
   syncTodoStatusToSourceNote,
@@ -223,7 +224,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   });
   const [selectedProjectId, setSelectedProjectId] = useState<string>(() => {
     const list = NoteRepository.loadProjects();
-    return list[0]?.id ?? DEFAULT_PROJECT_ID;
+    const regular = list.filter((p) => p.id !== TODO_PROJECT_ID);
+    return regular[0]?.id ?? list[0]?.id ?? DEFAULT_PROJECT_ID;
   });
 
   const [notes, setNotes] = useState<Note[]>(() => {
@@ -236,7 +238,12 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     return ensured.sort(sortNotes);
   });
 
-  const [selectedId, setSelectedId] = useState<string | null>(notes[0]?.id ?? null);
+  const [selectedId, setSelectedId] = useState<string | null>(() => {
+    const initialProjNotes = notes.filter(
+      (n) => !isSystemGroupNote(n) && (n.projectId || DEFAULT_PROJECT_ID) === selectedProjectId,
+    );
+    return initialProjNotes[0]?.id ?? null;
+  });
 
   // 최신 상태를 비동기 리스너에서 참조하기 위한 Ref
   const notesRef = useRef(notes);
@@ -495,8 +502,15 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
           }),
         );
         NoteRepository.save(converted);
-        setNotes(converted.sort(sortNotes));
-        setSelectedId((prev) => prev ?? converted[0]?.id ?? null);
+        const sortedConverted = converted.sort(sortNotes);
+        setNotes(sortedConverted);
+        setSelectedId((prev) => {
+          if (prev && !isSystemGroupNote(prev)) return prev;
+          const projNotes = sortedConverted.filter(
+            (n) => !isSystemGroupNote(n) && (n.projectId || DEFAULT_PROJECT_ID) === selectedProjectIdRef.current,
+          );
+          return projNotes[0]?.id ?? null;
+        });
       } catch {
         /* 파서 실패 시 기존 포맷 유지 */
       } finally {
@@ -518,7 +532,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         const { files } = await vault.list();
         const sidecar = await vault.readSidecar();
         const histories = sidecarHistories(sidecar);
-        const loadedProjects = sidecarProjects(sidecar);
+        const rawProjects = sidecarProjects(sidecar);
+        const { projects: loadedProjects } = ensureTodoProjectAndGroups(rawProjects, []);
         setProjects(loadedProjects);
         setSelectedProjectId((prev) =>
           loadedProjects.some((p) => p.id === prev) ? prev : loadedProjects[0]?.id ?? DEFAULT_PROJECT_ID,
@@ -527,7 +542,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         if (files.length === 0 && !sidecar.migratedLs) {
           let current = NoteRepository.load();
           if (current.length === 0) current = seedNotes();
-          const migrated = await Promise.all(
+          const migratedRaw = await Promise.all(
             current.map(async (n) => {
               const contentJson = isBlocksJson(n.content)
                 ? n.content
@@ -535,6 +550,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
               return { ...n, content: contentJson, tags: extractHashtags(n.title, contentJson) };
             }),
           );
+          const { notes: migrated } = ensureTodoProjectAndGroups(loadedProjects, migratedRaw);
           for (const n of migrated) {
             const body = await swapDataUrlsToAssets(
               headless.toMarkdown(n.content),
@@ -550,10 +566,17 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
             projects: loadedProjects,
             histories: Object.fromEntries(migrated.map((n) => [n.id, n.history])),
           });
-          setNotes(migrated.sort(sortNotes));
-          setSelectedId((prev) => prev ?? migrated[0]?.id ?? null);
+          const sortedMigrated = migrated.sort(sortNotes);
+          setNotes(sortedMigrated);
+          setSelectedId((prev) => {
+            if (prev && !isSystemGroupNote(prev) && sortedMigrated.some((n) => n.id === prev)) return prev;
+            const projNotes = sortedMigrated.filter(
+              (n) => !isSystemGroupNote(n) && (n.projectId || DEFAULT_PROJECT_ID) === selectedProjectIdRef.current,
+            );
+            return projNotes[0]?.id ?? null;
+          });
         } else {
-          const loaded: Note[] = [];
+          const loadedRaw: Note[] = [];
           for (const f of files) {
             try {
               const text = await vault.read(f.id);
@@ -563,7 +586,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
               const withUrls = await swapAssetsToDataUrls(parsed.body, (name) => vault.readAsset(name));
               const blocks = await headless.toBlocks(withUrls);
               const content = JSON.stringify(blocks);
-              loaded.push({
+              loadedRaw.push({
                 id: parsed.id,
                 title: parsed.title,
                 projectId: parsed.projectId,
@@ -588,15 +611,30 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
               /* 손상 파일 건너뜀 */
             }
           }
-          setNotes(loaded.sort(sortNotes));
-          setSelectedId((prev) => (loaded.some((n) => n.id === prev) ? prev : loaded[0]?.id ?? null));
+          const { notes: loaded } = ensureTodoProjectAndGroups(loadedProjects, loadedRaw);
+          const sortedLoaded = loaded.sort(sortNotes);
+          setNotes(sortedLoaded);
+          setSelectedId((prev) => {
+            if (prev && !isSystemGroupNote(prev) && sortedLoaded.some((n) => n.id === prev)) return prev;
+            const projNotes = sortedLoaded.filter(
+              (n) => !isSystemGroupNote(n) && (n.projectId || DEFAULT_PROJECT_ID) === selectedProjectIdRef.current,
+            );
+            return projNotes[0]?.id ?? null;
+          });
         }
       } catch (e) {
         setVaultError(`볼트를 열 수 없습니다: ${e instanceof Error ? e.message : e}`);
         const loaded = NoteRepository.load();
         const finalNotes = loaded.length > 0 ? loaded : seedNotes();
-        setNotes(finalNotes.sort(sortNotes));
-        setSelectedId((prev) => prev ?? finalNotes[0]?.id ?? null);
+        const sortedFinal = finalNotes.sort(sortNotes);
+        setNotes(sortedFinal);
+        setSelectedId((prev) => {
+          if (prev && !isSystemGroupNote(prev)) return prev;
+          const projNotes = sortedFinal.filter(
+            (n) => !isSystemGroupNote(n) && (n.projectId || DEFAULT_PROJECT_ID) === selectedProjectIdRef.current,
+          );
+          return projNotes[0]?.id ?? null;
+        });
       } finally {
         setReady(true);
       }
@@ -713,7 +751,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
           const content = JSON.stringify(blocks);
           const sidecar = (await vault.readSidecar()) as Record<string, unknown>;
           const histories = sidecarHistories(sidecar);
-          const extProjects = sidecarProjects(sidecar);
+          const rawExtProjects = sidecarProjects(sidecar);
+          const { projects: extProjects } = ensureTodoProjectAndGroups(rawExtProjects, []);
           setProjects(extProjects);
           setNotes((prev) => {
             if (prev.some((n) => n.id === f.id)) return prev;
@@ -867,6 +906,10 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const select = useCallback((id: string | null) => {
+    // 할일관리 시스템 그룹(To Do, Doing, Done, Drop)은 컨테이너이므로 에디터 노트로 선택하지 않음
+    if (id && isSystemGroupNote(id)) {
+      return;
+    }
     // 노트 전환 시 미저장된 로컬 변경 즉시 flush
     if (isLocalSavePendingRef.current && flushLocalSaveRef.current) {
       if (localSaveTimerRef.current) clearTimeout(localSaveTimerRef.current);
@@ -892,7 +935,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       setSelectedProjectId(id);
       setActiveTag(null);
       setSelectedDate(null);
-      const pNotes = notes.filter((n) => (n.projectId || DEFAULT_PROJECT_ID) === id);
+      const pNotes = notes.filter(
+        (n) => !isSystemGroupNote(n) && (n.projectId || DEFAULT_PROJECT_ID) === id,
+      );
       setSelectedId(pNotes[0]?.id ?? null);
     },
     [notes],
@@ -1108,18 +1153,23 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   const create = useCallback(
     (parentId: string | null = null) => {
+      const isTodoProj = selectedProjectId === TODO_PROJECT_ID;
+      const effectiveParentId = isTodoProj && !parentId ? TODO_GROUP_TODO_ID : parentId;
       let initialColor = 'blue';
-      if (parentId) {
-        const parent = notes.find((x) => x.id === parentId);
+      if (effectiveParentId) {
+        const parent = notes.find((x) => x.id === effectiveParentId);
         if (parent?.color) {
           initialColor = parent.color;
         }
       }
+      const todoStatus =
+        isTodoProj && effectiveParentId ? GROUP_ID_TO_STATUS[effectiveParentId] || 'todo' : undefined;
       const n = createEmptyNote({
-        title: '새 노트',
+        title: isTodoProj ? '새 할일' : '새 노트',
         projectId: selectedProjectId,
-        parentId,
+        parentId: effectiveParentId,
         color: initialColor,
+        todoMeta: todoStatus ? { status: todoStatus } : undefined,
       });
       setNotes((prev) => [n, ...prev]);
       setSelectedId(n.id);
@@ -1255,10 +1305,14 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         if (selectedId && doomed.has(selectedId)) {
           const siblings = fixed.filter(
             (n) =>
+              !isSystemGroupNote(n) &&
               (n.projectId || DEFAULT_PROJECT_ID) === selectedProjectId &&
               n.parentId === prev.find((x) => x.id === id)?.parentId,
           );
-          setSelectedId(siblings[0]?.id ?? fixed[0]?.id ?? null);
+          const projectRemaining = fixed.filter(
+            (n) => !isSystemGroupNote(n) && (n.projectId || DEFAULT_PROJECT_ID) === selectedProjectId,
+          );
+          setSelectedId(siblings[0]?.id ?? projectRemaining[0]?.id ?? null);
         }
         if (GoogleDriveService.isConnected() && googleConfig.autoSync) {
           for (const doomedId of doomed) {
@@ -1601,13 +1655,36 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     [notes, selectedProjectId],
   );
 
-  // 선택된 노트가 현재 프로젝트에 없으면 첫 번째 노트로 동기화
+  // 선택된 노트가 현재 프로젝트에 없으면 첫 번째 일반 노트로 동기화 (시스템 그룹 노트 제외)
   useEffect(() => {
     if (!ready) return;
-    if (selectedId && !currentProjectNotes.some((n) => n.id === selectedId)) {
-      setSelectedId(currentProjectNotes[0]?.id ?? null);
+    if (selectedId && isSystemGroupNote(selectedId)) {
+      const selectable = currentProjectNotes.filter((n) => !isSystemGroupNote(n));
+      setSelectedId(selectable[0]?.id ?? null);
+      return;
     }
-  }, [selectedProjectId, ready, selectedId, currentProjectNotes]);
+    if (selectedId && !currentProjectNotes.some((n) => n.id === selectedId)) {
+      const stillExistsInAll = notes.some((n) => n.id === selectedId);
+      if (
+        stillExistsInAll &&
+        (showFavoriteOnly || selectedDate !== null || search.trim() !== '' || quickFilter !== 'all')
+      ) {
+        return;
+      }
+      const selectable = currentProjectNotes.filter((n) => !isSystemGroupNote(n));
+      setSelectedId(selectable[0]?.id ?? null);
+    }
+  }, [
+    selectedProjectId,
+    ready,
+    selectedId,
+    currentProjectNotes,
+    notes,
+    showFavoriteOnly,
+    selectedDate,
+    search,
+    quickFilter,
+  ]);
 
   const tagCounts = useMemo(() => {
     const map = new Map<string, number>();
@@ -1633,6 +1710,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
       return searchResults
         .map((r) => r.note)
+        .filter((n) => !isSystemGroupNote(n))
         .filter((n) => (showFavoriteOnly ? n.favorite : true))
         .filter((n) => (activeTag ? n.tags.includes(activeTag) : true))
         .filter((n) => {
@@ -1658,6 +1736,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         : currentProjectNotes;
 
     return pool
+      .filter((n) => !isSystemGroupNote(n))
       .filter((n) => (showFavoriteOnly ? n.favorite : true))
       .filter((n) => (activeTag ? n.tags.includes(activeTag) : true))
       .filter((n) => {
@@ -1732,16 +1811,22 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
           }
           return syncedNote;
         });
-        const sortedNotes = reconciledNotes.sort(sortNotes);
+        const ensured = ensureTodoProjectAndGroups(res.projects, reconciledNotes);
+        const sortedNotes = ensured.notes.sort(sortNotes);
+        const nextProjects = ensured.projects;
         setNotes(sortedNotes);
-        setProjects(res.projects);
-        NoteRepository.saveProjects(res.projects);
+        setProjects(nextProjects);
+        NoteRepository.saveProjects(nextProjects);
         setGoogleConfigState(GoogleDriveService.getConfig());
 
         // 선택 상태 보정: 동기화 후 현재 선택된 프로젝트와 노트가 유효하지 않으면 서버 데이터 기준으로 안전하게 재선택
         const currentProjId = selectedProjectIdRef.current;
-        const hasProj = res.projects.some((p) => p.id === currentProjId);
-        const nextProjId = hasProj ? currentProjId : res.projects[0]?.id ?? DEFAULT_PROJECT_ID;
+        const hasProj =
+          currentProjId === TODO_PROJECT_ID || nextProjects.some((p) => p.id === currentProjId);
+        const regularProjects = nextProjects.filter((p) => p.id !== TODO_PROJECT_ID);
+        const nextProjId = hasProj
+          ? currentProjId
+          : regularProjects[0]?.id ?? nextProjects[0]?.id ?? DEFAULT_PROJECT_ID;
         if (nextProjId !== currentProjId) {
           setSelectedProjectId(nextProjId);
         }
@@ -1749,13 +1834,14 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         // 선택 상태 보정:
         // - 현재 노트가 선택되어 있지 않은 경우(빈 폴더 조회 등): 강제로 다른 폴더의 노트를 선택하지 않고 null 유지
         // - 현재 선택된 노트가 동기화 후에도 전체 노트 목록에 존재하면(검색/즐겨찾기/날짜/태그 필터 등 포함) 그대로 유지
-        // - 원격에서 삭제되어 더 이상 존재하지 않는 경우에만 현재 폴더의 첫 노트로 폴백
+        // - 원격에서 삭제되어 더 이상 존재하지 않는 경우에만 현재 폴더의 첫 일반 노트로 폴백
         const currentSelId = selectedIdRef.current;
         if (currentSelId !== null) {
-          const stillExists = sortedNotes.some((n) => n.id === currentSelId);
+          const stillExists =
+            !isSystemGroupNote(currentSelId) && sortedNotes.some((n) => n.id === currentSelId);
           if (!stillExists) {
             const projectNotes = sortedNotes.filter(
-              (n) => (n.projectId || DEFAULT_PROJECT_ID) === nextProjId,
+              (n) => !isSystemGroupNote(n) && (n.projectId || DEFAULT_PROJECT_ID) === nextProjId,
             );
             setSelectedId(projectNotes[0]?.id ?? null);
           }
