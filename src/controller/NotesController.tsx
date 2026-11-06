@@ -37,6 +37,7 @@ import {
   GROUP_ID_TO_STATUS,
   STATUS_TO_GROUP_ID,
   isSystemGroupNote,
+  getEffectiveTodoStatus,
 } from '../model/TodoService';
 import { playChimeSound } from '../model/sound';
 import { NoteRepository, seedNotes } from '../model/NoteRepository';
@@ -197,7 +198,7 @@ export interface NotesActions {
     sourceNote: Note,
     items: ExtractedChecklistItem[]
   ): { createdCount: number; updatedCount: number; duplicateCount: number };
-  changeTodoStatus(todoNoteId: string, newStatus: TodoStatus): void;
+  changeTodoStatus(todoNoteId: string, newStatus: TodoStatus, moveToGroupRoot?: boolean): void;
 }
 
 const Ctx = createContext<(NotesState & NotesActions) | null>(null);
@@ -1291,34 +1292,41 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   const remove = useCallback(
     (id: string) => {
-      const target = notes.find((n) => n.id === id);
-      if (target?.systemGroupType) {
-        alert(`'${target.title}' 그룹은 할일 관리의 필수 상위 그룹이므로 삭제할 수 없습니다.`);
+      const target = notesRef.current.find((n) => n.id === id);
+      if (isSystemGroupNote(target)) {
+        alert(`'${target?.title || '시스템'}' 그룹은 할일 관리의 필수 상위 그룹이므로 삭제할 수 없습니다.`);
         return;
       }
       setNotes((prev) => {
+        const currentTarget = prev.find((n) => n.id === id);
+        if (!currentTarget || isSystemGroupNote(currentTarget)) return prev;
+
         const doomed = getDescendantIds(prev, id);
         const next = prev.filter((n) => !doomed.has(n.id));
-        // 끊어진 자식 참조 방지: 삭제된 노트를 부모로 가진 노트는 루트로
+        // 끊어진 자식 참조 방지: 삭제된 노트를 부모로 가진 노트는 루트(또는 할일 기본 그룹)로 복구
         const fixed = next.map((n) =>
-          n.parentId && doomed.has(n.parentId) ? { ...n, parentId: null } : n,
+          n.parentId && doomed.has(n.parentId)
+            ? { ...n, parentId: n.projectId === TODO_PROJECT_ID ? TODO_GROUP_TODO_ID : null }
+            : n,
         );
         if (selectedId && doomed.has(selectedId)) {
           const siblings = fixed.filter(
             (n) =>
               !isSystemGroupNote(n) &&
               (n.projectId || DEFAULT_PROJECT_ID) === selectedProjectId &&
-              n.parentId === prev.find((x) => x.id === id)?.parentId,
+              n.parentId === currentTarget.parentId,
           );
           const projectRemaining = fixed.filter(
             (n) => !isSystemGroupNote(n) && (n.projectId || DEFAULT_PROJECT_ID) === selectedProjectId,
           );
           setSelectedId(siblings[0]?.id ?? projectRemaining[0]?.id ?? null);
         }
+        // 연결/자동동기화 상태와 무관하게 삭제 이력을 항상 기록하여 다음 동기화 시 부활 방지
+        for (const doomedId of doomed) {
+          GoogleDriveService.recordDeletedNote(doomedId);
+        }
+        NoteRepository.save(fixed);
         if (GoogleDriveService.isConnected() && googleConfig.autoSync) {
-          for (const doomedId of doomed) {
-            GoogleDriveService.recordDeletedNote(doomedId);
-          }
           queueProjectSync();
         }
         return fixed;
@@ -1509,17 +1517,43 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         // 시스템 그룹 노트 자체는 부모를 변경할 수 없음
         if (isSystemGroupNote(targetNote)) return prev;
 
-        // 할일 노트를 다른 할일 그룹(To Do, Doing, Done, Drop)으로 이동하는 경우 상태 동기화 처리
-        if (targetNote && targetNote.projectId === TODO_PROJECT_ID && parentId && GROUP_ID_TO_STATUS[parentId]) {
-          const newStatus = GROUP_ID_TO_STATUS[parentId];
-          if (targetNote.parentId === parentId && targetNote.todoMeta?.status === newStatus) return prev;
-          const syncRes = syncTodoStatusToSourceNote(targetNote, newStatus, prev);
-          syncRes.updatedNotes.forEach((n) => {
-            if (n.id === id || n.id === targetNote.todoMeta?.sourceNoteId) {
-              queueNoteSync(n);
-            }
-          });
-          return syncRes.updatedNotes;
+        // 할일 노트를 다른 할일 그룹(To Do, Doing, Done, Drop) 또는 다른 할일 카드의 하위로 이동하는 경우
+        if (targetNote && targetNote.projectId === TODO_PROJECT_ID && parentId) {
+          if (GROUP_ID_TO_STATUS[parentId]) {
+            const newStatus = GROUP_ID_TO_STATUS[parentId];
+            if (targetNote.parentId === parentId && targetNote.todoMeta?.status === newStatus) return prev;
+            const syncRes = syncTodoStatusToSourceNote(targetNote, newStatus, prev, {
+              moveToGroupRoot: true,
+            });
+            const changedSet = new Set(syncRes.changedNoteIds);
+            syncRes.updatedNotes.forEach((n) => {
+              if (changedSet.has(n.id)) {
+                queueNoteSync(n);
+              }
+            });
+            return syncRes.updatedNotes;
+          }
+
+          const parentNote = prev.find((n) => n.id === parentId);
+          if (parentNote && parentNote.projectId === TODO_PROJECT_ID) {
+            const newStatus = getEffectiveTodoStatus(parentNote, prev);
+            const movedTarget: Note = {
+              ...targetNote,
+              parentId,
+              updatedAt: Date.now(),
+            };
+            const listWithMovedParent = prev.map((n) => (n.id === id ? movedTarget : n));
+            const syncRes = syncTodoStatusToSourceNote(movedTarget, newStatus, listWithMovedParent, {
+              moveToGroupRoot: false,
+            });
+            const changedSet = new Set(syncRes.changedNoteIds);
+            syncRes.updatedNotes.forEach((n) => {
+              if (changedSet.has(n.id)) {
+                queueNoteSync(n);
+              }
+            });
+            return syncRes.updatedNotes;
+          }
         }
 
         const parentColor = parentId ? prev.find((n) => n.id === parentId)?.color : null;
@@ -1586,7 +1620,10 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         const target = prev.find((n) => n.id === id);
         if (!target || !target.parentId) return prev;
         if (isSystemGroupNote(target)) return prev;
+        // 할일 관리의 최상위 상태 그룹(To Do, Doing, Done, Drop) 직속 카드는 그룹 밖(루트)으로 내어쓰기 불가
+        if (isSystemGroupNote(target.parentId)) return prev;
         const parent = prev.find((n) => n.id === target.parentId);
+        if (!parent || isSystemGroupNote(parent)) return prev;
         const grandParent = parent?.parentId ?? null;
         return prev.map((n) => {
           if (n.id === id) {
@@ -2106,23 +2143,35 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   );
 
   const changeTodoStatus = useCallback(
-    (todoNoteId: string, newStatus: TodoStatus) => {
+    (todoNoteId: string, newStatus: TodoStatus, moveToGroupRoot = false) => {
       setNotes((prev) => {
         const todoNote = prev.find((n) => n.id === todoNoteId);
         if (!todoNote) return prev;
         // 시스템 그룹 노트(Doing, To Do, Done, Drop)는 상태를 변경할 수 없음
         if (isSystemGroupNote(todoNote)) return prev;
-        // 이미 해당 상태이면 불필요한 재연산 방지
-        const currentStatus = todoNote.todoMeta?.status || GROUP_ID_TO_STATUS[todoNote.parentId || ''] || 'todo';
-        if (currentStatus === newStatus && todoNote.parentId === STATUS_TO_GROUP_ID[newStatus]) return prev;
-
-        const { updatedNotes } = syncTodoStatusToSourceNote(todoNote, newStatus, prev);
-        const updated = updatedNotes.find((n) => n.id === todoNoteId);
-        if (updated) queueNoteSync(updated);
-        if (todoNote.todoMeta?.sourceNoteId) {
-          const updatedSource = updatedNotes.find((n) => n.id === todoNote.todoMeta?.sourceNoteId);
-          if (updatedSource) queueNoteSync(updatedSource);
+        // 이미 해당 상태이고 그룹 루트 이동 요청이 아니면 불필요한 재연산 방지
+        const currentStatus = getEffectiveTodoStatus(todoNote, prev);
+        const targetGroupId = STATUS_TO_GROUP_ID[newStatus];
+        if (
+          currentStatus === newStatus &&
+          (!moveToGroupRoot || todoNote.parentId === targetGroupId) &&
+          todoNote.todoMeta?.status === newStatus
+        ) {
+          return prev;
         }
+
+        const { updatedNotes, changedNoteIds } = syncTodoStatusToSourceNote(
+          todoNote,
+          newStatus,
+          prev,
+          { moveToGroupRoot },
+        );
+        const changedSet = new Set(changedNoteIds);
+        updatedNotes.forEach((n) => {
+          if (changedSet.has(n.id)) {
+            queueNoteSync(n);
+          }
+        });
         return updatedNotes;
       });
     },

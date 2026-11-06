@@ -1,5 +1,5 @@
 // MODEL: 할일관리(Todo) 프로젝트 및 상위 그룹(To Do, Doing, Done, Drop) 비즈니스 로직
-import { Note, Project, TodoMeta, TodoStatus, createEmptyNote } from './Note';
+import { Note, Project, TodoMeta, TodoStatus, createEmptyNote, getDescendantIds } from './Note';
 import { formatDateTimeIso } from './dateUtils';
 import { parseBlocks } from './HashtagService';
 
@@ -79,6 +79,40 @@ export function isSystemGroupNote(noteOrId: Note | string | null | undefined): b
     return Boolean(GROUP_ID_TO_STATUS[noteOrId]);
   }
   return Boolean(noteOrId.systemGroupType || GROUP_ID_TO_STATUS[noteOrId.id]);
+}
+
+/**
+ * 할일 노트의 유효 상태(todo | doing | done | drop)를 상위 그룹 체인 또는 todoMeta로부터 판별
+ */
+export function getEffectiveTodoStatus(note: Note | undefined, allNotes: Note[]): TodoStatus {
+  if (!note) return 'todo';
+  if (note.systemGroupType) return note.systemGroupType;
+  if (GROUP_ID_TO_STATUS[note.id]) return GROUP_ID_TO_STATUS[note.id];
+  if (note.todoMeta?.status) return note.todoMeta.status;
+
+  const byId = new Map(allNotes.map((n) => [n.id, n]));
+  let curPid = note.parentId;
+  const visited = new Set<string>();
+  while (curPid && !visited.has(curPid)) {
+    visited.add(curPid);
+    if (GROUP_ID_TO_STATUS[curPid]) return GROUP_ID_TO_STATUS[curPid];
+    const p = byId.get(curPid);
+    if (!p) break;
+    if (p.systemGroupType) return p.systemGroupType;
+    if (p.todoMeta?.status) return p.todoMeta.status;
+    curPid = p.parentId;
+  }
+  return 'todo';
+}
+
+/**
+ * 할일 노트의 sourceNoteId 추출 (todoMeta 우선, 없으면 본문 #note- 링크에서 폴백 추출)
+ */
+export function resolveSourceNoteId(note: Note | undefined): string | undefined {
+  if (!note) return undefined;
+  if (note.todoMeta?.sourceNoteId) return note.todoMeta.sourceNoteId;
+  const m = (note.content || '').match(/#note-([a-zA-Z0-9_-]+)/);
+  return m?.[1];
 }
 
 /**
@@ -350,12 +384,19 @@ export function extractChecklistFromBlocks(
   ) {
     for (let i = 0; i < list.length; i++) {
       const b = list[i];
-      if (b.type === 'checkListItem') {
+      const rawText = extractInlineText(b.content);
+      const bracketTodoMatch =
+        b.type !== 'checkListItem' && (b.type === 'paragraph' || b.type === 'bulletListItem')
+          ? rawText.match(/^\s*(?:[-*+]\s+)?\[\s*([xX]?)\s*\]\s+(.+)$/)
+          : null;
+
+      if (b.type === 'checkListItem' || bracketTodoMatch) {
         const id = (b.id as string) || '';
         const props = (b.props as Record<string, unknown>) || {};
-        const checked = Boolean(props.checked);
-        const rawText = extractInlineText(b.content);
-        const text = cleanTodoSuffix(rawText);
+        const checked = bracketTodoMatch
+          ? bracketTodoMatch[1].toLowerCase() === 'x'
+          : Boolean(props.checked);
+        const text = cleanTodoSuffix(bracketTodoMatch ? bracketTodoMatch[2] : rawText);
 
         const rawChildren = Array.isArray(b.children)
           ? (b.children as Array<Record<string, unknown>>)
@@ -363,7 +404,11 @@ export function extractChecklistFromBlocks(
 
         // 체크리스트 바로 아래에 Tab 들여쓰기 없이 작성된 연속된 불릿(bulletListItem)도 하위 세부 내용으로 수집
         const trailingBullets: Array<Record<string, unknown>> = [];
-        while (i + 1 < list.length && list[i + 1].type === 'bulletListItem') {
+        while (
+          i + 1 < list.length &&
+          list[i + 1].type === 'bulletListItem' &&
+          !extractInlineText(list[i + 1].content).match(/^\s*\[\s*[xX]?\s*\]\s+/)
+        ) {
           trailingBullets.push(list[i + 1]);
           i += 1;
         }
@@ -587,9 +632,15 @@ export function createTodoNotes(
 
       const targetGroup = TODO_GROUPS.find((g) => g.status === nextStatus);
       const nextColor = targetGroup?.color || matchedExisting.color || 'blue';
+      const hasCustomTodoParent =
+        matchedExisting.parentId &&
+        !isSystemGroupNote(matchedExisting.parentId) &&
+        existingNotes.some((n) => n.id === matchedExisting.parentId);
       const nextParentId =
         parentTodoId && parentTodoId !== matchedExisting.id
           ? parentTodoId
+          : hasCustomTodoParent
+          ? matchedExisting.parentId
           : STATUS_TO_GROUP_ID[nextStatus];
 
       const candidateContent = buildTodoNoteContent(
@@ -681,130 +732,221 @@ export function createTodoNotes(
   return { newNotes, updatedNotes, updatedCount, duplicateCount };
 }
 
+function normalizeMatchText(s: string): string {
+  return cleanTodoSuffix(s || '')
+    .replace(/^\s*(?:[-*+]\s+)?\[\s*[xX]?\s*\]\s*/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 /**
  * 할일 노드가 To Do, Doing, Done, Drop으로 이동(상태 변경)될 때
- * 원본 노트 본문의 체크리스트([x] 및 완료/중단 일시)를 동기화
+ * 할일 노드(및 하위 자식 할일 노드들)와 원본 노트 본문의 체크리스트([x] 및 완료/중단 일시)를 동기화
  */
 export function syncTodoStatusToSourceNote(
   todoNote: Note,
   newStatus: TodoStatus,
-  allNotes: Note[]
-): { updatedNotes: Note[]; sourceUpdated: boolean } {
+  allNotes: Note[],
+  options?: { moveToGroupRoot?: boolean }
+): { updatedNotes: Note[]; sourceUpdated: boolean; changedNoteIds: string[] } {
   const now = Date.now();
   const nowStr = formatDateTimeIso(new Date(now));
   const targetGroupId = STATUS_TO_GROUP_ID[newStatus];
   const targetGroup = TODO_GROUPS.find((g) => g.status === newStatus);
   const statusColor = targetGroup?.color || 'blue';
 
-  // 1. 할일 노트 자체 갱신 (상태별 색상 동적 변경, 상위 할일 카드의 자식인 경우 계층 parentId 유지)
-  const isChildTodo = Boolean(todoNote.parentId && !isSystemGroupNote(todoNote.parentId));
-  const updatedTodo: Note = {
-    ...todoNote,
-    projectId: TODO_PROJECT_ID,
-    parentId: isChildTodo ? todoNote.parentId : targetGroupId,
-    color: statusColor,
-    tags: Array.from(new Set([...(todoNote.tags || []).filter((t) => !['todo', 'doing', 'done', 'drop'].includes(t)), newStatus])),
-    todoMeta: {
-      ...(todoNote.todoMeta || { status: 'todo' }),
-      status: newStatus,
-      completedAt: newStatus === 'done' ? (todoNote.todoMeta?.completedAt || now) : null,
-      droppedAt: newStatus === 'drop' ? (todoNote.todoMeta?.droppedAt || now) : null,
-    },
-    updatedAt: now,
-  };
+  const descendantIds = getDescendantIds(allNotes, todoNote.id);
+  const targetTodoNotes = allNotes.filter(
+    (n) =>
+      descendantIds.has(n.id) &&
+      n.projectId === TODO_PROJECT_ID &&
+      !isSystemGroupNote(n)
+  );
+  if (!targetTodoNotes.some((n) => n.id === todoNote.id)) {
+    targetTodoNotes.unshift(todoNote);
+  }
 
   const updatedNotesMap = new Map<string, Note>();
-  updatedNotesMap.set(updatedTodo.id, updatedTodo);
+  const changedNoteIds: string[] = [];
+
+  // 원본 노트별로 갱신할 할일 항목 매핑 수집
+  const sourceTargetsByNoteId = new Map<
+    string,
+    Array<{
+      todoId: string;
+      sourceBlockId?: string;
+      cleanTitle: string;
+      matchedBlockId?: string;
+    }>
+  >();
+
+  for (const itemNote of targetTodoNotes) {
+    const isRootTarget = itemNote.id === todoNote.id;
+    const isChildTodo = Boolean(
+      itemNote.parentId &&
+        !isSystemGroupNote(itemNote.parentId) &&
+        allNotes.some((x) => x.id === itemNote.parentId)
+    );
+    const nextParentId = isRootTarget
+      ? options?.moveToGroupRoot || !isChildTodo
+        ? targetGroupId
+        : itemNote.parentId
+      : itemNote.parentId;
+
+    const srcNoteId = resolveSourceNoteId(itemNote);
+    const updatedItem: Note = {
+      ...itemNote,
+      projectId: TODO_PROJECT_ID,
+      parentId: nextParentId,
+      color: statusColor,
+      tags: Array.from(
+        new Set([
+          ...(itemNote.tags || []).filter((t) => !['todo', 'doing', 'done', 'drop'].includes(t)),
+          newStatus,
+        ])
+      ),
+      todoMeta: {
+        ...(itemNote.todoMeta || { status: 'todo' }),
+        sourceNoteId: srcNoteId,
+        status: newStatus,
+        completedAt: newStatus === 'done' ? itemNote.todoMeta?.completedAt || now : null,
+        droppedAt: newStatus === 'drop' ? itemNote.todoMeta?.droppedAt || now : null,
+      },
+      updatedAt: now,
+    };
+
+    updatedNotesMap.set(updatedItem.id, updatedItem);
+    changedNoteIds.push(updatedItem.id);
+
+    if (srcNoteId) {
+      const arr = sourceTargetsByNoteId.get(srcNoteId) ?? [];
+      arr.push({
+        todoId: updatedItem.id,
+        sourceBlockId: updatedItem.todoMeta?.sourceBlockId,
+        cleanTitle: normalizeMatchText(updatedItem.title),
+      });
+      sourceTargetsByNoteId.set(srcNoteId, arr);
+    }
+  }
 
   // 2. 원본 노트가 있는 경우 원본 노트의 본문 체크리스트 갱신
   let sourceUpdated = false;
-  const sourceNoteId = todoNote.todoMeta?.sourceNoteId;
-  const sourceBlockId = todoNote.todoMeta?.sourceBlockId;
-  const todoCleanTitle = cleanTodoSuffix(todoNote.title);
 
-  if (sourceNoteId) {
+  for (const [sourceNoteId, targets] of sourceTargetsByNoteId.entries()) {
     const sourceNote = allNotes.find((n) => n.id === sourceNoteId);
-    if (sourceNote) {
-      const blocks = parseBlocks(sourceNote.content);
-      if (blocks) {
-        let blockFound = false;
+    if (!sourceNote) continue;
+    const blocks = parseBlocks(sourceNote.content);
+    if (!blocks) continue;
 
-        function updateChecklistBlocks(list: Array<Record<string, unknown>>) {
-          for (const b of list) {
-            if (b.type === 'checkListItem') {
-              const currentId = b.id as string;
-              const contentArr = (b.content as Array<{ text?: string; styles?: Record<string, unknown> }>) || [];
-              const rawText = contentArr.map((c) => c.text || '').join('');
-              const cleanItemText = cleanTodoSuffix(rawText);
+    let blockFound = false;
 
-              // blockId가 일치하거나 텍스트가 일치하는 블록 탐색
-              const isMatch = (sourceBlockId && currentId === sourceBlockId) || cleanItemText === todoCleanTitle;
+    const updateChecklistBlocks = (list: Array<Record<string, unknown>>) => {
+      for (const b of list) {
+        const currentId = (b.id as string) || '';
+        const rawText = extractInlineText(b.content);
+        const bracketTodoMatch =
+          b.type !== 'checkListItem' && (b.type === 'paragraph' || b.type === 'bulletListItem')
+            ? rawText.match(/^\s*(?:[-*+]\s+)?\[\s*([xX]?)\s*\]\s+(.+)$/)
+            : null;
 
-              if (isMatch) {
-                blockFound = true;
-                const props = ((b.props as Record<string, unknown>) || {});
+        if (b.type === 'checkListItem' || bracketTodoMatch) {
+          const itemRawCore = bracketTodoMatch ? bracketTodoMatch[2] : rawText;
+          const cleanItemText = cleanTodoSuffix(itemRawCore);
+          const normItemText = normalizeMatchText(cleanItemText);
 
-                if (newStatus === 'done') {
-                  // 완료 처리: checked = true, 접미사 (완료: YYYY-MM-DD HH:mm)
-                  b.props = { ...props, checked: true };
-                  b.content = [
-                    {
-                      type: 'text',
-                      text: `${cleanItemText} (완료: ${nowStr})`,
-                      styles: { strike: false },
-                    },
-                  ];
-                } else if (newStatus === 'drop') {
-                  // 중단 처리: checked = false, 취소선 + 접미사 (중단: YYYY-MM-DD HH:mm)
-                  b.props = { ...props, checked: false };
-                  b.content = [
-                    {
-                      type: 'text',
-                      text: `${cleanItemText} (중단: ${nowStr})`,
-                      styles: { strike: true, textColor: 'gray' },
-                    },
-                  ];
-                } else {
-                  // todo 또는 doing으로 복귀: checked = false, 접미사 제거
-                  b.props = { ...props, checked: false };
-                  b.content = [
-                    {
-                      type: 'text',
-                      text: cleanItemText,
-                      styles: { strike: false },
-                    },
-                  ];
-                }
-              }
+          const matchedTarget = targets.find(
+            (t) =>
+              (t.sourceBlockId && currentId && currentId === t.sourceBlockId) ||
+              (normItemText && normItemText === t.cleanTitle)
+          );
+
+          if (matchedTarget) {
+            blockFound = true;
+            if (currentId && !matchedTarget.sourceBlockId) {
+              matchedTarget.matchedBlockId = currentId;
             }
-            if (Array.isArray(b.children)) {
-              updateChecklistBlocks(b.children as Array<Record<string, unknown>>);
+            const displayTitle = cleanItemText || matchedTarget.cleanTitle;
+            const props = (b.props as Record<string, unknown>) || {};
+            b.type = 'checkListItem';
+
+            if (newStatus === 'done') {
+              // 완료 처리: checked = true, 접미사 (완료: YYYY-MM-DD HH:mm)
+              b.props = { ...props, checked: true };
+              b.content = [
+                {
+                  type: 'text',
+                  text: `${displayTitle} (완료: ${nowStr})`,
+                  styles: {},
+                },
+              ];
+            } else if (newStatus === 'drop') {
+              // 중단 처리: checked = false, 취소선 + 접미사 (중단: YYYY-MM-DD HH:mm)
+              b.props = { ...props, checked: false };
+              b.content = [
+                {
+                  type: 'text',
+                  text: `${displayTitle} (중단: ${nowStr})`,
+                  styles: { strike: true, textColor: 'gray' },
+                },
+              ];
+            } else {
+              // todo 또는 doing으로 복귀: checked = false, 접미사 제거
+              b.props = { ...props, checked: false };
+              b.content = [
+                {
+                  type: 'text',
+                  text: displayTitle,
+                  styles: {},
+                },
+              ];
             }
           }
         }
-
-        updateChecklistBlocks(blocks);
-
-        if (blockFound) {
-          const updatedSource: Note = {
-            ...sourceNote,
-            content: JSON.stringify(blocks),
-            updatedAt: now,
-          };
-          updatedNotesMap.set(updatedSource.id, updatedSource);
-          sourceUpdated = true;
+        if (Array.isArray(b.children) && b.children.length > 0) {
+          updateChecklistBlocks(b.children as Array<Record<string, unknown>>);
         }
       }
+    };
+
+    updateChecklistBlocks(blocks);
+
+    for (const t of targets) {
+      if (t.matchedBlockId) {
+        const prevTodo = updatedNotesMap.get(t.todoId);
+        if (prevTodo && prevTodo.todoMeta) {
+          updatedNotesMap.set(t.todoId, {
+            ...prevTodo,
+            todoMeta: {
+              ...prevTodo.todoMeta,
+              sourceBlockId: t.matchedBlockId,
+            },
+          });
+        }
+      }
+    }
+
+    if (blockFound) {
+      const updatedSource: Note = {
+        ...sourceNote,
+        content: JSON.stringify(blocks),
+        updatedAt: now,
+      };
+      updatedNotesMap.set(updatedSource.id, updatedSource);
+      if (!changedNoteIds.includes(updatedSource.id)) {
+        changedNoteIds.push(updatedSource.id);
+      }
+      sourceUpdated = true;
     }
   }
 
   // 전체 리스트 맵핑 반영
   const resultNotes = allNotes.map((n) => updatedNotesMap.get(n.id) || n);
-  if (!allNotes.some((n) => n.id === updatedTodo.id)) {
-    resultNotes.push(updatedTodo);
+  const rootUpdated = updatedNotesMap.get(todoNote.id);
+  if (rootUpdated && !allNotes.some((n) => n.id === rootUpdated.id)) {
+    resultNotes.push(rootUpdated);
   }
 
-  return { updatedNotes: resultNotes, sourceUpdated };
+  return { updatedNotes: resultNotes, sourceUpdated, changedNoteIds };
 }
 
 /**
@@ -828,7 +970,10 @@ export function syncSourceChecklistToTodoNotes(
 
   // 해당 원본 노트를 바라보는 모든 할일 노트 탐색
   const relatedTodoNotes = allNotes.filter(
-    (n) => n.projectId === TODO_PROJECT_ID && !n.systemGroupType && n.todoMeta?.sourceNoteId === sourceNote.id
+    (n) =>
+      n.projectId === TODO_PROJECT_ID &&
+      !n.systemGroupType &&
+      resolveSourceNoteId(n) === sourceNote.id
   );
   if (relatedTodoNotes.length === 0) return { updatedNotes: allNotes, changed: false };
 
@@ -847,15 +992,14 @@ export function syncSourceChecklistToTodoNotes(
     const matchedTodo = relatedTodoNotes.find(
       (n) =>
         (item.id && n.todoMeta?.sourceBlockId === item.id) ||
-        cleanTodoSuffix(n.title) === cleanItemText
+        normalizeMatchText(n.title) === normalizeMatchText(cleanItemText)
     );
 
     if (matchedTodo) {
       if (item.id) blockIdToTodoId.set(item.id, matchedTodo.id);
       titleToTodoId.set(cleanItemText, matchedTodo.id);
 
-      const currentStatus: TodoStatus =
-        matchedTodo.todoMeta?.status || GROUP_ID_TO_STATUS[matchedTodo.parentId || ''] || 'todo';
+      const currentStatus: TodoStatus = getEffectiveTodoStatus(matchedTodo, allNotes);
       const shouldBeDone = Boolean(item.checked);
 
       let nextStatus: TodoStatus = currentStatus;
@@ -870,9 +1014,16 @@ export function syncSourceChecklistToTodoNotes(
         (item.parentText && titleToTodoId.get(cleanTodoSuffix(item.parentText))) ||
         null;
 
+      const hasCustomTodoParent =
+        matchedTodo.parentId &&
+        !isSystemGroupNote(matchedTodo.parentId) &&
+        allNotes.some((n) => n.id === matchedTodo.parentId);
+
       const nextParentId =
         parentTodoId && parentTodoId !== matchedTodo.id
           ? parentTodoId
+          : hasCustomTodoParent
+          ? matchedTodo.parentId
           : STATUS_TO_GROUP_ID[nextStatus];
 
       const targetGroup = TODO_GROUPS.find((g) => g.status === nextStatus);
@@ -887,13 +1038,15 @@ export function syncSourceChecklistToTodoNotes(
       const existingStripped = JSON.stringify(stripBlockIds(parseBlocks(matchedTodo.content)));
       const candidateStripped = JSON.stringify(stripBlockIds(parseBlocks(candidateContent)));
       const contentChanged = existingStripped !== candidateStripped;
+      const nextSourceBlockId = item.id || matchedTodo.todoMeta?.sourceBlockId;
 
       if (
         matchedTodo.title !== cleanItemText ||
         contentChanged ||
         matchedTodo.parentId !== nextParentId ||
         matchedTodo.color !== nextColor ||
-        currentStatus !== nextStatus
+        currentStatus !== nextStatus ||
+        matchedTodo.todoMeta?.sourceBlockId !== nextSourceBlockId
       ) {
         const updated: Note = {
           ...matchedTodo,
@@ -911,7 +1064,7 @@ export function syncSourceChecklistToTodoNotes(
           todoMeta: {
             ...matchedTodo.todoMeta,
             sourceNoteId: sourceNote.id,
-            sourceBlockId: item.id || matchedTodo.todoMeta?.sourceBlockId,
+            sourceBlockId: nextSourceBlockId,
             status: nextStatus,
             completedAt: nextStatus === 'done' ? matchedTodo.todoMeta?.completedAt || now : null,
           },

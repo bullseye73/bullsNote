@@ -3,6 +3,7 @@ import {
   Badge,
   Button,
   Card,
+  Checkbox,
   Group,
   Menu,
   Paper,
@@ -36,7 +37,13 @@ import { useNotes } from '../controller/NotesController';
 import { getSearchSnippet } from '../model/SearchService';
 import { HighlightText } from './HighlightText';
 import { formatDateTimeIso } from '../model/dateUtils';
-import { isSystemGroupNote, GROUP_ID_TO_STATUS } from '../model/TodoService';
+import {
+  isSystemGroupNote,
+  GROUP_ID_TO_STATUS,
+  TODO_PROJECT_ID,
+  TODO_GROUPS,
+  getEffectiveTodoStatus,
+} from '../model/TodoService';
 import { buildNoteHierarchy, cleanExcerpt } from '../model/treeUtils';
 import { GoogleDriveService } from '../model/GoogleDriveService';
 
@@ -66,14 +73,27 @@ function RowActions({
     indent,
     outdent,
     updateColor,
+    changeTodoStatus,
     notes,
     projects,
     projectTree,
     moveNoteToProject,
   } = useNotes();
-  const note = notes.find((n) => n.id === id)!;
+  const note = notes.find((n) => n.id === id);
+  if (!note) return null;
   const isNoteLocked = false;
   const isSystemGroup = isSystemGroupNote(note);
+  const isTodoItem = !isSystemGroup && note.projectId === TODO_PROJECT_ID;
+
+  const handleDelete = (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    const msg = hasChildren
+      ? `"${note.title}"과 하위 ${descendantCount}개 노트를 모두 삭제할까요?`
+      : `"${note.title}" 노트를 삭제할까요?`;
+    if (window.confirm(msg)) {
+      remove(id);
+    }
+  };
 
   return (
     <Group
@@ -204,6 +224,24 @@ function RowActions({
           <IconStar size={13} />
         </ActionIcon>
       </Tooltip>
+      {/* 삭제 버튼 (시스템 그룹 제외) */}
+      {!isSystemGroup && (
+        <Tooltip label={hasChildren ? `삭제 (하위 ${descendantCount}개 포함)` : '노트 삭제'}>
+          <ActionIcon
+            size="xs"
+            variant="subtle"
+            color="red"
+            disabled={isNoteLocked}
+            onClick={handleDelete}
+            aria-label="삭제"
+            style={{
+              color: active ? '#c92a2a' : 'var(--mantine-color-red-6)',
+            }}
+          >
+            <IconTrash size={13} />
+          </ActionIcon>
+        </Tooltip>
+      )}
       {/* 관리 메뉴 */}
       <Menu position="bottom-end" withArrow shadow="md" withinPortal disabled={isNoteLocked}>
         <Menu.Target>
@@ -220,6 +258,24 @@ function RowActions({
           </ActionIcon>
         </Menu.Target>
         <Menu.Dropdown>
+          {isTodoItem && (
+            <>
+              <Menu.Label>할일 상태 변경</Menu.Label>
+              {TODO_GROUPS.map((g) => {
+                const curStatus = getEffectiveTodoStatus(note, notes);
+                return (
+                  <Menu.Item
+                    key={g.status}
+                    onClick={() => changeTodoStatus(id, g.status, true)}
+                    style={{ fontWeight: curStatus === g.status ? 700 : 400 }}
+                  >
+                    {g.title} {curStatus === g.status ? '✓' : ''}
+                  </Menu.Item>
+                );
+              })}
+              <Menu.Divider />
+            </>
+          )}
           {!isSystemGroup && (
             <>
               <Menu.Label>노트 색상 변경</Menu.Label>
@@ -292,12 +348,7 @@ function RowActions({
               <Menu.Item
                 color="red"
                 leftSection={<IconTrash size={14} />}
-                onClick={() => {
-                  const msg = hasChildren
-                    ? `"${note.title}"과 하위 ${descendantCount}개 노트를 모두 삭제할까요?`
-                    : `"${note.title}" 노트를 삭제할까요?`;
-                  if (confirm(msg)) remove(id);
-                }}
+                onClick={handleDelete}
               >
                 삭제{hasChildren ? ` (하위 ${descendantCount}개 포함)` : ''}
               </Menu.Item>
@@ -338,12 +389,15 @@ function TreeRow({
   onDragEnd: () => void;
   descendantCounts: Map<string, number>;
 }) {
-  const { selectedId, select } = useNotes();
+  const { selectedId, select, notes, changeTodoStatus } = useNotes();
   const scheme = useComputedColorScheme('light', { getInitialValueInEffect: true });
   const isDark = scheme === 'dark';
 
   const n = node.note;
   const isSystemGroup = isSystemGroupNote(n);
+  const isTodoItem = !isSystemGroup && n.projectId === TODO_PROJECT_ID;
+  const effectiveTodoStatus = isTodoItem ? getEffectiveTodoStatus(n, notes) : undefined;
+  const isTodoDone = effectiveTodoStatus === 'done';
   const active = !isSystemGroup && n.id === selectedId;
   const isCollapsed = collapsed.has(n.id);
   const cfg = getPastelConfig(n.color);
@@ -446,12 +500,34 @@ function TreeRow({
             ) : (
               <span style={{ width: canDrag ? 6 : 18, flexShrink: 0 }} />
             )}
+            {isTodoItem && (
+              <Tooltip label={isTodoDone ? '완료 해제 (To Do로 복귀)' : '완료(Done) 처리 (원본 노트 체크박스 연동)'}>
+                <span
+                  style={{ display: 'inline-flex', alignItems: 'center', flexShrink: 0 }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <Checkbox
+                    size="xs"
+                    color="teal"
+                    checked={isTodoDone}
+                    onChange={(e) => {
+                      e.stopPropagation();
+                      changeTodoStatus(n.id, e.currentTarget.checked ? 'done' : 'todo');
+                    }}
+                    aria-label="할일 완료 체크"
+                    styles={{ input: { cursor: 'pointer' } }}
+                  />
+                </span>
+              </Tooltip>
+            )}
             <Text
               fw={active ? 600 : 500}
               truncate
               size="sm"
               style={{
                 color: active ? cfg.textColor : undefined,
+                textDecoration: isTodoDone ? 'line-through' : undefined,
+                opacity: isTodoDone ? 0.8 : 1,
                 minWidth: 0,
                 letterSpacing: '-0.15px',
               }}
@@ -532,7 +608,7 @@ function TreeRow({
             id={n.id}
             hasChildren={node.children.length > 0}
             hasPrevSibling={prevSibling}
-            hasParent={n.parentId !== null}
+            hasParent={n.parentId !== null && !isSystemGroupNote(n.parentId)}
             active={active}
             colorCfg={cfg}
             descendantCount={descendantCounts.get(n.id) ?? 0}
@@ -648,12 +724,14 @@ export function NoteListView() {
 
   const handleDragOver = useCallback((id: string, e: React.DragEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     e.dataTransfer.dropEffect = 'move';
     setDropTargetId((prev) => (prev !== id ? id : prev));
   }, []);
 
   const handleDragLeave = useCallback((id: string, e: React.DragEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     setDropTargetId((prev) => (prev === id ? null : prev));
   }, []);
 
@@ -665,6 +743,7 @@ export function NoteListView() {
   const handleDrop = useCallback(
     (targetId: string, e: React.DragEvent) => {
       e.preventDefault();
+      e.stopPropagation();
       const draggedId = e.dataTransfer.getData('text/plain') || draggingId;
       setDraggingId(null);
       setDropTargetId(null);
@@ -678,26 +757,30 @@ export function NoteListView() {
       // 시스템 그룹 노트(To Do, Doing, Done, Drop)는 드래그하여 이동할 수 없음
       if (isSystemGroupNote(draggedNote)) return;
 
-      // 할일 관리 그룹 판별:
-      // 1) 대상이 그룹 카드 본체인 경우 (To Do, Doing, Done, Drop)
+      // 1) 대상이 할일 관리 시스템 그룹 카드 본체인 경우 (To Do, Doing, Done, Drop) -> 해당 그룹 루트로 이동 및 상태 변경
       const targetGroupStatus = GROUP_ID_TO_STATUS[targetNote.id];
       if (targetGroupStatus) {
-        changeTodoStatus(draggedId, targetGroupStatus);
+        changeTodoStatus(draggedId, targetGroupStatus, true);
+        setCollapsed((prev) => {
+          if (!prev.has(targetId)) return prev;
+          const next = new Set(prev);
+          next.delete(targetId);
+          return next;
+        });
         return;
       }
 
-      // 2) 대상이 특정 상태 그룹에 속한 할일 카드인 경우 -> 대상 카드의 부모 그룹 상태로 변경
-      if (targetNote.parentId && GROUP_ID_TO_STATUS[targetNote.parentId]) {
-        const parentStatus = GROUP_ID_TO_STATUS[targetNote.parentId];
-        changeTodoStatus(draggedId, parentStatus);
-        return;
-      }
-
-      // 3) 일반 노트의 경우: 순환 참조 방지 후 해당 노트의 자식으로 계층 이동
+      // 2) 할일 카드 또는 일반 노트에 드롭한 경우: 순환 참조 방지 후 해당 카드의 하위(자식)로 계층 이동
       if (hierarchy.isDescendant(draggedId, targetId)) {
         return;
       }
       setParent(draggedId, targetId);
+      setCollapsed((prev) => {
+        if (!prev.has(targetId)) return prev;
+        const next = new Set(prev);
+        next.delete(targetId);
+        return next;
+      });
     },
     [draggingId, notes, changeTodoStatus, setParent, hierarchy]
   );

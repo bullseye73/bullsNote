@@ -48,6 +48,8 @@ import {
   GROUP_ID_TO_STATUS,
   extractChecklistFromBlocks,
   isSystemGroupNote,
+  getEffectiveTodoStatus,
+  resolveSourceNoteId,
 } from '../model/TodoService';
 import { TodoStatus } from '../model/Note';
 import { BlockNoteView } from '@blocknote/ariakit';
@@ -551,9 +553,10 @@ function BlockEditor({
   const handleEditorChange = useCallback(() => {
     if (isApplyingExternalRef.current) return;
     const json = JSON.stringify(editor.document);
+    if (json === lastEmittedRef.current || json === note.content) return;
     lastEmittedRef.current = json;
     updateContent(note.id, json);
-  }, [editor, note.id, updateContent]);
+  }, [editor, note.id, note.content, updateContent]);
 
   // 에디터 DOM 내 삭제된 첨부파일 링크 및 파일 블록에 data-deleted-attachment 속성 동적 부여
   useEffect(() => {
@@ -820,8 +823,7 @@ function BlockEditor({
               </Text>
               <Group gap={6}>
                 {TODO_GROUPS.map((g) => {
-                  const currentStatus: TodoStatus =
-                    note.todoMeta?.status || (GROUP_ID_TO_STATUS[note.parentId || ''] as TodoStatus) || 'todo';
+                  const currentStatus: TodoStatus = getEffectiveTodoStatus(note, notes);
                   const isCurrent = currentStatus === g.status;
                   return (
                     <Chip
@@ -830,7 +832,7 @@ function BlockEditor({
                       checked={isCurrent}
                       color={g.color}
                       variant={isCurrent ? 'filled' : 'outline'}
-                      onClick={() => changeTodoStatus(note.id, g.status)}
+                      onChange={() => changeTodoStatus(note.id, g.status)}
                     >
                       {g.title}
                     </Chip>
@@ -839,13 +841,13 @@ function BlockEditor({
               </Group>
             </Group>
 
-            {note.todoMeta?.sourceNoteId && (
+            {resolveSourceNoteId(note) && (
               <Button
                 size="compact-xs"
                 variant="subtle"
                 color="blue"
                 leftSection={<IconArrowLeft size={13} />}
-                onClick={() => select(note.todoMeta!.sourceNoteId!)}
+                onClick={() => select(resolveSourceNoteId(note)!)}
               >
                 원본 노트로 이동
               </Button>
@@ -1083,7 +1085,13 @@ function BlockEditor({
                       alert('현재 노트에 체크리스트(- [ ] 또는 체크박스) 항목이 없습니다.');
                       return;
                     }
-                    const { createdCount, updatedCount, duplicateCount } = createTodosFromChecklist(note, items);
+                    const latestJson = JSON.stringify(blocks);
+                    lastEmittedRef.current = latestJson;
+                    updateContent(note.id, latestJson);
+                    const { createdCount, updatedCount, duplicateCount } = createTodosFromChecklist(
+                      { ...note, content: latestJson },
+                      items
+                    );
                     let msg = '';
                     if (createdCount > 0 && updatedCount > 0) {
                       msg = `총 ${createdCount}개의 새 할일이 등록되고, 기존 ${updatedCount}개의 할일이 최신 내용으로 업데이트되었습니다!`;
