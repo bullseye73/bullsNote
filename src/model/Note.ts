@@ -252,6 +252,14 @@ export interface NoteReminder {
   dismissed: boolean;
   /** 스누즈 목표 시각 (스누즈 중일 때 ms, 아니면 null) */
   snoozedUntil?: number | null;
+  /** Google 캘린더 자동 연동 여부 (기본값 true) */
+  syncToCalendar?: boolean;
+  /** 연동된 Google Calendar Event ID */
+  calendarEventId?: string | null;
+  /** 연동된 Google Calendar Event 웹 링크 */
+  calendarHtmlLink?: string | null;
+  /** 최근 Google 캘린더 동기화 오류 메시지 (있을 경우 알람 팝오버에 표시) */
+  calendarSyncError?: string | null;
 }
 
 export function computeNextReminderTime(currentTimestamp: number, repeat: NoteReminderRepeat): number {

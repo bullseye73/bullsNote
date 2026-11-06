@@ -52,6 +52,7 @@ import {
 } from '../model/FileVault';
 import type { VaultApi } from '../electron';
 import { GoogleDriveConfig, GoogleDriveService, GoogleUserInfo } from '../model/GoogleDriveService';
+import { GoogleCalendarService } from '../model/GoogleCalendarService';
 import { hasAnyEncryptedNotes, hasLegacyEncryptedText, recoverEncryptedNotes } from '../model/LegacyDecryptor';
 import { parseSearchQuery, searchNotes } from '../model/SearchService';
 import { formatDateIso } from '../model/dateUtils';
@@ -1290,6 +1291,73 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     [projects, notes, select, queueProjectSync, queueNoteSync],
   );
 
+  /** 노트/할일 알람을 Google Calendar 일정으로 백그라운드 동기화 (모바일 푸시 알림 연동) */
+  const syncNoteReminderWithCalendar = useCallback(
+    (note: Note, prevCalendarEventId?: string | null) => {
+      if (!GoogleDriveService.isConnected()) return;
+
+      const isTodoDrop = note.projectId === TODO_PROJECT_ID && note.todoMeta?.status === 'drop';
+      const reminder = note.reminder;
+      const shouldDelete = !reminder || reminder.syncToCalendar === false || isTodoDrop;
+
+      if (shouldDelete) {
+        const eventIdToDelete = prevCalendarEventId || reminder?.calendarEventId;
+        if (eventIdToDelete) {
+          void GoogleCalendarService.deleteReminderEvent(eventIdToDelete);
+        }
+        if (reminder && (reminder.calendarEventId || reminder.calendarHtmlLink || reminder.calendarSyncError)) {
+          setNotes((prev) =>
+            prev.map((n) => {
+              if (n.id !== note.id || !n.reminder) return n;
+              const cleaned: Note = {
+                ...n,
+                reminder: {
+                  ...n.reminder,
+                  calendarEventId: null,
+                  calendarHtmlLink: null,
+                  calendarSyncError: null,
+                },
+              };
+              queueNoteSync(cleaned);
+              return cleaned;
+            }),
+          );
+        }
+        return;
+      }
+
+      void GoogleCalendarService.upsertReminderEvent(note, reminder).then((res) => {
+        setNotes((prev) =>
+          prev.map((n) => {
+            if (n.id !== note.id || !n.reminder) return n;
+            const nextEventId = res.eventId ?? n.reminder.calendarEventId ?? null;
+            const nextHtmlLink = res.htmlLink ?? n.reminder.calendarHtmlLink ?? null;
+            const nextError = res.error ?? null;
+            if (
+              n.reminder.calendarEventId === nextEventId &&
+              n.reminder.calendarHtmlLink === nextHtmlLink &&
+              (n.reminder.calendarSyncError ?? null) === nextError
+            ) {
+              return n;
+            }
+            const updated: Note = {
+              ...n,
+              reminder: {
+                ...n.reminder,
+                calendarEventId: nextEventId,
+                calendarHtmlLink: nextHtmlLink,
+                calendarSyncError: nextError,
+              },
+            };
+            queueNoteSync(updated);
+            return updated;
+          }),
+        );
+      });
+    },
+    [queueNoteSync],
+  );
+
   const remove = useCallback(
     (id: string) => {
       const target = notesRef.current.find((n) => n.id === id);
@@ -1302,6 +1370,14 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         if (!currentTarget || isSystemGroupNote(currentTarget)) return prev;
 
         const doomed = getDescendantIds(prev, id);
+        // 삭제되는 노트에 연동된 Google Calendar 일정이 있으면 함께 삭제
+        if (GoogleDriveService.isConnected()) {
+          for (const n of prev) {
+            if (doomed.has(n.id) && n.reminder?.calendarEventId) {
+              void GoogleCalendarService.deleteReminderEvent(n.reminder.calendarEventId);
+            }
+          }
+        }
         const next = prev.filter((n) => !doomed.has(n.id));
         // 끊어진 자식 참조 방지: 삭제된 노트를 부모로 가진 노트는 루트(또는 할일 기본 그룹)로 복구
         const fixed = next.map((n) =>
@@ -1373,9 +1449,14 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         if (updatedTarget && updatedTarget.projectId !== TODO_PROJECT_ID) {
           const syncRes = syncSourceChecklistToTodoNotes(updatedTarget, content, nextList);
           if (syncRes.changed) {
+            const prevMap = new Map(nextList.map((item) => [item.id, item]));
             syncRes.updatedNotes.forEach((n) => {
               if (n.projectId === TODO_PROJECT_ID && n.todoMeta?.sourceNoteId === id) {
                 queueNoteSync(n);
+                const prevTodo = prevMap.get(n.id);
+                if (prevTodo && prevTodo.todoMeta?.status !== n.todoMeta?.status && n.reminder) {
+                  syncNoteReminderWithCalendar(n, n.reminder.calendarEventId);
+                }
               }
             });
             return syncRes.updatedNotes;
@@ -1385,7 +1466,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         return nextList;
       });
     },
-    [refreshTags, queueNoteSync],
+    [refreshTags, queueNoteSync, syncNoteReminderWithCalendar],
   );
 
   const updateColor = useCallback(
@@ -1412,15 +1493,33 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       setNotes((prev) =>
         prev.map((n) => {
           if (n.id === id) {
-            const updated = { ...n, reminder, updatedAt: Date.now() };
+            const prevEventId = n.reminder?.calendarEventId ?? null;
+            const prevHtmlLink = n.reminder?.calendarHtmlLink ?? null;
+            const mergedReminder: NoteReminder | null = reminder
+              ? {
+                  ...reminder,
+                  syncToCalendar: reminder.syncToCalendar ?? true,
+                  calendarEventId:
+                    reminder.syncToCalendar === false
+                      ? null
+                      : (reminder.calendarEventId ?? prevEventId),
+                  calendarHtmlLink:
+                    reminder.syncToCalendar === false
+                      ? null
+                      : (reminder.calendarHtmlLink ?? prevHtmlLink),
+                  calendarSyncError: null,
+                }
+              : null;
+            const updated: Note = { ...n, reminder: mergedReminder, updatedAt: Date.now() };
             queueNoteSync(updated);
+            syncNoteReminderWithCalendar(updated, prevEventId);
             return updated;
           }
           return n;
         }),
       );
     },
-    [queueNoteSync],
+    [queueNoteSync, syncNoteReminderWithCalendar],
   );
 
   const dismissReminder = useCallback(
@@ -1434,6 +1533,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
             updated = {
               ...n,
               reminder: {
+                ...n.reminder,
                 targetAt: nextTime,
                 repeat: n.reminder.repeat,
                 dismissed: false,
@@ -1453,12 +1553,13 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
             };
           }
           queueNoteSync(updated);
+          syncNoteReminderWithCalendar(updated, n.reminder.calendarEventId);
           return updated;
         }),
       );
       setActiveAlarmNote((cur) => (cur?.id === id ? null : cur));
     },
-    [queueNoteSync],
+    [queueNoteSync, syncNoteReminderWithCalendar],
   );
 
   const snoozeReminder = useCallback(
@@ -1476,12 +1577,13 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
             updatedAt: Date.now(),
           };
           queueNoteSync(updated);
+          syncNoteReminderWithCalendar(updated, n.reminder.calendarEventId);
           return updated;
         }),
       );
       setActiveAlarmNote((cur) => (cur?.id === id ? null : cur));
     },
-    [queueNoteSync],
+    [queueNoteSync, syncNoteReminderWithCalendar],
   );
 
   const closeAlarmModal = useCallback(() => {
@@ -1529,6 +1631,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
             syncRes.updatedNotes.forEach((n) => {
               if (changedSet.has(n.id)) {
                 queueNoteSync(n);
+                if (n.projectId === TODO_PROJECT_ID && n.reminder) {
+                  syncNoteReminderWithCalendar(n, n.reminder.calendarEventId);
+                }
               }
             });
             return syncRes.updatedNotes;
@@ -1550,6 +1655,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
             syncRes.updatedNotes.forEach((n) => {
               if (changedSet.has(n.id)) {
                 queueNoteSync(n);
+                if (n.projectId === TODO_PROJECT_ID && n.reminder) {
+                  syncNoteReminderWithCalendar(n, n.reminder.calendarEventId);
+                }
               }
             });
             return syncRes.updatedNotes;
@@ -1579,7 +1687,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         });
       });
     },
-    [queueNoteSync],
+    [queueNoteSync, syncNoteReminderWithCalendar],
   );
 
   /** 이전 형제를 부모로 (들여쓰기) */
@@ -2170,12 +2278,15 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         updatedNotes.forEach((n) => {
           if (changedSet.has(n.id)) {
             queueNoteSync(n);
+            if (n.projectId === TODO_PROJECT_ID && n.reminder) {
+              syncNoteReminderWithCalendar(n, n.reminder.calendarEventId);
+            }
           }
         });
         return updatedNotes;
       });
     },
-    [queueNoteSync],
+    [queueNoteSync, syncNoteReminderWithCalendar],
   );
 
   const hasEncryptedNotes = useMemo(() => hasAnyEncryptedNotes(notes), [notes]);
