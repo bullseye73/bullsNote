@@ -1083,10 +1083,19 @@ function BlockEditor({
                       alert('현재 노트에 체크리스트(- [ ] 또는 체크박스) 항목이 없습니다.');
                       return;
                     }
-                    const { createdCount, duplicateCount } = createTodosFromChecklist(note, items);
-                    let msg = `총 ${createdCount}개의 할일이 '할일관리' 프로젝트(To Do)에 등록되었습니다!`;
-                    if (duplicateCount > 0) {
-                      msg += ` (이미 등록된 ${duplicateCount}개 제외)`;
+                    const { createdCount, updatedCount, duplicateCount } = createTodosFromChecklist(note, items);
+                    let msg = '';
+                    if (createdCount > 0 && updatedCount > 0) {
+                      msg = `총 ${createdCount}개의 새 할일이 등록되고, 기존 ${updatedCount}개의 할일이 최신 내용으로 업데이트되었습니다!`;
+                    } else if (createdCount > 0) {
+                      msg = `총 ${createdCount}개의 할일이 '할일관리' 프로젝트에 등록되었습니다!`;
+                    } else if (updatedCount > 0) {
+                      msg = `이미 등록된 ${updatedCount}개의 할일이 최신 하위 내용으로 업데이트되었습니다!`;
+                    } else {
+                      msg = `모든 할일(${duplicateCount}개)이 이미 최신 상태로 등록되어 있습니다.`;
+                    }
+                    if (duplicateCount > 0 && (createdCount > 0 || updatedCount > 0)) {
+                      msg += ` (변경 없는 기존 ${duplicateCount}개 유지)`;
                     }
                     alert(msg);
                   },

@@ -169,23 +169,157 @@ export function ensureTodoProjectAndGroups(
   return { projects: nextProjects, notes: nextNotes, created };
 }
 
+export interface ExtractedChecklistItem {
+  id?: string;
+  text: string;
+  checked?: boolean;
+  /** 상위 체크리스트 항목의 블록 ID (계층형 하위 할일 연결용) */
+  parentBlockId?: string;
+  /** 상위 체크리스트 항목의 정제된 제목 (블록 ID가 없을 때 상위 할일 매칭용) */
+  parentText?: string;
+  /** 해당 할일 항목 하위에 작성된 세부 내용 블록들 */
+  detailBlocks?: Array<Record<string, unknown>>;
+}
+
+function generateBlockId(): string {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function extractInlineText(content: unknown): string {
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((item) => {
+      if (!item || typeof item !== 'object') return '';
+      const rec = item as Record<string, unknown>;
+      if (typeof rec.text === 'string') return rec.text;
+      if (Array.isArray(rec.content)) return extractInlineText(rec.content);
+      return '';
+    })
+    .join('');
+}
+
 /**
- * 마크다운 텍스트에서 체크리스트 항목(- [ ] / - [x]) 추출
+ * 하위 세부 내용 블록들을 깊은 복사하며 새로운 블록 ID를 부여 (원본 노트 블록 ID와의 충돌 방지)
  */
-export function extractChecklistFromMarkdown(md: string): Array<{ text: string; checked: boolean }> {
+function cloneDetailBlocks(blocks: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  return blocks.map((b) => {
+    const cloned: Record<string, unknown> = {
+      ...b,
+      id: generateBlockId(),
+    };
+    if (Array.isArray(b.content)) {
+      cloned.content = JSON.parse(JSON.stringify(b.content));
+    }
+    if (b.props && typeof b.props === 'object') {
+      cloned.props = { ...(b.props as Record<string, unknown>) };
+    }
+    if (Array.isArray(b.children) && b.children.length > 0) {
+      cloned.children = cloneDetailBlocks(b.children as Array<Record<string, unknown>>);
+    } else {
+      cloned.children = [];
+    }
+    return cloned;
+  });
+}
+
+/**
+ * 블록 배열 비교 시 랜덤 생성되는 블록 id를 제외하고 구조/내용 동일성 비교를 위한 정규화
+ */
+function stripBlockIds(blocks: unknown): unknown {
+  if (!Array.isArray(blocks)) return blocks;
+  return blocks.map((b) => {
+    if (!b || typeof b !== 'object') return b;
+    const { id: _id, ...rest } = b as Record<string, unknown>;
+    return {
+      ...rest,
+      children: Array.isArray(rest.children) ? stripBlockIds(rest.children) : [],
+    };
+  });
+}
+
+/**
+ * 마크다운 텍스트에서 체크리스트 항목(- [ ] / - [x]) 및 들여쓰기된 하위 내용 추출
+ */
+export function extractChecklistFromMarkdown(md: string): ExtractedChecklistItem[] {
   if (!md) return [];
   const lines = md.split('\n');
-  const items: Array<{ text: string; checked: boolean }> = [];
+  const items: ExtractedChecklistItem[] = [];
+  const stack: Array<{ indent: number; item: ExtractedChecklistItem }> = [];
 
-  for (const line of lines) {
-    const match = line.match(/^[\s*-]*\[([ xX])\]\s*(.*)$/);
+  for (let i = 0; i < lines.length; i++) {
+    const rawLine = lines[i];
+    if (!rawLine.trim()) continue;
+
+    const match = rawLine.match(/^(\s*)[*-]?\s*\[([ xX])\]\s*(.*)$/);
     if (match) {
-      const checked = match[1].toLowerCase() === 'x';
-      let text = match[2].trim();
-      // 기존 완료/중단 텍스트 태그가 붙어있으면 본문 정리
-      text = cleanTodoSuffix(text);
-      if (text) {
-        items.push({ text, checked });
+      const indent = match[1].replace(/\t/g, '  ').length;
+      const checked = match[2].toLowerCase() === 'x';
+      const text = cleanTodoSuffix(match[3].trim());
+      if (!text) continue;
+
+      while (stack.length > 0 && stack[stack.length - 1].indent >= indent) {
+        stack.pop();
+      }
+
+      const parent = stack.length > 0 ? stack[stack.length - 1].item : undefined;
+      const itemId = `md-${i}`;
+      const newItem: ExtractedChecklistItem = {
+        id: itemId,
+        text,
+        checked,
+        parentBlockId: parent?.id,
+        parentText: parent?.text,
+        detailBlocks: [],
+      };
+
+      if (parent) {
+        parent.detailBlocks = parent.detailBlocks || [];
+        parent.detailBlocks.push({
+          id: generateBlockId(),
+          type: 'checkListItem',
+          props: { checked },
+          content: [{ type: 'text', text, styles: {} }],
+          children: [],
+        });
+      }
+
+      items.push(newItem);
+      stack.push({ indent, item: newItem });
+      continue;
+    }
+
+    // 현재 활성 체크리스트 항목 아래에 들여쓰기된 하위 불릿/텍스트가 있는 경우 세부 내용 블록으로 추가
+    const indentMatch = rawLine.match(/^(\s+)(.*)$/);
+    if (indentMatch && stack.length > 0) {
+      const lineIndent = indentMatch[1].replace(/\t/g, '  ').length;
+      const currentTop = stack[stack.length - 1];
+      if (lineIndent > currentTop.indent) {
+        const bodyText = indentMatch[2].trim();
+        const bulletMatch = bodyText.match(/^[*-]\s+(.*)$/);
+        const numberedMatch = bodyText.match(/^\d+\.\s+(.*)$/);
+        currentTop.item.detailBlocks = currentTop.item.detailBlocks || [];
+        if (bulletMatch) {
+          currentTop.item.detailBlocks.push({
+            id: generateBlockId(),
+            type: 'bulletListItem',
+            content: [{ type: 'text', text: bulletMatch[1].trim(), styles: {} }],
+            children: [],
+          });
+        } else if (numberedMatch) {
+          currentTop.item.detailBlocks.push({
+            id: generateBlockId(),
+            type: 'numberedListItem',
+            content: [{ type: 'text', text: numberedMatch[1].trim(), styles: {} }],
+            children: [],
+          });
+        } else if (bodyText) {
+          currentTop.item.detailBlocks.push({
+            id: generateBlockId(),
+            type: 'paragraph',
+            content: [{ type: 'text', text: bodyText, styles: {} }],
+            children: [],
+          });
+        }
       }
     }
   }
@@ -194,11 +328,11 @@ export function extractChecklistFromMarkdown(md: string): Array<{ text: string; 
 }
 
 /**
- * BlockNote 블록들에서 체크리스트 블록(checkListItem) 추출
+ * BlockNote 블록들에서 체크리스트 블록(checkListItem)과 하위 계층 구조 및 세부 내용 추출
  */
 export function extractChecklistFromBlocks(
   blocksJsonOrArray: unknown
-): Array<{ id: string; text: string; checked: boolean }> {
+): ExtractedChecklistItem[] {
   let blocks: Array<Record<string, unknown>> | undefined;
   if (typeof blocksJsonOrArray === 'string') {
     blocks = parseBlocks(blocksJsonOrArray);
@@ -208,28 +342,63 @@ export function extractChecklistFromBlocks(
 
   if (!blocks) return [];
 
-  const results: Array<{ id: string; text: string; checked: boolean }> = [];
+  const results: ExtractedChecklistItem[] = [];
 
-  function traverse(list: Array<Record<string, unknown>>) {
-    for (const b of list) {
+  function traverse(
+    list: Array<Record<string, unknown>>,
+    parentCheckItem?: { id?: string; text: string }
+  ) {
+    for (let i = 0; i < list.length; i++) {
+      const b = list[i];
       if (b.type === 'checkListItem') {
         const id = (b.id as string) || '';
         const props = (b.props as Record<string, unknown>) || {};
         const checked = Boolean(props.checked);
-        const contentArr = (b.content as Array<{ text?: string }>) || [];
-        const rawText = contentArr.map((c) => c.text || '').join('');
+        const rawText = extractInlineText(b.content);
         const text = cleanTodoSuffix(rawText);
-        if (text) {
-          results.push({ id, text, checked });
+
+        const rawChildren = Array.isArray(b.children)
+          ? (b.children as Array<Record<string, unknown>>)
+          : [];
+
+        // 체크리스트 바로 아래에 Tab 들여쓰기 없이 작성된 연속된 불릿(bulletListItem)도 하위 세부 내용으로 수집
+        const trailingBullets: Array<Record<string, unknown>> = [];
+        while (i + 1 < list.length && list[i + 1].type === 'bulletListItem') {
+          trailingBullets.push(list[i + 1]);
+          i += 1;
         }
-      }
-      if (Array.isArray(b.children)) {
-        traverse(b.children as Array<Record<string, unknown>>);
+
+        const combinedDetailSource = [...rawChildren, ...trailingBullets];
+        const detailBlocks =
+          combinedDetailSource.length > 0 ? cloneDetailBlocks(combinedDetailSource) : [];
+
+        if (text) {
+          results.push({
+            id,
+            text,
+            checked,
+            parentBlockId: parentCheckItem?.id,
+            parentText: parentCheckItem?.text,
+            detailBlocks,
+          });
+        }
+
+        const nextParent = text ? { id, text } : parentCheckItem;
+        if (rawChildren.length > 0) {
+          traverse(rawChildren, nextParent);
+        }
+        for (const tb of trailingBullets) {
+          if (Array.isArray(tb.children) && tb.children.length > 0) {
+            traverse(tb.children as Array<Record<string, unknown>>, nextParent);
+          }
+        }
+      } else if (Array.isArray(b.children) && b.children.length > 0) {
+        traverse(b.children as Array<Record<string, unknown>>, parentCheckItem);
       }
     }
   }
 
-  traverse(blocks);
+  traverse(blocks, undefined);
   return results;
 }
 
@@ -243,11 +412,31 @@ export function cleanTodoSuffix(text: string): string {
 }
 
 /**
- * 할일 노트를 생성할 때 사용하는 초기 블록 JSON 생성
+ * 할일 노트를 생성/업데이트할 때 사용하는 블록 JSON 생성 (하위 세부 내용 블록 포함)
  */
-export function buildTodoNoteContent(sourceNote: Note, todoText: string): string {
-  const nowStr = formatDateTimeIso(new Date());
+export function buildTodoNoteContent(
+  sourceNote: Note,
+  todoText: string,
+  detailBlocks?: Array<Record<string, unknown>>,
+  createdAtMs?: number
+): string {
+  const nowStr = formatDateTimeIso(new Date(createdAtMs ?? Date.now()));
   const sourceTitle = sourceNote.title || '제목 없음';
+
+  const bodyBlocks: Array<Record<string, unknown>> =
+    detailBlocks && detailBlocks.length > 0
+      ? cloneDetailBlocks(detailBlocks)
+      : [
+          {
+            type: 'paragraph',
+            content: [
+              {
+                type: 'text',
+                text: todoText,
+              },
+            ],
+          },
+        ];
 
   const blocks = [
     {
@@ -294,15 +483,7 @@ export function buildTodoNoteContent(sourceNote: Note, todoText: string): string
         },
       ],
     },
-    {
-      type: 'paragraph',
-      content: [
-        {
-          type: 'text',
-          text: todoText,
-        },
-      ],
-    },
+    ...bodyBlocks,
     {
       type: 'paragraph',
       content: [
@@ -318,55 +499,186 @@ export function buildTodoNoteContent(sourceNote: Note, todoText: string): string
 }
 
 /**
- * 개별 체크리스트 항목들로부터 '할일관리' 프로젝트의 To Do 그룹 하위 노트들 생성
+ * 개별 체크리스트 항목들로부터 '할일관리' 프로젝트의 할일 노트들을 계층 구조(방안 B)로 생성하거나
+ * 이미 등록된 할일이 있는 경우 하위 내용·제목·계층·상태를 업데이트
  */
 export function createTodoNotes(
   sourceNote: Note,
-  items: Array<{ id?: string; text: string; checked?: boolean }>,
+  items: ExtractedChecklistItem[],
   existingNotes: Note[]
-): { newNotes: Note[]; duplicateCount: number } {
+): {
+  newNotes: Note[];
+  updatedNotes: Note[];
+  updatedCount: number;
+  duplicateCount: number;
+} {
   const newNotes: Note[] = [];
+  const updatedNotes: Note[] = [];
+  let updatedCount = 0;
   let duplicateCount = 0;
   const now = Date.now();
+
+  // 부모 체크리스트 -> 할일 노트 ID 매핑 (방안 B: 하위 체크리스트를 부모 할일 카드의 자식으로 연결)
+  const blockIdToTodoId = new Map<string, string>();
+  const titleToTodoId = new Map<string, string>();
+  const matchedExistingIds = new Set<string>();
+
+  // 기존에 이 원본 노트에서 생성된 할일 노트들을 먼저 인덱싱
+  for (const n of existingNotes) {
+    if (
+      n.projectId === TODO_PROJECT_ID &&
+      !n.systemGroupType &&
+      n.todoMeta?.sourceNoteId === sourceNote.id
+    ) {
+      if (n.todoMeta.sourceBlockId) {
+        blockIdToTodoId.set(n.todoMeta.sourceBlockId, n.id);
+      }
+      const cTitle = cleanTodoSuffix(n.title);
+      if (cTitle && !titleToTodoId.has(cTitle)) {
+        titleToTodoId.set(cTitle, n.id);
+      }
+    }
+  }
 
   items.forEach((item, idx) => {
     const cleanText = cleanTodoSuffix(item.text);
     if (!cleanText) return;
 
-    // 중복 검사: 이미 동일 원본 노트의 동일 블록ID 또는 동일 텍스트로 등록된 활성 할일이 있는지 확인
-    const isDuplicate = existingNotes.some(
-      (n) =>
-        n.projectId === TODO_PROJECT_ID &&
-        n.todoMeta?.sourceNoteId === sourceNote.id &&
-        ((item.id && n.todoMeta?.sourceBlockId === item.id) || n.title === cleanText)
-    );
+    // 1. 이미 등록된 할일 노트가 있는지 검색 (블록 ID 우선, 없으면 제목 매칭)
+    const matchedExisting = existingNotes.find((n) => {
+      if (
+        n.projectId !== TODO_PROJECT_ID ||
+        n.systemGroupType ||
+        n.todoMeta?.sourceNoteId !== sourceNote.id ||
+        matchedExistingIds.has(n.id)
+      ) {
+        return false;
+      }
+      if (item.id && n.todoMeta?.sourceBlockId) {
+        return n.todoMeta.sourceBlockId === item.id;
+      }
+      return cleanTodoSuffix(n.title) === cleanText;
+    });
 
-    if (isDuplicate) {
-      duplicateCount++;
+    // 2. 상위 할일 노트 ID 결정 (방안 B: 상위 체크리스트가 있으면 해당 할일 노트의 하위로 배치)
+    const parentTodoId =
+      (item.parentBlockId && blockIdToTodoId.get(item.parentBlockId)) ||
+      (item.parentText && titleToTodoId.get(cleanTodoSuffix(item.parentText))) ||
+      null;
+
+    if (matchedExisting) {
+      matchedExistingIds.add(matchedExisting.id);
+      if (item.id && ! item.id.startsWith('md-')) {
+        blockIdToTodoId.set(item.id, matchedExisting.id);
+      }
+      titleToTodoId.set(cleanText, matchedExisting.id);
+
+      const currentStatus: TodoStatus =
+        matchedExisting.todoMeta?.status ||
+        GROUP_ID_TO_STATUS[matchedExisting.parentId || ''] ||
+        'todo';
+
+      let nextStatus: TodoStatus = currentStatus;
+      if (item.checked && currentStatus !== 'done') {
+        nextStatus = 'done';
+      } else if (!item.checked && currentStatus === 'done') {
+        nextStatus = 'todo';
+      }
+
+      const targetGroup = TODO_GROUPS.find((g) => g.status === nextStatus);
+      const nextColor = targetGroup?.color || matchedExisting.color || 'blue';
+      const nextParentId =
+        parentTodoId && parentTodoId !== matchedExisting.id
+          ? parentTodoId
+          : STATUS_TO_GROUP_ID[nextStatus];
+
+      const candidateContent = buildTodoNoteContent(
+        sourceNote,
+        cleanText,
+        item.detailBlocks,
+        matchedExisting.createdAt
+      );
+
+      const existingStripped = JSON.stringify(stripBlockIds(parseBlocks(matchedExisting.content)));
+      const candidateStripped = JSON.stringify(stripBlockIds(parseBlocks(candidateContent)));
+      const contentChanged = existingStripped !== candidateStripped;
+      const nextSourceBlockId =
+        item.id && !item.id.startsWith('md-') ? item.id : matchedExisting.todoMeta?.sourceBlockId;
+
+      const hasChanges =
+        matchedExisting.title !== cleanText ||
+        contentChanged ||
+        matchedExisting.parentId !== nextParentId ||
+        matchedExisting.color !== nextColor ||
+        matchedExisting.todoMeta?.status !== nextStatus ||
+        matchedExisting.todoMeta?.sourceBlockId !== nextSourceBlockId;
+
+      if (hasChanges) {
+        const updatedNote: Note = {
+          ...matchedExisting,
+          title: cleanText,
+          parentId: nextParentId,
+          color: nextColor,
+          content: contentChanged ? candidateContent : matchedExisting.content,
+          tags: Array.from(
+            new Set([
+              ...(matchedExisting.tags || []).filter(
+                (t) => !['todo', 'doing', 'done', 'drop'].includes(t)
+              ),
+              '할일',
+              nextStatus,
+            ])
+          ),
+          todoMeta: {
+            ...(matchedExisting.todoMeta || { status: nextStatus }),
+            sourceNoteId: sourceNote.id,
+            sourceBlockId: nextSourceBlockId,
+            status: nextStatus,
+            completedAt:
+              nextStatus === 'done' ? matchedExisting.todoMeta?.completedAt || now : null,
+          },
+          updatedAt: now + idx,
+        };
+        updatedNotes.push(updatedNote);
+        updatedCount++;
+      } else {
+        duplicateCount++;
+      }
       return;
     }
+
+    // 3. 신규 할일 노트 생성
+    const initialStatus: TodoStatus = item.checked ? 'done' : 'todo';
+    const targetGroup = TODO_GROUPS.find((g) => g.status === initialStatus);
+    const initialParentId =
+      parentTodoId || (item.checked ? TODO_GROUP_DONE_ID : TODO_GROUP_TODO_ID);
+    const sourceBlockId = item.id && !item.id.startsWith('md-') ? item.id : undefined;
 
     const todoNote = createEmptyNote({
       title: cleanText,
       projectId: TODO_PROJECT_ID,
-      parentId: item.checked ? TODO_GROUP_DONE_ID : TODO_GROUP_TODO_ID,
-      color: 'blue',
-      tags: ['할일', item.checked ? 'done' : 'todo'],
-      content: buildTodoNoteContent(sourceNote, cleanText),
+      parentId: initialParentId,
+      color: targetGroup?.color || 'blue',
+      tags: ['할일', initialStatus],
+      content: buildTodoNoteContent(sourceNote, cleanText, item.detailBlocks, now + idx),
       todoMeta: {
         sourceNoteId: sourceNote.id,
-        sourceBlockId: item.id,
-        status: item.checked ? 'done' : 'todo',
+        sourceBlockId,
+        status: initialStatus,
         completedAt: item.checked ? now : null,
       },
       createdAt: now + idx,
       updatedAt: now + idx,
     });
 
+    if (item.id) {
+      blockIdToTodoId.set(item.id, todoNote.id);
+    }
+    titleToTodoId.set(cleanText, todoNote.id);
     newNotes.push(todoNote);
   });
 
-  return { newNotes, duplicateCount };
+  return { newNotes, updatedNotes, updatedCount, duplicateCount };
 }
 
 /**
@@ -384,11 +696,12 @@ export function syncTodoStatusToSourceNote(
   const targetGroup = TODO_GROUPS.find((g) => g.status === newStatus);
   const statusColor = targetGroup?.color || 'blue';
 
-  // 1. 할일 노트 자체 갱신 (상태별 색상 동적 변경)
+  // 1. 할일 노트 자체 갱신 (상태별 색상 동적 변경, 상위 할일 카드의 자식인 경우 계층 parentId 유지)
+  const isChildTodo = Boolean(todoNote.parentId && !isSystemGroupNote(todoNote.parentId));
   const updatedTodo: Note = {
     ...todoNote,
     projectId: TODO_PROJECT_ID,
-    parentId: targetGroupId,
+    parentId: isChildTodo ? todoNote.parentId : targetGroupId,
     color: statusColor,
     tags: Array.from(new Set([...(todoNote.tags || []).filter((t) => !['todo', 'doing', 'done', 'drop'].includes(t)), newStatus])),
     todoMeta: {
@@ -515,46 +828,92 @@ export function syncSourceChecklistToTodoNotes(
 
   // 해당 원본 노트를 바라보는 모든 할일 노트 탐색
   const relatedTodoNotes = allNotes.filter(
-    (n) => n.projectId === TODO_PROJECT_ID && n.todoMeta?.sourceNoteId === sourceNote.id
+    (n) => n.projectId === TODO_PROJECT_ID && !n.systemGroupType && n.todoMeta?.sourceNoteId === sourceNote.id
   );
+  if (relatedTodoNotes.length === 0) return { updatedNotes: allNotes, changed: false };
+
+  const blockIdToTodoId = new Map<string, string>();
+  const titleToTodoId = new Map<string, string>();
+  for (const n of relatedTodoNotes) {
+    if (n.todoMeta?.sourceBlockId) blockIdToTodoId.set(n.todoMeta.sourceBlockId, n.id);
+    const ct = cleanTodoSuffix(n.title);
+    if (ct && !titleToTodoId.has(ct)) titleToTodoId.set(ct, n.id);
+  }
 
   for (const item of currentItems) {
     const cleanItemText = cleanTodoSuffix(item.text);
+    if (!cleanItemText) continue;
+
     const matchedTodo = relatedTodoNotes.find(
-      (n) => (item.id && n.todoMeta?.sourceBlockId === item.id) || cleanTodoSuffix(n.title) === cleanItemText
+      (n) =>
+        (item.id && n.todoMeta?.sourceBlockId === item.id) ||
+        cleanTodoSuffix(n.title) === cleanItemText
     );
 
     if (matchedTodo) {
-      const currentStatus = matchedTodo.todoMeta?.status || GROUP_ID_TO_STATUS[matchedTodo.parentId || ''] || 'todo';
-      const shouldBeDone = item.checked;
+      if (item.id) blockIdToTodoId.set(item.id, matchedTodo.id);
+      titleToTodoId.set(cleanItemText, matchedTodo.id);
 
+      const currentStatus: TodoStatus =
+        matchedTodo.todoMeta?.status || GROUP_ID_TO_STATUS[matchedTodo.parentId || ''] || 'todo';
+      const shouldBeDone = Boolean(item.checked);
+
+      let nextStatus: TodoStatus = currentStatus;
       if (shouldBeDone && currentStatus !== 'done') {
-        // 체크됨 -> Done으로 이동 (색상: mint)
-        const updated: Note = {
-          ...matchedTodo,
-          parentId: TODO_GROUP_DONE_ID,
-          color: 'mint',
-          tags: Array.from(new Set([...(matchedTodo.tags || []).filter((t) => !['todo', 'doing', 'done', 'drop'].includes(t)), 'done'])),
-          todoMeta: {
-            ...matchedTodo.todoMeta,
-            status: 'done',
-            completedAt: now,
-          },
-          updatedAt: now,
-        };
-        updatedMap.set(updated.id, updated);
-        changed = true;
+        nextStatus = 'done';
       } else if (!shouldBeDone && currentStatus === 'done') {
-        // 체크 해제됨 -> To Do로 복귀 (색상: blue)
+        nextStatus = 'todo';
+      }
+
+      const parentTodoId =
+        (item.parentBlockId && blockIdToTodoId.get(item.parentBlockId)) ||
+        (item.parentText && titleToTodoId.get(cleanTodoSuffix(item.parentText))) ||
+        null;
+
+      const nextParentId =
+        parentTodoId && parentTodoId !== matchedTodo.id
+          ? parentTodoId
+          : STATUS_TO_GROUP_ID[nextStatus];
+
+      const targetGroup = TODO_GROUPS.find((g) => g.status === nextStatus);
+      const nextColor = targetGroup?.color || matchedTodo.color || 'blue';
+
+      const candidateContent = buildTodoNoteContent(
+        sourceNote,
+        cleanItemText,
+        item.detailBlocks,
+        matchedTodo.createdAt
+      );
+      const existingStripped = JSON.stringify(stripBlockIds(parseBlocks(matchedTodo.content)));
+      const candidateStripped = JSON.stringify(stripBlockIds(parseBlocks(candidateContent)));
+      const contentChanged = existingStripped !== candidateStripped;
+
+      if (
+        matchedTodo.title !== cleanItemText ||
+        contentChanged ||
+        matchedTodo.parentId !== nextParentId ||
+        matchedTodo.color !== nextColor ||
+        currentStatus !== nextStatus
+      ) {
         const updated: Note = {
           ...matchedTodo,
-          parentId: TODO_GROUP_TODO_ID,
-          color: 'blue',
-          tags: Array.from(new Set([...(matchedTodo.tags || []).filter((t) => !['todo', 'doing', 'done', 'drop'].includes(t)), 'todo'])),
+          title: cleanItemText,
+          parentId: nextParentId,
+          color: nextColor,
+          content: contentChanged ? candidateContent : matchedTodo.content,
+          tags: Array.from(
+            new Set([
+              ...(matchedTodo.tags || []).filter((t) => !['todo', 'doing', 'done', 'drop'].includes(t)),
+              '할일',
+              nextStatus,
+            ])
+          ),
           todoMeta: {
             ...matchedTodo.todoMeta,
-            status: 'todo',
-            completedAt: null,
+            sourceNoteId: sourceNote.id,
+            sourceBlockId: item.id || matchedTodo.todoMeta?.sourceBlockId,
+            status: nextStatus,
+            completedAt: nextStatus === 'done' ? matchedTodo.todoMeta?.completedAt || now : null,
           },
           updatedAt: now,
         };

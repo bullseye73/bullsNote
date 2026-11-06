@@ -29,6 +29,7 @@ import {
 import {
   TODO_PROJECT_ID,
   TODO_GROUP_TODO_ID,
+  ExtractedChecklistItem,
   ensureTodoProjectAndGroups,
   createTodoNotes,
   syncTodoStatusToSourceNote,
@@ -194,8 +195,8 @@ export interface NotesActions {
   /** 할일 관리 액션 */
   createTodosFromChecklist(
     sourceNote: Note,
-    items: Array<{ id?: string; text: string; checked?: boolean }>
-  ): { createdCount: number; duplicateCount: number };
+    items: ExtractedChecklistItem[]
+  ): { createdCount: number; updatedCount: number; duplicateCount: number };
   changeTodoStatus(todoNoteId: string, newStatus: TodoStatus): void;
 }
 
@@ -2069,7 +2070,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   }, [createNoteFromGemini]);
 
   const createTodosFromChecklist = useCallback(
-    (sourceNote: Note, items: Array<{ id?: string; text: string; checked?: boolean }>) => {
+    (sourceNote: Note, items: ExtractedChecklistItem[]) => {
       // 1. 할일관리 프로젝트 및 상위 그룹 보장
       const ensured = ensureTodoProjectAndGroups(projectsRef.current, notesRef.current);
       if (ensured.created) {
@@ -2082,18 +2083,24 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         });
       }
 
-      // 2. 할일 노트들 생성
-      const { newNotes, duplicateCount } = createTodoNotes(sourceNote, items, ensured.notes);
-      if (newNotes.length > 0) {
+      // 2. 할일 노트들 생성 및 이미 등록된 할일 노트 업데이트
+      const { newNotes, updatedNotes, updatedCount, duplicateCount } = createTodoNotes(
+        sourceNote,
+        items,
+        ensured.notes,
+      );
+      if (newNotes.length > 0 || updatedNotes.length > 0) {
+        const updatedMap = new Map(updatedNotes.map((n) => [n.id, n]));
         setNotes((prev) => {
-          // ensured notes 중 새로 추가된 그룹 노트들도 포함
           const existingIds = new Set(prev.map((n) => n.id));
           const missingGroupNotes = ensured.notes.filter((n) => !existingIds.has(n.id));
-          return [...newNotes, ...missingGroupNotes, ...prev];
+          const mergedPrev = prev.map((n) => updatedMap.get(n.id) || n);
+          return [...newNotes, ...missingGroupNotes, ...mergedPrev];
         });
         newNotes.forEach((n) => queueNoteSync(n));
+        updatedNotes.forEach((n) => queueNoteSync(n));
       }
-      return { createdCount: newNotes.length, duplicateCount };
+      return { createdCount: newNotes.length, updatedCount, duplicateCount };
     },
     [queueProjectSync, queueNoteSync],
   );
