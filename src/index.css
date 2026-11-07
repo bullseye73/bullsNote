@@ -1019,3 +1019,33 @@ span.shiki,
   border-right-color: rgba(0, 0, 0, 0.12) !important;
   color: rgba(0, 0, 0, 0.35) !important;
 }
+
+/* ==========================================================================
+   모바일(Phone) 및 태블릿(Pad) 반응형 / 터치 최적화 스타일
+   ========================================================================== */
+@media (hover: none), (max-width: 1080px) {
+  /* 터치 기기 및 태블릿/모바일에서는 마우스 호버 없이도 노트/할일 우측 액션 버튼(+, ⋯) 상시 노출 */
+  .note-card-item .note-row-actions {
+    opacity: 1 !important;
+    pointer-events: auto !important;
+  }
+}
+
+@media (max-width: 767px) {
+  /* 스마트폰 화면에서는 인라인 액션 중 보조 버튼(들여쓰기·내어쓰기·핀·별·삭제)을 숨기고 +(하위 추가)와 ⋯(통합 메뉴)만 노출 */
+  .note-card-item .desktop-row-action {
+    display: none !important;
+  }
+
+  /* 스마트폰 에디터 본문 좌우 여백 축소로 가독성 및 입력 영역 극대화 */
+  .bn-editor {
+    padding-inline: 12px !important;
+  }
+
+  /* 에디터 상단 고정 서식 툴바 가로 터치 스크롤 지원 */
+  .editor-toolbar-scroll {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+

@@ -178,6 +178,7 @@ export interface NotesActions {
   saveGoogleConfig(config: Partial<GoogleDriveConfig>): void;
   syncWithGoogleDrive(isSilent?: boolean): Promise<void>;
   loginGoogle(): Promise<{ success: boolean; error?: string; user?: GoogleUserInfo }>;
+  importMobileSyncCode(code: string): Promise<{ success: boolean; error?: string; user?: GoogleUserInfo }>;
   logoutGoogle(): void;
   enterGuestMode(): void;
   setProjectSortOption(opt: SortOption): void;
@@ -926,6 +927,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       }
     }
     setSelectedId(id);
+    if (id && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('bullsnote:mobile-open-editor'));
+    }
   }, []);
 
   const selectedProject = useMemo(
@@ -942,6 +946,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         (n) => !isSystemGroupNote(n) && (n.projectId || DEFAULT_PROJECT_ID) === id,
       );
       setSelectedId(pNotes[0]?.id ?? null);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('bullsnote:mobile-open-list'));
+      }
     },
     [notes],
   );
@@ -1177,6 +1184,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       setNotes((prev) => [n, ...prev]);
       setSelectedId(n.id);
       queueNoteSync(n);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('bullsnote:mobile-open-editor'));
+      }
     },
     [selectedProjectId, notes, queueNoteSync],
   );
@@ -2019,6 +2029,18 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     return res;
   }, [syncWithGoogleDrive]);
 
+  const importMobileSyncCode = useCallback(
+    async (code: string) => {
+      const res = await GoogleDriveService.importMobileSyncCode(code);
+      if (res.success) {
+        setGoogleConfigState(GoogleDriveService.getConfig());
+        void syncWithGoogleDrive(false);
+      }
+      return res;
+    },
+    [syncWithGoogleDrive],
+  );
+
   const logoutGoogle = useCallback(() => {
     GoogleDriveService.logout();
     setGoogleConfigState(GoogleDriveService.getConfig());
@@ -2405,6 +2427,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       saveGoogleConfig,
       syncWithGoogleDrive,
       loginGoogle,
+      importMobileSyncCode,
       logoutGoogle,
       googleSyncModalOpened,
       openGoogleSyncModal,
@@ -2486,6 +2509,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       saveGoogleConfig,
       syncWithGoogleDrive,
       loginGoogle,
+      importMobileSyncCode,
       logoutGoogle,
       projectSortOption,
       noteSortOption,

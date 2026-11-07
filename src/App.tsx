@@ -1,17 +1,20 @@
 // VIEW root: 통합 타이틀바(Unified Titlebar) + 좌측 사이드바 + 노트 목록 + 에디터 (MVC의 V)
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ActionIcon,
   AppShell,
   Avatar,
   Badge,
+  Box,
   Button,
   ColorSchemeScript,
+  Drawer,
   Group,
   Kbd,
   MantineProvider,
   Text,
   Tooltip,
+  UnstyledButton,
   createTheme,
   useComputedColorScheme,
   useMantineColorScheme,
@@ -19,16 +22,20 @@ import {
 import '@mantine/core/styles.css';
 import './index.css';
 import { APP_VERSION } from './model/version';
-import { getProjectPath } from './model/Note';
+import { DEFAULT_PROJECT_ID, getProjectPath } from './model/Note';
 import { SHORTCUTS } from './model/shortcutUtils';
 import { TODO_PROJECT_ID } from './model/TodoService';
-import { useDisclosure, useHotkeys } from '@mantine/hooks';
+import { useDisclosure, useHotkeys, useMediaQuery } from '@mantine/hooks';
 import {
   IconBrandGoogleDrive,
+  IconCalendarEvent,
+  IconChecklist,
   IconChevronRight,
+  IconFolder,
   IconLayoutSidebarLeftCollapse,
   IconListTree,
   IconMoon,
+  IconNotes,
   IconPlus,
   IconRefresh,
   IconSearch,
@@ -161,6 +168,13 @@ function ListPanel() {
 function Shell() {
   const [menuOpened, { toggle: toggleMenu }] = useDisclosure(true);
   const [listOpened, { toggle: toggleList }] = useDisclosure(true);
+  const [tabletDrawerOpened, setTabletDrawerOpened] = useState(false);
+  const [mobilePane, setMobilePane] = useState<'folders' | 'list' | 'editor'>('list');
+
+  // 3단계 반응형 Breakpoint 감지 (Phone < 768px / Pad 768~1080px / Desktop > 1080px)
+  const isPhone = Boolean(useMediaQuery('(max-width: 767px)'));
+  const isTablet = Boolean(useMediaQuery('(min-width: 768px) and (max-width: 1080px)'));
+
   const { toggleColorScheme } = useMantineColorScheme();
   const computedColorScheme = useComputedColorScheme('light', { getInitialValueInEffect: true });
   const isDark = computedColorScheme === 'dark';
@@ -170,9 +184,13 @@ function Shell() {
     selected,
     selectedProject,
     selectedProjectId,
+    selectProject,
+    setShowFavoriteOnly,
     showFavoriteOnly,
     activeTag,
     create,
+    openOrCreateDailyNote,
+    syncWithGoogleDrive,
     googleConnected,
     googleConfig,
     guestMode,
@@ -189,6 +207,41 @@ function Shell() {
     openGeminiModal,
     closeGeminiModal,
   } = useNotes();
+
+  // 모바일/태블릿 뷰 전환 이벤트 수신 (노트 클릭 시 에디터 전환, 폴더 클릭 시 목록 전환)
+  useEffect(() => {
+    const handleOpenEditor = () => {
+      setMobilePane('editor');
+      setTabletDrawerOpened(false);
+    };
+    const handleOpenList = () => {
+      setMobilePane('list');
+      setTabletDrawerOpened(false);
+    };
+    window.addEventListener('bullsnote:mobile-open-editor', handleOpenEditor);
+    window.addEventListener('bullsnote:mobile-open-list', handleOpenList);
+    return () => {
+      window.removeEventListener('bullsnote:mobile-open-editor', handleOpenEditor);
+      window.removeEventListener('bullsnote:mobile-open-list', handleOpenList);
+    };
+  }, []);
+
+  // Android 물리 뒤로가기 및 브라우저 popstate 연동 (Phone 에디터 -> 목록 복귀)
+  useEffect(() => {
+    if (!isPhone) return;
+    if (mobilePane === 'editor') {
+      window.history.pushState({ mobilePane: 'editor' }, '');
+    }
+    const handlePopState = () => {
+      if (mobilePane === 'editor') {
+        setMobilePane('list');
+      } else if (mobilePane === 'folders') {
+        setMobilePane('list');
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [isPhone, mobilePane]);
 
   // 사이드바(프로젝트) 및 노트 목록 동적 너비 리사이징 (localStorage 영구 보존)
   const sidebar = useResizable({
@@ -262,14 +315,265 @@ function Shell() {
     return <LoginView />;
   }
 
+  // 1. 스마트폰 (Phone < 768px): 1단 전체화면 뷰 + 하단 탭 네비게이션
+  if (isPhone) {
+    const regularProjects = projects.filter((p) => p.id !== TODO_PROJECT_ID);
+    const defaultRegularId = regularProjects[0]?.id || DEFAULT_PROJECT_ID;
+
+    return (
+      <Box
+        className="bn-mobile-shell"
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          height: '100dvh',
+          width: '100vw',
+          overflow: 'hidden',
+          backgroundColor: 'var(--bn-surface-editor)',
+        }}
+      >
+        {/* 모바일 상단 헤더 (Safe Area 대응) */}
+        <Box
+          style={{
+            paddingTop: 'env(safe-area-inset-top, 0px)',
+            backgroundColor: 'var(--bn-surface-titlebar)',
+            borderBottom: '1px solid var(--bn-border-subtle)',
+            flexShrink: 0,
+          }}
+        >
+          <Group justify="space-between" align="center" px="sm" h={46} wrap="nowrap">
+            <Group gap={6} wrap="nowrap" style={{ minWidth: 0, flex: 1 }}>
+              <Text fw={800} size="sm" style={{ letterSpacing: '-0.3px', flexShrink: 0 }}>
+                BullsNote
+              </Text>
+              <Badge size="xs" variant="light" color="blue" radius="sm" style={{ maxWidth: 140 }}>
+                {contextLabel}
+              </Badge>
+            </Group>
+
+            <Group gap={6} wrap="nowrap">
+              <ActionIcon
+                size="md"
+                variant="light"
+                color="gray"
+                onClick={openQuickSearchModal}
+                aria-label="검색"
+              >
+                <IconSearch size={16} />
+              </ActionIcon>
+              <ActionIcon
+                size="md"
+                variant="light"
+                color="violet"
+                onClick={() => openGeminiModal('clipboard')}
+                aria-label="AI 어시스턴트"
+              >
+                <IconSparkles size={16} />
+              </ActionIcon>
+              <ActionIcon
+                size="md"
+                variant="light"
+                color="teal"
+                onClick={() => {
+                  if (googleConnected) {
+                    void syncWithGoogleDrive(false);
+                  } else {
+                    openGoogleSyncModal();
+                  }
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  openGoogleSyncModal();
+                }}
+                aria-label="Google Drive 동기화"
+              >
+                {isSyncing ? (
+                  <IconRefresh size={16} className="spin-animation" />
+                ) : user?.picture ? (
+                  <Avatar src={user.picture} size={20} radius="xl" onClick={(e) => { e.stopPropagation(); openGoogleSyncModal(); }} />
+                ) : (
+                  <IconBrandGoogleDrive size={16} />
+                )}
+              </ActionIcon>
+              <ActionIcon
+                size="md"
+                variant="subtle"
+                color="gray"
+                onClick={() => toggleColorScheme()}
+                aria-label="테마 전환"
+              >
+                {isDark ? <IconSun size={16} /> : <IconMoon size={16} />}
+              </ActionIcon>
+            </Group>
+          </Group>
+        </Box>
+
+        {/* 모바일 중앙 1단 컨텐츠 영역 */}
+        <Box style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          <ErrorBoundary title="화면을 표시하지 못했습니다">
+            {mobilePane === 'folders' && (
+              <Box style={{ flex: 1, minHeight: 0, overflow: 'auto', backgroundColor: 'var(--bn-surface-sidebar)' }}>
+                <SidebarView onOpenGoogleSyncModal={openGoogleSyncModal} />
+              </Box>
+            )}
+            {mobilePane === 'list' && (
+              <Box style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+                <ListPanel />
+              </Box>
+            )}
+            {mobilePane === 'editor' && (
+              <Box style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+                <NoteEditorView onBackToList={() => setMobilePane('list')} isCompact={true} />
+              </Box>
+            )}
+          </ErrorBoundary>
+        </Box>
+
+        {/* 모바일 하단 네비게이션 탭 바 (Safe Area 대응) */}
+        <Box
+          className="no-print"
+          style={{
+            paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+            backgroundColor: 'var(--bn-surface-titlebar)',
+            borderTop: '1px solid var(--bn-border-subtle)',
+            flexShrink: 0,
+          }}
+        >
+          <Group grow gap={0} h={54} px={4}>
+            <UnstyledButton
+              onClick={() => setMobilePane('folders')}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 2,
+                height: '100%',
+                color: mobilePane === 'folders' ? 'var(--mantine-color-blue-6)' : 'var(--bn-text-muted)',
+              }}
+            >
+              <IconFolder size={19} />
+              <Text size="10px" fw={mobilePane === 'folders' ? 700 : 500}>
+                폴더/메뉴
+              </Text>
+            </UnstyledButton>
+
+            <UnstyledButton
+              onClick={() => {
+                setShowFavoriteOnly(false);
+                if (selectedProjectId === TODO_PROJECT_ID) {
+                  selectProject(defaultRegularId);
+                }
+                setMobilePane('list');
+              }}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 2,
+                height: '100%',
+                color:
+                  mobilePane === 'list' && !isTodoBoard
+                    ? 'var(--mantine-color-blue-6)'
+                    : 'var(--bn-text-muted)',
+              }}
+            >
+              <IconNotes size={19} />
+              <Text size="10px" fw={mobilePane === 'list' && !isTodoBoard ? 700 : 500}>
+                노트목록
+              </Text>
+            </UnstyledButton>
+
+            <UnstyledButton
+              onClick={() => {
+                setShowFavoriteOnly(false);
+                selectProject(TODO_PROJECT_ID);
+                setMobilePane('list');
+              }}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 2,
+                height: '100%',
+                color:
+                  mobilePane === 'list' && isTodoBoard
+                    ? 'var(--mantine-color-teal-6)'
+                    : 'var(--bn-text-muted)',
+              }}
+            >
+              <IconChecklist size={19} />
+              <Text size="10px" fw={mobilePane === 'list' && isTodoBoard ? 700 : 500}>
+                할일관리
+              </Text>
+            </UnstyledButton>
+
+            <UnstyledButton
+              onClick={() => {
+                openOrCreateDailyNote();
+                setMobilePane('editor');
+              }}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 2,
+                height: '100%',
+                color: 'var(--bn-text-muted)',
+              }}
+            >
+              <IconCalendarEvent size={19} />
+              <Text size="10px" fw={500}>
+                오늘노트
+              </Text>
+            </UnstyledButton>
+
+            <UnstyledButton
+              onClick={() => {
+                create(null);
+                setMobilePane('editor');
+              }}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 2,
+                height: '100%',
+                color: mobilePane === 'editor' ? 'var(--mantine-color-blue-6)' : 'var(--bn-text-muted)',
+              }}
+            >
+              <IconPlus size={19} />
+              <Text size="10px" fw={mobilePane === 'editor' ? 700 : 500}>
+                {isTodoBoard ? '새 할일' : '새 노트'}
+              </Text>
+            </UnstyledButton>
+          </Group>
+        </Box>
+
+        <GoogleSyncModal opened={googleSyncModalOpened} onClose={closeGoogleSyncModal} />
+        <QuickSearchModal opened={quickSearchModalOpened} onClose={closeQuickSearchModal} />
+        <GeminiAiModal opened={geminiModalOpened} onClose={closeGeminiModal} initialTab={geminiModalTab} />
+      </Box>
+    );
+  }
+
+  // 2. 태블릿(Pad: 768~1080px, 2단 분할 + 폴더 드로어) 및 데스크톱(> 1080px, 3단 리사이저블)
   return (
     <AppShell
       header={{ height: 40 }}
-      navbar={{
-        width: sidebar.width,
-        breakpoint: 'sm',
-        collapsed: { mobile: !menuOpened, desktop: !menuOpened },
-      }}
+      navbar={
+        isTablet
+          ? undefined
+          : {
+              width: sidebar.width,
+              breakpoint: 'sm',
+              collapsed: { mobile: !menuOpened, desktop: !menuOpened },
+            }
+      }
       padding={0}
       styles={{
         header: {
@@ -300,12 +604,26 @@ function Shell() {
         {/* 좌측: 패널 토글 + 앱 브랜드 + 현재 위치 브레드크럼 */}
         <Group gap={6} wrap="nowrap" style={{ minWidth: 0, flex: 1 }}>
           <Group gap={4} wrap="nowrap" className="titlebar-no-drag">
-            <Tooltip label={menuOpened ? '사이드바 접기' : '사이드바 펼치기'}>
+            <Tooltip
+              label={
+                isTablet
+                  ? '폴더 및 메뉴 열기'
+                  : menuOpened
+                  ? '사이드바 접기'
+                  : '사이드바 펼치기'
+              }
+            >
               <ActionIcon
                 size="sm"
-                variant={menuOpened ? 'light' : 'subtle'}
-                color={menuOpened ? 'blue' : 'gray'}
-                onClick={toggleMenu}
+                variant={isTablet ? (tabletDrawerOpened ? 'light' : 'subtle') : menuOpened ? 'light' : 'subtle'}
+                color={isTablet ? (tabletDrawerOpened ? 'blue' : 'gray') : menuOpened ? 'blue' : 'gray'}
+                onClick={() => {
+                  if (isTablet) {
+                    setTabletDrawerOpened((v) => !v);
+                  } else {
+                    toggleMenu();
+                  }
+                }}
                 aria-label="사이드바 토글"
               >
                 <IconLayoutSidebarLeftCollapse size={15} />
@@ -459,18 +777,42 @@ function Shell() {
         </Group>
       </AppShell.Header>
 
-      <AppShell.Navbar>
-        <SidebarView onOpenGoogleSyncModal={openGoogleSyncModal} />
-        {menuOpened && (
-          <div style={{ position: 'absolute', top: 0, right: -3, bottom: 0, zIndex: 100 }}>
-            <ResizeSplitter
-              onMouseDown={sidebar.startResize}
-              onDoubleClick={sidebar.resetWidth}
-              title="마우스 드래그로 사이드바 너비 조절 (더블클릭 시 기본값)"
-            />
-          </div>
-        )}
-      </AppShell.Navbar>
+      {!isTablet && (
+        <AppShell.Navbar>
+          <SidebarView onOpenGoogleSyncModal={openGoogleSyncModal} />
+          {menuOpened && (
+            <div style={{ position: 'absolute', top: 0, right: -3, bottom: 0, zIndex: 100 }}>
+              <ResizeSplitter
+                onMouseDown={sidebar.startResize}
+                onDoubleClick={sidebar.resetWidth}
+                title="마우스 드래그로 사이드바 너비 조절 (더블클릭 시 기본값)"
+              />
+            </div>
+          )}
+        </AppShell.Navbar>
+      )}
+
+      {/* 태블릿(Pad) 환경: 좌측 폴더 사이드바를 오버레이 드로어로 제공 */}
+      <Drawer
+        opened={isTablet && tabletDrawerOpened}
+        onClose={() => setTabletDrawerOpened(false)}
+        size={272}
+        padding={0}
+        withCloseButton={false}
+        styles={{
+          body: {
+            height: '100%',
+            backgroundColor: 'var(--bn-surface-sidebar)',
+          },
+        }}
+      >
+        <SidebarView
+          onOpenGoogleSyncModal={() => {
+            setTabletDrawerOpened(false);
+            openGoogleSyncModal();
+          }}
+        />
+      </Drawer>
 
       <AppShell.Main h="calc(100vh - 40px)">
         <ErrorBoundary title="화면을 표시하지 못했습니다">
@@ -480,7 +822,7 @@ function Shell() {
                 <div
                   className="no-print"
                   style={{
-                    width: list.width,
+                    width: isTablet ? 290 : list.width,
                     flexShrink: 0,
                     display: 'flex',
                     flexDirection: 'column',
@@ -489,13 +831,15 @@ function Shell() {
                 >
                   <ListPanel />
                 </div>
-                <div className="no-print">
-                  <ResizeSplitter
-                    onMouseDown={list.startResize}
-                    onDoubleClick={list.resetWidth}
-                    title="마우스 드래그로 노트 목록 너비 조절 (더블클릭 시 기본값)"
-                  />
-                </div>
+                {!isTablet && (
+                  <div className="no-print">
+                    <ResizeSplitter
+                      onMouseDown={list.startResize}
+                      onDoubleClick={list.resetWidth}
+                      title="마우스 드래그로 노트 목록 너비 조절 (더블클릭 시 기본값)"
+                    />
+                  </div>
+                )}
               </>
             )}
             <div

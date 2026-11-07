@@ -277,7 +277,7 @@ class GoogleDriveServiceImpl {
       return tokens.accessToken;
     }
 
-    // Refresh Token이 있으면 갱신 시도
+    // Refresh Token이 있으면 갱신 시도 (Electron IPC 우선, 모바일/웹 환경에서는 OAuth2 REST 직접 호출)
     if (tokens.refreshToken) {
       const cfg = this.getConfig();
       if (window.bullsNote?.googleAuth) {
@@ -294,6 +294,36 @@ class GoogleDriveServiceImpl {
           };
           this.saveTokens(updatedTokens);
           return res.accessToken;
+        }
+      } else if (cfg.customClientId) {
+        try {
+          const bodyParams: Record<string, string> = {
+            client_id: cfg.customClientId,
+            refresh_token: tokens.refreshToken,
+            grant_type: 'refresh_token',
+          };
+          if (cfg.customClientSecret) {
+            bodyParams.client_secret = cfg.customClientSecret;
+          }
+          const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams(bodyParams).toString(),
+          });
+          if (tokenRes.ok) {
+            const data = (await tokenRes.json()) as { access_token?: string; expires_in?: number };
+            if (data.access_token) {
+              const updatedTokens: GoogleTokens = {
+                accessToken: data.access_token,
+                refreshToken: tokens.refreshToken,
+                expiresAt: Date.now() + (data.expires_in || 3600) * 1000,
+              };
+              this.saveTokens(updatedTokens);
+              return data.access_token;
+            }
+          }
+        } catch (err) {
+          console.warn('[GoogleDriveService] 모바일/웹 토큰 갱신 실패:', err);
         }
       }
     }
@@ -501,6 +531,100 @@ class GoogleDriveServiceImpl {
     this.notesFolderId = null;
     this.attachmentsFolderId = null;
     this.indexFileId = null;
+  }
+
+  /**
+   * PC에 연동된 Google OAuth 설정 및 인증 토큰을 모바일(Pad/Phone) 기기에서 원클릭으로 불러올 수 있도록
+   * 인코딩된 연동 코드(BNM1:...)로 내보냅니다.
+   */
+  exportMobileSyncCode(): string | null {
+    const cfg = this.getConfig();
+    const tokens = this.getTokens();
+    if (!cfg.customClientId || !tokens?.accessToken) {
+      return null;
+    }
+    const payload = {
+      v: 1,
+      cId: cfg.customClientId,
+      cSec: cfg.customClientSecret || '',
+      aTok: tokens.accessToken,
+      rTok: tokens.refreshToken || '',
+      exp: tokens.expiresAt,
+      usr: cfg.user || null,
+    };
+    const jsonStr = JSON.stringify(payload);
+    const encoded = btoa(encodeURIComponent(jsonStr));
+    return `BNM1:${encoded}`;
+  }
+
+  /**
+   * PC에서 복사한 모바일 연동 코드(BNM1:...)를 파싱하여 모바일 기기에 Google Drive 연동을 즉시 설정합니다.
+   */
+  async importMobileSyncCode(
+    rawCode: string,
+  ): Promise<{ success: boolean; error?: string; user?: GoogleUserInfo }> {
+    const trimmed = rawCode.trim();
+    if (!trimmed.startsWith('BNM1:')) {
+      return {
+        success: false,
+        error: '유효한 BullsNote 모바일 연동 코드(BNM1:...)가 아닙니다. PC 앱의 [Google Drive 동기화 설정]에서 연동 코드를 다시 복사해주세요.',
+      };
+    }
+
+    try {
+      const base64Part = trimmed.slice('BNM1:'.length).trim();
+      const jsonStr = decodeURIComponent(atob(base64Part));
+      const parsed = JSON.parse(jsonStr) as {
+        v?: number;
+        cId?: string;
+        cSec?: string;
+        aTok?: string;
+        rTok?: string;
+        exp?: number;
+        usr?: GoogleUserInfo | null;
+      };
+
+      if (!parsed.cId || (!parsed.aTok && !parsed.rTok)) {
+        return { success: false, error: '연동 코드의 인증 정보가 손상되었습니다.' };
+      }
+
+      this.saveConfig({
+        enabled: true,
+        customClientId: parsed.cId,
+        customClientSecret: parsed.cSec || undefined,
+        user: parsed.usr || { email: '', name: 'Google 사용자' },
+      });
+
+      this.saveTokens({
+        accessToken: parsed.aTok || '',
+        refreshToken: parsed.rTok || undefined,
+        expiresAt: parsed.exp || 0,
+      });
+
+      // 토큰 유효성 확인 및 필요 시 즉시 갱신
+      const validToken = await this.getValidAccessToken(false);
+      if (!validToken) {
+        return {
+          success: false,
+          error: '연동 코드의 인증 토큰이 만료되었으며 자동 갱신에 실패했습니다. PC에서 다시 로그인한 후 새 연동 코드를 발급받아 주세요.',
+        };
+      }
+
+      this.bullsNoteFolderId = null;
+      this.notesFolderId = null;
+      this.attachmentsFolderId = null;
+      this.indexFileId = null;
+
+      return {
+        success: true,
+        user: parsed.usr || { email: '', name: 'Google 사용자' },
+      };
+    } catch (err) {
+      return {
+        success: false,
+        error: `연동 코드 해석 실패: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
   }
 
   /** Google Drive REST API 호출 헬퍼 */

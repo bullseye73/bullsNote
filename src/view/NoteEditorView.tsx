@@ -1179,7 +1179,13 @@ function BlockEditor({
   );
 }
 
-export function NoteEditorView() {
+export function NoteEditorView({
+  onBackToList,
+  isCompact = false,
+}: {
+  onBackToList?: () => void;
+  isCompact?: boolean;
+} = {}) {
   const {
     ready,
     selected,
@@ -1345,7 +1351,7 @@ export function NoteEditorView() {
   return (
     <Stack
       gap="xs"
-      p="md"
+      p={isCompact ? 'xs' : 'md'}
       h="100%"
       className="note-editor-stack"
       style={{
@@ -1369,7 +1375,20 @@ export function NoteEditorView() {
       {/* 화면용 브레드크럼 및 알람/색상 뱃지 */}
       <div className="no-print">
         <Group justify="space-between" align="center" wrap="nowrap" mb={6}>
-          <Group gap={4} wrap="nowrap" style={{ overflow: 'hidden' }}>
+          <Group gap={4} wrap="nowrap" style={{ overflow: 'hidden', minWidth: 0, flex: 1 }}>
+            {onBackToList && (
+              <Button
+                size="compact-xs"
+                variant="light"
+                color="blue"
+                leftSection={<IconArrowLeft size={13} />}
+                onClick={onBackToList}
+                mr={4}
+                style={{ flexShrink: 0 }}
+              >
+                목록
+              </Button>
+            )}
             {currentProject && (
               <>
                 <Text size="xs" c="dimmed">
@@ -1460,18 +1479,18 @@ export function NoteEditorView() {
           }}
         />
 
-        <Group justify="space-between" wrap="nowrap" mb={6}>
+        <Group justify="space-between" wrap="wrap" gap="xs" mb={6}>
           <TextInput
             value={selected.title}
             onChange={(e) => updateTitle(selected.id, e.currentTarget.value)}
             variant="unstyled"
-            size="xl"
+            size={isCompact ? 'lg' : 'xl'}
             fw={700}
             disabled={isNoteLocked}
             placeholder={isNoteLocked ? '잠긴 노트 (마스터 비밀번호로 잠금 해제 필요)' : '제목 없음 (본문에 #태그 가능)'}
-            style={{ flex: 1 }}
+            style={{ flex: 1, minWidth: isCompact ? '100%' : 180 }}
           />
-          <Group gap="xs" wrap="nowrap">
+          <Group gap={isCompact ? 4 : 'xs'} wrap="nowrap" style={{ marginLeft: 'auto' }}>
             {/* 복사 성공 안내 피드백 */}
             {copyFeedback && (
               <Badge size="sm" color="teal" variant="filled" leftSection={<IconCheck size={12} />}>
@@ -1479,19 +1498,21 @@ export function NoteEditorView() {
               </Badge>
             )}
 
-            {/* 인쇄 및 미리보기 버튼 */}
-            <Tooltip label={isNoteLocked ? '잠긴 상태에서는 인쇄할 수 없습니다' : `인쇄 및 미리보기 (${SHORTCUTS.print})`}>
-              <ActionIcon
-                size="lg"
-                variant="light"
-                color="gray"
-                disabled={isNoteLocked}
-                onClick={() => setPrintPreviewOpen(true)}
-                aria-label="인쇄 및 미리보기"
-              >
-                <IconPrinter size={17} />
-              </ActionIcon>
-            </Tooltip>
+            {/* 인쇄 및 미리보기 버튼 (모바일에서는 공유 메뉴 내 항목으로 통합) */}
+            {!isCompact && (
+              <Tooltip label={isNoteLocked ? '잠긴 상태에서는 인쇄할 수 없습니다' : `인쇄 및 미리보기 (${SHORTCUTS.print})`}>
+                <ActionIcon
+                  size="lg"
+                  variant="light"
+                  color="gray"
+                  disabled={isNoteLocked}
+                  onClick={() => setPrintPreviewOpen(true)}
+                  aria-label="인쇄 및 미리보기"
+                >
+                  <IconPrinter size={17} />
+                </ActionIcon>
+              </Tooltip>
+            )}
 
             {/* 공유 및 내보내기 메뉴 */}
             <Menu position="bottom-end" withArrow shadow="md" withinPortal disabled={isNoteLocked}>
@@ -1617,21 +1638,36 @@ export function NoteEditorView() {
             {/* 알람 리마인더 설정 팝오버 */}
             <ReminderPopover note={selected} disabled={isNoteLocked} />
 
-            <Button
-              size="xs"
-              variant="light"
-              color="gray"
-              disabled={isNoteLocked}
-              leftSection={<IconHistory size={15} />}
-              rightSection={
-                <Badge size="xs" variant="filled" color={selected.history.length > 0 ? 'blue' : 'gray'}>
-                  {selected.history.length}
-                </Badge>
-              }
-              onClick={() => setHistoryOpen(true)}
-            >
-              히스토리
-            </Button>
+            {isCompact ? (
+              <Tooltip label="편집 히스토리">
+                <ActionIcon
+                  size="lg"
+                  variant="light"
+                  color="gray"
+                  disabled={isNoteLocked}
+                  onClick={() => setHistoryOpen(true)}
+                  aria-label="히스토리"
+                >
+                  <IconHistory size={17} />
+                </ActionIcon>
+              </Tooltip>
+            ) : (
+              <Button
+                size="xs"
+                variant="light"
+                color="gray"
+                disabled={isNoteLocked}
+                leftSection={<IconHistory size={15} />}
+                rightSection={
+                  <Badge size="xs" variant="filled" color={selected.history.length > 0 ? 'blue' : 'gray'}>
+                    {selected.history.length}
+                  </Badge>
+                }
+                onClick={() => setHistoryOpen(true)}
+              >
+                히스토리
+              </Button>
+            )}
             <Divider orientation="vertical" color="var(--bn-border-subtle)" />
             <Tooltip label={isNoteLocked ? '잠긴 상태에서는 변경할 수 없습니다' : (selected.pinned ? '핀 해제' : '상단 고정')}>
               <ActionIcon

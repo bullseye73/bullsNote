@@ -36,6 +36,7 @@ import {
   IconChevronUp,
   IconCloudCheck,
   IconDeviceFloppy,
+  IconDeviceMobile,
   IconExternalLink,
   IconInfoCircle,
   IconKey,
@@ -52,7 +53,7 @@ import { APP_VERSION } from '../model/version';
 import { SecretInput } from './SecretInput';
 
 export function LoginView() {
-  const { loginGoogle, saveGoogleConfig, enterGuestMode } = useNotes();
+  const { loginGoogle, importMobileSyncCode, saveGoogleConfig, enterGuestMode } = useNotes();
   const { setColorScheme } = useMantineColorScheme();
   const computedColorScheme = useComputedColorScheme('light', { getInitialValueInEffect: true });
   const isDark = computedColorScheme === 'dark';
@@ -60,6 +61,7 @@ export function LoginView() {
   const cfg = GoogleDriveService.getConfig();
   const [clientId, setClientId] = useState(cfg.customClientId || '');
   const [clientSecret, setClientSecret] = useState(cfg.customClientSecret || '');
+  const [mobileSyncCode, setMobileSyncCode] = useState('');
   const [guideOpened, setGuideOpened] = useState(false);
 
   const isElectronRuntime =
@@ -262,21 +264,57 @@ export function LoginView() {
                 )}
 
                 {!isElectronRuntime && (
-                  <Alert
-                    color="orange"
-                    variant="filled"
-                    icon={<IconAlertCircle size={18} />}
+                  <Card
+                    withBorder
                     radius="md"
+                    p="sm"
                     mt="xs"
-                    styles={{ message: { fontSize: 12, lineHeight: 1.6 } }}
+                    style={{
+                      backgroundColor: isDark ? 'rgba(20, 184, 166, 0.08)' : 'rgba(20, 184, 166, 0.06)',
+                      borderColor: 'var(--mantine-color-teal-5)',
+                    }}
                   >
-                    <strong>⚠️ 현재 웹 브라우저(Chrome/Safari)에서 실행 중입니다!</strong><br />
-                    방금 만드신 <strong>[데스크톱 앱]</strong> 클라이언트 ID는 브라우저에서는 쓸 수 없어 <code>no registered origin (401 오류)</code>가 발생합니다.<br />
-                    👉 <strong>해결 방법:</strong> 터미널에서 <code>npm run electron:dev</code> (또는 <code>npm run dev</code>)를 입력하여 <strong>PC 데스크톱 앱 창</strong>에서 로그인하세요! 별도 설정 없이 바로 로그인됩니다.<br />
-                    <span style={{ fontSize: 11, opacity: 0.9 }}>
-                      (브라우저에서 계속하려면 Google Cloud에서 [웹 애플리케이션] 유형으로 만들고 승인된 자바스크립트 원본에 <code>{currentOrigin}</code>을 등록해야 합니다.)
-                    </span>
-                  </Alert>
+                    <Stack gap={6}>
+                      <Group gap={6}>
+                        <IconDeviceMobile size={16} color="var(--mantine-color-teal-6)" />
+                        <Text size="xs" fw={700} c="teal">
+                          📱 모바일(Pad·Phone) / 웹 원클릭 연동 (권장)
+                        </Text>
+                      </Group>
+                      <Text size="11.5px" c="dimmed" style={{ lineHeight: 1.45 }}>
+                        PC용 BullsNote의 <strong>[Google Drive 동기화 설정] &gt; [모바일 연동 코드 복사]</strong>로 복사한 코드(<code>BNM1:...</code>)를 아래에 붙여넣으면 Google Cloud 추가 설정 없이 즉시 연동됩니다.
+                      </Text>
+                      <Group gap={6} wrap="nowrap">
+                        <TextInput
+                          placeholder="BNM1:... 연동 코드 붙여넣기"
+                          value={mobileSyncCode}
+                          onChange={(e) => setMobileSyncCode(e.currentTarget.value)}
+                          size="xs"
+                          style={{ flex: 1 }}
+                        />
+                        <Button
+                          size="xs"
+                          color="teal"
+                          loading={isLoading}
+                          onClick={async () => {
+                            if (!mobileSyncCode.trim()) {
+                              setErrorMessage('PC에서 복사한 모바일 연동 코드(BNM1:...)를 입력해주세요.');
+                              return;
+                            }
+                            setIsLoading(true);
+                            setErrorMessage(null);
+                            const res = await importMobileSyncCode(mobileSyncCode);
+                            setIsLoading(false);
+                            if (!res.success) {
+                              setErrorMessage(res.error || '모바일 연동 코드 적용 실패');
+                            }
+                          }}
+                        >
+                          원클릭 연동
+                        </Button>
+                      </Group>
+                    </Stack>
+                  </Card>
                 )}
               </Box>
 

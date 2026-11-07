@@ -28,6 +28,8 @@ import {
   IconChevronUp,
   IconCloudCheck,
   IconCloudOff,
+  IconCopy,
+  IconDeviceMobile,
   IconExternalLink,
   IconInfoCircle,
   IconLogout,
@@ -63,6 +65,7 @@ export function GoogleSyncModal({ opened, onClose }: GoogleSyncModalProps) {
     lastSyncedAt,
     syncWithGoogleDrive,
     loginGoogle,
+    importMobileSyncCode,
     logoutGoogle,
     saveGoogleConfig,
   } = useNotes();
@@ -74,6 +77,8 @@ export function GoogleSyncModal({ opened, onClose }: GoogleSyncModalProps) {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [mobileCodeCopied, setMobileCodeCopied] = useState(false);
+  const [mobileCodeInput, setMobileCodeInput] = useState('');
 
   useEffect(() => {
     if (opened) {
@@ -208,6 +213,24 @@ export function GoogleSyncModal({ opened, onClose }: GoogleSyncModalProps) {
                   <Button
                     size="compact-xs"
                     variant="light"
+                    color="teal"
+                    leftSection={mobileCodeCopied ? <IconCheck size={13} /> : <IconDeviceMobile size={13} />}
+                    onClick={() => {
+                      const code = GoogleDriveService.exportMobileSyncCode();
+                      if (!code) {
+                        alert('연동 코드를 생성할 수 없습니다. 다시 로그인해주세요.');
+                        return;
+                      }
+                      void navigator.clipboard.writeText(code);
+                      setMobileCodeCopied(true);
+                      setTimeout(() => setMobileCodeCopied(false), 3000);
+                    }}
+                  >
+                    {mobileCodeCopied ? '모바일 코드 복사됨!' : '모바일 연동 코드 복사'}
+                  </Button>
+                  <Button
+                    size="compact-xs"
+                    variant="light"
                     color="blue"
                     leftSection={
                       isSyncing ? (
@@ -314,6 +337,38 @@ export function GoogleSyncModal({ opened, onClose }: GoogleSyncModalProps) {
               >
                 Google 계정으로 로그인 & 연동
               </Button>
+
+              <Divider w="100%" label="또는 PC에서 복사한 모바일 연동 코드 입력" labelPosition="center" my={4} />
+
+              <Group gap="xs" w="100%" wrap="nowrap">
+                <TextInput
+                  placeholder="BNM1:... 연동 코드 붙여넣기"
+                  value={mobileCodeInput}
+                  onChange={(e) => setMobileCodeInput(e.currentTarget.value)}
+                  size="xs"
+                  style={{ flex: 1 }}
+                />
+                <Button
+                  size="xs"
+                  variant="light"
+                  color="teal"
+                  loading={isLoggingIn}
+                  onClick={async () => {
+                    if (!mobileCodeInput.trim()) return;
+                    setIsLoggingIn(true);
+                    setLoginError(null);
+                    const res = await importMobileSyncCode(mobileCodeInput);
+                    setIsLoggingIn(false);
+                    if (!res.success) {
+                      setLoginError(res.error || '연동 코드 적용에 실패했습니다.');
+                    } else {
+                      setMobileCodeInput('');
+                    }
+                  }}
+                >
+                  즉시 연동
+                </Button>
+              </Group>
             </Stack>
           )}
         </Paper>

@@ -1,0 +1,26 @@
+{
+  "name": "BullsNote - 지식관리 & 할일 메모장",
+  "short_name": "BullsNote",
+  "description": "Google Drive 연동 크로스플랫폼 지식관리 & 할일 메모장 (Desktop · Pad · Phone)",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0f172a",
+  "theme_color": "#228be6",
+  "icons": [
+    {
+      "src": "./icon.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
+

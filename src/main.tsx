@@ -24,3 +24,19 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   </React.StrictMode>,
 );
 
+// 웹/모바일 PWA 환경(HTTPS)에서 Service Worker 등록 (Electron 및 로컬 개발 서버 제외)
+if (
+  import.meta.env.PROD &&
+  typeof window !== 'undefined' &&
+  'serviceWorker' in navigator &&
+  !window.bullsNote &&
+  (window.location.protocol === 'https:' || window.location.hostname === 'localhost')
+) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch((err) => {
+      console.warn('[PWA] Service Worker 등록 생략:', err);
+    });
+  });
+}
+
+

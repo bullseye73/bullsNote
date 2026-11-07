@@ -117,7 +117,7 @@ function RowActions({
           <IconPlus size={13} />
         </ActionIcon>
       </Tooltip>
-      {/* 이동: 들여쓰기 */}
+      {/* 이동: 들여쓰기 (데스크톱 인라인 노출, 모바일은 ⋯ 메뉴 내 제공) */}
       <Tooltip
         label={
           isSystemGroup
@@ -130,6 +130,7 @@ function RowActions({
         <ActionIcon
           size="xs"
           variant="subtle"
+          className="desktop-row-action"
           disabled={isSystemGroup || !hasPrevSibling || isNoteLocked}
           onClick={() => indent(id)}
           aria-label="들여쓰기"
@@ -157,6 +158,7 @@ function RowActions({
         <ActionIcon
           size="xs"
           variant="subtle"
+          className="desktop-row-action"
           disabled={isSystemGroup || !hasParent || isNoteLocked}
           onClick={() => outdent(id)}
           aria-label="내어쓰기"
@@ -187,6 +189,7 @@ function RowActions({
           size="xs"
           variant={note.pinned ? 'filled' : 'subtle'}
           color={note.pinned ? 'blue' : undefined}
+          className="desktop-row-action"
           disabled={isSystemGroup || isNoteLocked}
           onClick={() => togglePin(id)}
           aria-label="핀"
@@ -214,6 +217,7 @@ function RowActions({
           size="xs"
           variant={note.favorite ? 'filled' : 'subtle'}
           color={note.favorite ? 'yellow' : undefined}
+          className="desktop-row-action"
           disabled={isSystemGroup || isNoteLocked}
           onClick={() => toggleFavorite(id)}
           aria-label="즐겨찾기"
@@ -231,6 +235,7 @@ function RowActions({
             size="xs"
             variant="subtle"
             color="red"
+            className="desktop-row-action"
             disabled={isNoteLocked}
             onClick={handleDelete}
             aria-label="삭제"
@@ -311,11 +316,42 @@ function RowActions({
               <Menu.Divider />
             </>
           )}
-          <Menu.Label>노트 관리</Menu.Label>
+          <Menu.Label>노트 관리 및 계층 제어</Menu.Label>
+          <Menu.Item leftSection={<IconPlus size={14} />} onClick={() => create(id)}>
+            하위 노트(할일) 추가
+          </Menu.Item>
           {!isSystemGroup && (
-            <Menu.Item leftSection={<IconCopy size={14} />} onClick={() => duplicate(id)}>
-              복제
-            </Menu.Item>
+            <>
+              <Menu.Item
+                leftSection={<IconIndentIncrease size={14} />}
+                disabled={!hasPrevSibling}
+                onClick={() => indent(id)}
+              >
+                들여쓰기 (하위로 이동)
+              </Menu.Item>
+              <Menu.Item
+                leftSection={<IconIndentDecrease size={14} />}
+                disabled={!hasParent}
+                onClick={() => outdent(id)}
+              >
+                내어쓰기 (상위로 이동)
+              </Menu.Item>
+              <Menu.Item
+                leftSection={<IconPin size={14} />}
+                onClick={() => togglePin(id)}
+              >
+                {note.pinned ? '상단 고정 해제' : '상단 고정'}
+              </Menu.Item>
+              <Menu.Item
+                leftSection={<IconStar size={14} />}
+                onClick={() => toggleFavorite(id)}
+              >
+                {note.favorite ? '즐겨찾기 해제' : '즐겨찾기 등록'}
+              </Menu.Item>
+              <Menu.Item leftSection={<IconCopy size={14} />} onClick={() => duplicate(id)}>
+                복제
+              </Menu.Item>
+            </>
           )}
           {/* 시스템 그룹 노트인 경우 이동/삭제 차단 */}
           {!isSystemGroup && projects.length > 1 && (

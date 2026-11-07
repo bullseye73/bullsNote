@@ -23,6 +23,6 @@ export default defineConfig({
     // 컨텍스트 공유 라이브러리의 중복 복사본 로딩 방지 (blank/SideMenu 오류 예방)
     dedupe: ['react', 'react-dom', '@blocknote/core', '@blocknote/react'],
   },
-  server: { port: 5190 },
+  server: { port: 5190, host: true },
   build: { outDir: 'dist', emptyOutDir: true },
 });
