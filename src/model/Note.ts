@@ -27,8 +27,8 @@ export const DEFAULT_PROJECTS: Project[] = [
     name: '기본 프로젝트',
     icon: '📁',
     parentId: null,
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
+    createdAt: 1700000000000,
+    updatedAt: 1700000000000,
   },
 ];
 

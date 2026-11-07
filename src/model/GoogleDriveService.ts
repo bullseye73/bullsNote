@@ -744,6 +744,23 @@ class GoogleDriveServiceImpl {
     return null;
   }
 
+  /** notes 폴더 내 존재하는 모든 개별 노트 파일(note_*.json) 목록 조회 (인덱스 유실/고아 노트 자동 복구용) */
+  private async listNoteFilesInFolder(
+    notesFolderId: string,
+  ): Promise<Array<{ id: string; name: string; modifiedTime: string }>> {
+    try {
+      const q = `'${notesFolderId}' in parents and name contains 'note_' and trashed = false`;
+      const res = await this.driveFetch(
+        `/files?q=${encodeURIComponent(q)}&pageSize=500&fields=files(id,name,modifiedTime)`,
+      );
+      if (!res.ok) return [];
+      const data = await res.json();
+      return Array.isArray(data.files) ? data.files : [];
+    } catch {
+      return [];
+    }
+  }
+
   /** JSON 파일 다운로드 헬퍼 */
   private async downloadJsonFile<T>(fileId: string, label: string): Promise<T | null> {
     const res = await this.driveFetch(`/files/${fileId}?alt=media`);
@@ -1073,7 +1090,13 @@ class GoogleDriveServiceImpl {
         };
       }
 
-      // --- 2. 프로젝트 3-Way 병합 ---
+      // --- 2. 프로젝트 3-Way 병합 (Google Drive 스토리지 데이터 우선 정책) ---
+      const SEED_NOTE_IDS = new Set(['seed-1', 'seed-1-1', 'seed-2']);
+      const isInitialLocalSync =
+        !this.getConfig().lastSyncedAt && Object.keys(syncedMap).length === 0;
+      const isDefaultPlaceholderProject = (p: Project) =>
+        p.id === 'default' && p.name === '기본 프로젝트';
+
       const projectMap = new Map<string, Project>();
       const localDeletedProjectIds = new Set(deletedRecords.projects.map((r) => r.id));
       const remoteDeletedProjectMap = new Map(
@@ -1082,7 +1105,7 @@ class GoogleDriveServiceImpl {
 
       for (const rp of remoteIndex.projects || []) {
         const localDel = deletedRecords.projects.find((d) => d.id === rp.id);
-        if (localDel && localDel.deletedAt >= rp.updatedAt) {
+        if (!isInitialLocalSync && localDel && localDel.deletedAt >= rp.updatedAt) {
           shouldUpdateIndex = true;
           continue;
         }
@@ -1098,8 +1121,24 @@ class GoogleDriveServiceImpl {
 
         const existing = projectMap.get(lp.id);
         if (!existing) {
+          // 최초 동기화 시 원격 스토리지에 이미 프로젝트가 존재한다면 로컬 기본 플레이스홀더는 추가하지 않음
+          if (isInitialLocalSync && isDefaultPlaceholderProject(lp) && projectMap.size > 0) {
+            hasRemoteChanges = true;
+            continue;
+          }
           projectMap.set(lp.id, lp);
           shouldUpdateIndex = true;
+        } else if (isDefaultPlaceholderProject(lp) && !isDefaultPlaceholderProject(existing)) {
+          // 로컬이 기본값('기본 프로젝트')이고 스토리지가 사용자 지정 폴더명(예: '01_Projects')인 경우:
+          // 타임스탬프와 무관하게 무조건 스토리지 폴더명을 우선 유지!
+          hasRemoteChanges = true;
+        } else if (!isDefaultPlaceholderProject(lp) && isDefaultPlaceholderProject(existing)) {
+          // 반대로 로컬에서 폴더명을 변경했고 원격이 아직 '기본 프로젝트'인 경우 로컬 변경 반영
+          projectMap.set(lp.id, lp);
+          shouldUpdateIndex = true;
+        } else if (isInitialLocalSync) {
+          // 새 기기/브라우저 최초 동기화 시에는 무조건 스토리지(existing) 데이터를 우선!
+          hasRemoteChanges = true;
         } else if (lp.updatedAt > existing.updatedAt) {
           projectMap.set(lp.id, lp);
           shouldUpdateIndex = true;
@@ -1109,12 +1148,56 @@ class GoogleDriveServiceImpl {
       }
       const mergedProjects = Array.from(projectMap.values());
 
+      // 로컬 프로젝트 목록과 병합된 프로젝트 목록이 다르면 UI/스토리지 즉시 갱신 보장
+      if (
+        mergedProjects.length !== localProjects.length ||
+        mergedProjects.some((mp, idx) => {
+          const lp = localProjects[idx];
+          return (
+            !lp ||
+            mp.id !== lp.id ||
+            mp.name !== lp.name ||
+            mp.icon !== lp.icon ||
+            (mp.parentId ?? null) !== (lp.parentId ?? null)
+          );
+        })
+      ) {
+        hasRemoteChanges = true;
+      }
+
       // --- 3. 개별 노트 증분 비교 및 동기화 (변경된 노트만 업로드/다운로드) ---
       const nextNoteIndex: Record<string, RemoteNoteIndexEntry> = { ...(remoteIndex.noteIndex || {}) };
       const localNoteMap = new Map<string, Note>(localNotes.map((n) => [n.id, n]));
       const localDeletedNoteMap = new Map(deletedRecords.notes.map((r) => [r.id, r.deletedAt]));
       const remoteDeletedNoteMap = new Map(
         (remoteIndex.deletedNotes || []).map((r) => [r.id, r.deletedAt]),
+      );
+
+      // 3-0. 스토리지(BullsNote/notes/) 내 고아 노트 파일(index.json에서 누락된 파일) 자동 스캔 및 복원
+      const storageNoteFiles = await this.listNoteFilesInFolder(notesFolderId);
+      for (const sf of storageNoteFiles) {
+        const match = /^note_(.+)\.json$/.exec(sf.name);
+        if (!match) continue;
+        const noteId = match[1];
+        if (SEED_NOTE_IDS.has(noteId)) continue;
+        if (nextNoteIndex[noteId]) continue;
+        if (localDeletedNoteMap.has(noteId) || remoteDeletedNoteMap.has(noteId)) continue;
+
+        const restoredModifiedMs = sf.modifiedTime ? new Date(sf.modifiedTime).getTime() : Date.now();
+        const restoredEntry: RemoteNoteIndexEntry = {
+          id: noteId,
+          fileId: sf.id,
+          updatedAt: Number.isFinite(restoredModifiedMs) ? restoredModifiedMs : Date.now(),
+          title: noteId,
+          projectId: 'default',
+        };
+        nextNoteIndex[noteId] = restoredEntry;
+        remoteIndex.noteIndex = nextNoteIndex;
+        shouldUpdateIndex = true;
+      }
+
+      const remoteHasRealNotes = Object.keys(remoteIndex.noteIndex || {}).some(
+        (id) => !SEED_NOTE_IDS.has(id),
       );
 
       const finalNotesMap = new Map<string, Note>();
@@ -1126,7 +1209,7 @@ class GoogleDriveServiceImpl {
       // 3-1. 원격 인덱스에 있는 노트들 검사
       for (const [noteId, remoteEntry] of Object.entries(remoteIndex.noteIndex || {})) {
         const localDelAt = localDeletedNoteMap.get(noteId);
-        if (localDelAt && localDelAt >= remoteEntry.updatedAt) {
+        if (!isInitialLocalSync && localDelAt && localDelAt >= remoteEntry.updatedAt) {
           // 로컬에서 삭제된 노트 -> 원격 파일도 삭제 예약 및 인덱스에서 제거
           delete nextNoteIndex[noteId];
           if (remoteEntry.fileId) toDeleteRemoteFileIds.push(remoteEntry.fileId);
@@ -1139,8 +1222,8 @@ class GoogleDriveServiceImpl {
         if (!localNote) {
           // 로컬에 없는 원격 신규 노트 -> 다운로드 대상
           toDownload.push(remoteEntry);
-        } else if (remoteEntry.updatedAt > localNote.updatedAt) {
-          // 원격이 더 최신인 노트 -> 다운로드 대상
+        } else if (isInitialLocalSync || remoteEntry.updatedAt > localNote.updatedAt) {
+          // 최초 동기화이거나 원격이 더 최신인 노트 -> 스토리지 데이터 우선 다운로드
           toDownload.push(remoteEntry);
         } else if (localNote.updatedAt > remoteEntry.updatedAt) {
           // 로컬이 더 최신인 노트 -> 업로드 대상
@@ -1160,6 +1243,12 @@ class GoogleDriveServiceImpl {
       for (const ln of localNotes) {
         if (remoteIndex.noteIndex && remoteIndex.noteIndex[ln.id]) {
           continue; // 이미 위 3-1에서 처리됨
+        }
+        // 원격 스토리지에 실제 사용자 노트가 존재하거나 최초 동기화인 경우, 로컬 초기 샘플 노트(seed-*)는 업로드하지 않고 폐기!
+        if (SEED_NOTE_IDS.has(ln.id) && (remoteHasRealNotes || isInitialLocalSync)) {
+          delete syncedMap[ln.id];
+          hasRemoteChanges = true;
+          continue;
         }
         const remoteDelAt = remoteDeletedNoteMap.get(ln.id);
         if (remoteDelAt && remoteDelAt >= ln.updatedAt) {
@@ -1208,6 +1297,13 @@ class GoogleDriveServiceImpl {
               syncedAt: downloaded.updatedAt,
             };
             finalNotesMap.set(downloaded.id, syncedNote);
+            nextNoteIndex[downloaded.id] = {
+              id: downloaded.id,
+              fileId: entry.fileId,
+              updatedAt: downloaded.updatedAt,
+              title: downloaded.title,
+              projectId: downloaded.projectId || 'default',
+            };
             syncedMap[downloaded.id] = { syncedAt: downloaded.updatedAt, fileId: entry.fileId };
             downloadedCount += 1;
             hasRemoteChanges = true;

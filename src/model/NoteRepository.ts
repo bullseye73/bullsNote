@@ -167,7 +167,7 @@ export const NoteRepository = {
 };
 
 export function seedNotes(): Note[] {
-  const now = Date.now();
+  const now = 1700000000000;
   return [
     {
       id: 'seed-1',
