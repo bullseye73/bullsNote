@@ -78,7 +78,34 @@ export function GoogleSyncModal({ opened, onClose }: GoogleSyncModalProps) {
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [mobileCodeCopied, setMobileCodeCopied] = useState(false);
+  const [exportedMobileCode, setExportedMobileCode] = useState<string | null>(null);
   const [mobileCodeInput, setMobileCodeInput] = useState('');
+
+  const copyTextWithFallback = async (text: string): Promise<boolean> => {
+    try {
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch {
+      /* HTTP(비보안 컨텍스트) 환경 등에서는 아래 textarea 폴백 사용 */
+    }
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.top = '-9999px';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      return ok;
+    } catch {
+      return false;
+    }
+  };
 
   useEffect(() => {
     if (opened) {
@@ -139,10 +166,10 @@ export function GoogleSyncModal({ opened, onClose }: GoogleSyncModalProps) {
   // 마지막 동기화 시간 텍스트 포맷
   const lastSyncText = lastSyncedAt
     ? new Date(lastSyncedAt).toLocaleTimeString('ko-KR', {
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-      })
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    })
     : '기록 없음';
 
   const user = googleConfig?.user;
@@ -215,13 +242,14 @@ export function GoogleSyncModal({ opened, onClose }: GoogleSyncModalProps) {
                     variant="light"
                     color="teal"
                     leftSection={mobileCodeCopied ? <IconCheck size={13} /> : <IconDeviceMobile size={13} />}
-                    onClick={() => {
+                    onClick={async () => {
                       const code = GoogleDriveService.exportMobileSyncCode();
                       if (!code) {
                         alert('연동 코드를 생성할 수 없습니다. 다시 로그인해주세요.');
                         return;
                       }
-                      void navigator.clipboard.writeText(code);
+                      setExportedMobileCode(code);
+                      await copyTextWithFallback(code);
                       setMobileCodeCopied(true);
                       setTimeout(() => setMobileCodeCopied(false), 3000);
                     }}
@@ -255,6 +283,44 @@ export function GoogleSyncModal({ opened, onClose }: GoogleSyncModalProps) {
                   </Button>
                 </Group>
               </Group>
+
+              {exportedMobileCode && (
+                <Paper p="xs" radius="sm" withBorder style={{ backgroundColor: 'rgba(20, 184, 166, 0.06)' }}>
+                  <Stack gap={4}>
+                    <Group justify="space-between" align="center">
+                      <Text size="11px" fw={700} c="teal">
+                        📱 모바일 원클릭 연동 코드 (다른 폰/태블릿에 전달하여 붙여넣기)
+                      </Text>
+                      <Button
+                        size="compact-xs"
+                        variant="subtle"
+                        color="teal"
+                        leftSection={<IconCopy size={12} />}
+                        onClick={async () => {
+                          await copyTextWithFallback(exportedMobileCode);
+                          setMobileCodeCopied(true);
+                          setTimeout(() => setMobileCodeCopied(false), 3000);
+                        }}
+                      >
+                        다시 복사
+                      </Button>
+                    </Group>
+                    <TextInput
+                      value={exportedMobileCode}
+                      readOnly
+                      size="xs"
+                      onFocus={(e) => e.currentTarget.select()}
+                      onClick={(e) => e.currentTarget.select()}
+                      styles={{
+                        input: {
+                          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                          fontSize: 11,
+                        },
+                      }}
+                    />
+                  </Stack>
+                </Paper>
+              )}
 
               {syncError && (
                 <Alert

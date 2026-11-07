@@ -540,40 +540,111 @@ class GoogleDriveServiceImpl {
   exportMobileSyncCode(): string | null {
     const cfg = this.getConfig();
     const tokens = this.getTokens();
-    if (!cfg.customClientId || !tokens?.accessToken) {
+    if (!cfg.customClientId || (!tokens?.refreshToken && !tokens?.accessToken)) {
       return null;
     }
+    // 메신저/SMS 전송 시 길이 제한으로 잘리는 문제를 방지하기 위해
+    // refreshToken이 있는 경우 불필요하게 긴 accessToken(aTok)과 프로필 이미지 URL은 제외하여 코드 길이를 최소화합니다.
+    const hasRefresh = Boolean(tokens.refreshToken);
+    const compactUser = cfg.user
+      ? { email: cfg.user.email, name: cfg.user.name }
+      : null;
     const payload = {
       v: 1,
       cId: cfg.customClientId,
       cSec: cfg.customClientSecret || '',
-      aTok: tokens.accessToken,
+      aTok: hasRefresh ? '' : tokens.accessToken || '',
       rTok: tokens.refreshToken || '',
-      exp: tokens.expiresAt,
-      usr: cfg.user || null,
+      exp: hasRefresh ? 0 : tokens.expiresAt || 0,
+      usr: compactUser,
     };
     const jsonStr = JSON.stringify(payload);
-    const encoded = btoa(encodeURIComponent(jsonStr));
+    const bytes = new TextEncoder().encode(jsonStr);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    const encoded = btoa(binary);
     return `BNM1:${encoded}`;
   }
 
   /**
    * PC에서 복사한 모바일 연동 코드(BNM1:...)를 파싱하여 모바일 기기에 Google Drive 연동을 즉시 설정합니다.
+   * 메신저(카카오톡, 문자, 메모장 등) 전달 과정에서 섞인 줄바꿈·공백·특수문자·앞뒤 안내 문구를 자동으로 정제합니다.
    */
   async importMobileSyncCode(
     rawCode: string,
   ): Promise<{ success: boolean; error?: string; user?: GoogleUserInfo }> {
-    const trimmed = rawCode.trim();
-    if (!trimmed.startsWith('BNM1:')) {
+    // 제로폭 공백 및 양끝 따옴표/백틱 제거
+    const cleaned = rawCode
+      .replace(/[\u200B-\u200D\uFEFF\u2060]/g, '')
+      .trim()
+      .replace(/^['"`]+|['"`]+$/g, '')
+      .trim();
+
+    if (!cleaned) {
       return {
         success: false,
-        error: '유효한 BullsNote 모바일 연동 코드(BNM1:...)가 아닙니다. PC 앱의 [Google Drive 동기화 설정]에서 연동 코드를 다시 복사해주세요.',
+        error: '모바일 연동 코드(BNM1:...)를 입력해주세요.',
       };
     }
 
+    if (cleaned.includes('.apps.googleusercontent.com') && !/bnm1:/i.test(cleaned)) {
+      return {
+        success: false,
+        error:
+          '입력된 값은 모바일 연동 코드(BNM1:...)가 아니라 Google OAuth Client ID입니다. PC/기존 기기의 [Google Drive 동기화 설정] > [모바일 연동 코드 복사]에서 복사한 BNM1:... 코드를 붙여넣거나, 위쪽 Google OAuth Client ID 입력란을 이용해주세요.',
+      };
+    }
+
+    if (/^https?:\/\//i.test(cleaned) && !/bnm1:/i.test(cleaned)) {
+      return {
+        success: false,
+        error: `클립보드에 웹 주소(${cleaned.slice(0, 32)}...)가 복사되어 있습니다. PC 앱의 [Google Drive 동기화 설정]에서 [모바일 연동 코드 복사] 버튼을 눌러 BNM1:... 코드를 다시 복사해주세요.`,
+      };
+    }
+
+    // 문자열 내 BNM1: 접두사 위치 탐색 (앞에 다른 텍스트가 섞여 있거나 줄바꿈이 포함된 경우에도 추출)
+    let base64Part = '';
+    const prefixIdx = cleaned.toUpperCase().indexOf('BNM1:');
+    if (prefixIdx !== -1) {
+      base64Part = cleaned.slice(prefixIdx + 'BNM1:'.length).replace(/\s+/g, '');
+    } else {
+      // 접두사(BNM1:) 없이 Base64 본문(eyJ... 또는 JTdC...)만 복사된 경우 자동 허용
+      const compactCandidate = cleaned.replace(/\s+/g, '');
+      if (/^[A-Za-z0-9+/=%_-]{24,}$/.test(compactCandidate)) {
+        base64Part = compactCandidate;
+      } else {
+        const preview = cleaned.length > 24 ? `${cleaned.slice(0, 24)}...` : cleaned;
+        return {
+          success: false,
+          error: `유효한 BullsNote 모바일 연동 코드(BNM1:...)가 아닙니다 (현재 입력값: "${preview}"). PC 앱의 [Google Drive 동기화 설정]에서 연동 코드를 다시 복사해주세요.`,
+        };
+      }
+    }
+
     try {
-      const base64Part = trimmed.slice('BNM1:'.length).trim();
-      const jsonStr = decodeURIComponent(atob(base64Part));
+      // URL-safe Base64 문자 및 패딩(=) 보정
+      let normalizedB64 = base64Part.replace(/-/g, '+').replace(/_/g, '/');
+      const padMod = normalizedB64.length % 4;
+      if (padMod > 0) {
+        normalizedB64 += '='.repeat(4 - padMod);
+      }
+
+      const binaryStr = atob(normalizedB64);
+      let jsonStr = '';
+      if (binaryStr.startsWith('%7B') || binaryStr.startsWith('%7b')) {
+        // 구버전 encodeURIComponent 기반 인코딩 호환
+        jsonStr = decodeURIComponent(binaryStr);
+      } else {
+        // 신버전 UTF-8 바이트 스트림 디코딩
+        const bytes = new Uint8Array(binaryStr.length);
+        for (let i = 0; i < binaryStr.length; i++) {
+          bytes[i] = binaryStr.charCodeAt(i);
+        }
+        jsonStr = new TextDecoder().decode(bytes);
+      }
+
       const parsed = JSON.parse(jsonStr) as {
         v?: number;
         cId?: string;
@@ -585,7 +656,7 @@ class GoogleDriveServiceImpl {
       };
 
       if (!parsed.cId || (!parsed.aTok && !parsed.rTok)) {
-        return { success: false, error: '연동 코드의 인증 정보가 손상되었습니다.' };
+        return { success: false, error: '연동 코드의 인증 정보가 손상되었거나 중간에 잘렸습니다. 코드를 다시 복사해주세요.' };
       }
 
       this.saveConfig({
@@ -601,8 +672,8 @@ class GoogleDriveServiceImpl {
         expiresAt: parsed.exp || 0,
       });
 
-      // 토큰 유효성 확인 및 필요 시 즉시 갱신
-      const validToken = await this.getValidAccessToken(false);
+      // 토큰 유효성 확인 및 필요 시(또는 압축 코드로 aTok이 비어 있는 경우) 즉시 갱신
+      const validToken = await this.getValidAccessToken(!parsed.aTok);
       if (!validToken) {
         return {
           success: false,
@@ -622,7 +693,7 @@ class GoogleDriveServiceImpl {
     } catch (err) {
       return {
         success: false,
-        error: `연동 코드 해석 실패: ${err instanceof Error ? err.message : String(err)}`,
+        error: `연동 코드가 중간에 잘렸거나 손상되었습니다 (${err instanceof Error ? err.message : String(err)}). PC에서 연동 코드를 다시 복사해주세요.`,
       };
     }
   }
@@ -1284,11 +1355,11 @@ class GoogleDriveServiceImpl {
             // 로컬 히스토리와 병합하여 로컬 30개 히스토리 보존
             const mergedHistory = localExisting?.history?.length
               ? [
-                  ...(downloaded.history || []),
-                  ...localExisting.history.filter(
-                    (lh) => !(downloaded.history || []).some((dh) => dh.savedAt === lh.savedAt),
-                  ),
-                ].slice(0, 30)
+                ...(downloaded.history || []),
+                ...localExisting.history.filter(
+                  (lh) => !(downloaded.history || []).some((dh) => dh.savedAt === lh.savedAt),
+                ),
+              ].slice(0, 30)
               : downloaded.history || [];
 
             const syncedNote: Note = {
