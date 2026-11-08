@@ -1930,6 +1930,14 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const syncWithGoogleDrive = useCallback(async (isSilent = false) => {
     if (!GoogleDriveService.isConnected()) return;
 
+    // 오프라인 상태일 때 백그라운드(자동/폴링) 동기화는 즉시 건너뛰고, 수동 동기화만 안내 메시지 표시
+    if (GoogleDriveService.isOffline()) {
+      if (!isSilent) {
+        setSyncError('현재 오프라인 상태입니다. 인터넷이 연결되면 자동으로 동기화됩니다.');
+      }
+      return;
+    }
+
     // 이미 동기화가 진행 중인 경우, 사용자가 수동으로 버튼을 눌렀다면 로딩 표시만 활성화하고 대기
     if (isSyncingRef.current) {
       if (!isSilent) {
@@ -1949,10 +1957,24 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     }
     isSyncingRef.current = true;
 
+    // 극단적인 네트워크 지연 시에도 동기화 락(isSyncingRef)이 영구 고착되지 않도록 60초 워치독 적용
+    let watchdogTimer: ReturnType<typeof setTimeout> | null = null;
     try {
       const curNotes = notesRef.current;
       const curProjects = projectsRef.current;
-      const res = await GoogleDriveService.syncAll(curNotes, curProjects);
+      const syncPromise = GoogleDriveService.syncAll(curNotes, curProjects);
+      const timeoutPromise = new Promise<Awaited<ReturnType<typeof GoogleDriveService.syncAll>>>((resolve) => {
+        watchdogTimer = setTimeout(() => {
+          resolve({
+            success: false,
+            error: '네트워크 속도가 매우 느려 동기화 제한 시간(60초)을 초과했습니다. 잠시 후 자동으로 재시도됩니다.',
+            notes: curNotes,
+            projects: curProjects,
+            hasRemoteChanges: false,
+          });
+        }, 60_000);
+      });
+      const res = await Promise.race([syncPromise, timeoutPromise]);
       if (res.success) {
         setSyncError(null);
         setGoogleConfigState(GoogleDriveService.getConfig());
@@ -2006,8 +2028,11 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         setSyncError(res.error || 'Google Drive 동기화 중 오류가 발생했습니다.');
       }
     } catch (err: unknown) {
-      setSyncError(err instanceof Error ? err.message : String(err));
+      if (!isSilent) {
+        setSyncError(err instanceof Error ? err.message : String(err));
+      }
     } finally {
+      if (watchdogTimer) clearTimeout(watchdogTimer);
       setIsSyncing(false);
       isSyncingRef.current = false;
     }

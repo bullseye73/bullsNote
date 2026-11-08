@@ -34,9 +34,15 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 정적 리소스 및 앱 쉘: Network-First (최신 배포본 우선 제공, 오프라인 시 캐시 폴백)
+  // 정적 리소스 및 앱 쉘: Network-First (3.5초 타임아웃 적용으로 저속/Lie-Fi 네트워크에서 앱 실행 ANR 방지 + 오프라인 시 즉시 캐시 폴백)
+  const fetchWithTimeout = (request, timeoutMs = 3500) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    return fetch(request, { signal: controller.signal }).finally(() => clearTimeout(timer));
+  };
+
   event.respondWith(
-    fetch(req)
+    fetchWithTimeout(req, 3500)
       .then((networkRes) => {
         if (networkRes && networkRes.status === 200 && url.origin === self.location.origin) {
           const clone = networkRes.clone();

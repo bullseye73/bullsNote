@@ -137,16 +137,47 @@ function dataUrlToFile(dataUrl: string, fileName: string): File | null {
   }
 }
 
+/** 네트워크 지연/단절 시 무한 대기(ANR) 방지를 위한 타임아웃 fetch 헬퍼 */
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit = {},
+  timeoutMs = 12_000,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: options.signal ?? controller.signal,
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error('네트워크 응답 시간이 초과되었습니다. 인터넷 연결 상태를 확인해주세요.');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 class GoogleDriveServiceImpl {
   private bullsNoteFolderId: string | null = null;
   private notesFolderId: string | null = null;
   private attachmentsFolderId: string | null = null;
   private indexFileId: string | null = null;
   private isSyncing = false;
+  private isCheckingRemote = false;
+  private orphanScanCompleted = false;
+  private refreshTokenPromise: Promise<string | null> | null = null;
 
   /** 노트 내 이미지 표시를 위한 Drive FileId -> ObjectURL 메모리 캐시 */
   private attachmentBlobUrlCache = new Map<string, string>();
   private inFlightBlobPromises = new Map<string, Promise<string>>();
+
+  /** 현재 브라우저/기기가 오프라인 상태인지 즉시 판별 */
+  isOffline(): boolean {
+    return typeof navigator !== 'undefined' && navigator.onLine === false;
+  }
 
   getConfig(): GoogleDriveConfig {
     try {
@@ -267,68 +298,88 @@ class GoogleDriveServiceImpl {
     localStorage.setItem(DELETED_RECORDS_KEY, JSON.stringify({ ...current, projects: filtered }));
   }
 
-  /** 유효한 Access Token 반환 (만료 시 자동 갱신) */
+  /** 유효한 Access Token 반환 (만료 시 자동 갱신 + 동시 갱신 요청 중복 방지) */
   async getValidAccessToken(forceRefresh = false): Promise<string | null> {
     const tokens = this.getTokens();
     if (!tokens) return null;
 
     // 만료 1분 전까지 유효로 판단 (강제 갱신이 아닌 경우)
-    if (!forceRefresh && Date.now() < tokens.expiresAt - 60_000) {
+    if (!forceRefresh && Date.now() < tokens.expiresAt - 60_000 && tokens.accessToken) {
       return tokens.accessToken;
     }
 
-    // Refresh Token이 있으면 갱신 시도 (Electron IPC 우선, 모바일/웹 환경에서는 OAuth2 REST 직접 호출)
-    if (tokens.refreshToken) {
-      const cfg = this.getConfig();
-      if (window.bullsNote?.googleAuth) {
-        const res = await window.bullsNote.googleAuth.refreshToken({
-          clientId: cfg.customClientId,
-          clientSecret: cfg.customClientSecret,
-          refreshToken: tokens.refreshToken,
-        });
-        if (res.success && res.accessToken) {
-          const updatedTokens: GoogleTokens = {
-            accessToken: res.accessToken,
-            refreshToken: tokens.refreshToken,
-            expiresAt: res.expiresAt || Date.now() + 3600 * 1000,
-          };
-          this.saveTokens(updatedTokens);
-          return res.accessToken;
-        }
-      } else if (cfg.customClientId) {
-        try {
-          const bodyParams: Record<string, string> = {
-            client_id: cfg.customClientId,
-            refresh_token: tokens.refreshToken,
-            grant_type: 'refresh_token',
-          };
-          if (cfg.customClientSecret) {
-            bodyParams.client_secret = cfg.customClientSecret;
-          }
-          const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: new URLSearchParams(bodyParams).toString(),
-          });
-          if (tokenRes.ok) {
-            const data = (await tokenRes.json()) as { access_token?: string; expires_in?: number };
-            if (data.access_token) {
-              const updatedTokens: GoogleTokens = {
-                accessToken: data.access_token,
-                refreshToken: tokens.refreshToken,
-                expiresAt: Date.now() + (data.expires_in || 3600) * 1000,
-              };
-              this.saveTokens(updatedTokens);
-              return data.access_token;
-            }
-          }
-        } catch (err) {
-          console.warn('[GoogleDriveService] 모바일/웹 토큰 갱신 실패:', err);
-        }
-      }
+    // 오프라인 상태이면 네트워크 갱신을 시도하지 않고 즉시 반환하여 대기 방지
+    if (this.isOffline()) {
+      return tokens.accessToken || null;
     }
 
-    return null;
+    // 이미 진행 중인 토큰 갱신 요청이 있으면 동일 Promise를 공유 (Token Refresh Stampede 방지)
+    if (this.refreshTokenPromise) {
+      return this.refreshTokenPromise;
+    }
+
+    this.refreshTokenPromise = (async () => {
+      try {
+        if (tokens.refreshToken) {
+          const cfg = this.getConfig();
+          if (window.bullsNote?.googleAuth) {
+            const res = await window.bullsNote.googleAuth.refreshToken({
+              clientId: cfg.customClientId,
+              clientSecret: cfg.customClientSecret,
+              refreshToken: tokens.refreshToken,
+            });
+            if (res.success && res.accessToken) {
+              const updatedTokens: GoogleTokens = {
+                accessToken: res.accessToken,
+                refreshToken: tokens.refreshToken,
+                expiresAt: res.expiresAt || Date.now() + 3600 * 1000,
+              };
+              this.saveTokens(updatedTokens);
+              return res.accessToken;
+            }
+          } else if (cfg.customClientId) {
+            try {
+              const bodyParams: Record<string, string> = {
+                client_id: cfg.customClientId,
+                refresh_token: tokens.refreshToken,
+                grant_type: 'refresh_token',
+              };
+              if (cfg.customClientSecret) {
+                bodyParams.client_secret = cfg.customClientSecret;
+              }
+              const tokenRes = await fetchWithTimeout(
+                'https://oauth2.googleapis.com/token',
+                {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                  body: new URLSearchParams(bodyParams).toString(),
+                },
+                10_000,
+              );
+              if (tokenRes.ok) {
+                const data = (await tokenRes.json()) as { access_token?: string; expires_in?: number };
+                if (data.access_token) {
+                  const updatedTokens: GoogleTokens = {
+                    accessToken: data.access_token,
+                    refreshToken: tokens.refreshToken,
+                    expiresAt: Date.now() + (data.expires_in || 3600) * 1000,
+                  };
+                  this.saveTokens(updatedTokens);
+                  return data.access_token;
+                }
+              }
+            } catch (err) {
+              console.warn('[GoogleDriveService] 모바일/웹 토큰 갱신 실패:', err);
+            }
+          }
+        }
+        return null;
+      } finally {
+        this.refreshTokenPromise = null;
+      }
+    })();
+
+    return this.refreshTokenPromise;
   }
 
   /** Google Drive API 에러 응답을 사용자가 이해하고 즉시 조치할 수 있는 한글 메시지로 변환 */
@@ -698,12 +749,17 @@ class GoogleDriveServiceImpl {
     }
   }
 
-  /** Google Drive REST API 호출 헬퍼 */
+  /** Google Drive REST API 호출 헬퍼 (타임아웃 및 오프라인 즉시 차단 포함) */
   private async driveFetch(
     endpoint: string,
     options: RequestInit = {},
     isUpload = false,
+    timeoutMs?: number,
   ): Promise<Response> {
+    if (this.isOffline()) {
+      throw new Error('현재 오프라인 상태입니다. 네트워크 연결 후 다시 시도해주세요.');
+    }
+
     let token = await this.getValidAccessToken(false);
     if (!token) throw new Error('Google 계정 인증이 만료되었거나 연동되지 않았습니다. 다시 로그인해주세요.');
 
@@ -715,13 +771,14 @@ class GoogleDriveServiceImpl {
     const headers = new Headers(options.headers || {});
     headers.set('Authorization', `Bearer ${token}`);
 
-    let res = await fetch(url, { ...options, headers });
+    const effectiveTimeout = timeoutMs ?? (isUpload ? 25_000 : 12_000);
+    let res = await fetchWithTimeout(url, { ...options, headers }, effectiveTimeout);
     if (res.status === 401) {
       const refreshedToken = await this.getValidAccessToken(true);
       if (refreshedToken) {
         token = refreshedToken;
         headers.set('Authorization', `Bearer ${token}`);
-        res = await fetch(url, { ...options, headers });
+        res = await fetchWithTimeout(url, { ...options, headers }, effectiveTimeout);
       }
       if (res.status === 401) {
         throw new Error('Google Drive 인증 토큰이 만료되었습니다. [연동 해제] 후 다시 로그인해주세요.');
@@ -1010,24 +1067,54 @@ class GoogleDriveServiceImpl {
   }
 
   /**
-   * 폴링 시 초경량 변경 감지 (트래픽 최소화)
+   * 폴링 시 초경량 변경 감지 (트래픽 최소화 + 중복 폴링/오프라인 차단 + 5초 타임아웃)
    * 원격 index.json의 modifiedTime만 조회하여 로컬 lastSyncedAt보다 최신인지만 확인
    */
   async hasRemoteChangesQuick(): Promise<boolean> {
-    if (!this.isConnected()) return false;
+    if (!this.isConnected() || this.isOffline() || this.isSyncing || this.isCheckingRemote) {
+      return false;
+    }
+    this.isCheckingRemote = true;
     try {
-      const folderId = await this.getBullsNoteFolderId();
-      const fileInfo = await this.getFileInfoByName(folderId, 'index.json');
-      if (!fileInfo) return false;
+      let modifiedTimeStr: string | null = null;
 
-      this.indexFileId = fileInfo.id;
-      const remoteMtime = new Date(fileInfo.modifiedTime).getTime();
+      // indexFileId가 이미 캐시되어 있으면 단일 경량 요청(5초 타임아웃)으로 즉시 조회
+      if (this.indexFileId) {
+        const res = await this.driveFetch(
+          `/files/${this.indexFileId}?fields=id,modifiedTime,trashed`,
+          {},
+          false,
+          5_000,
+        );
+        if (res.ok) {
+          const info = (await res.json()) as { id?: string; modifiedTime?: string; trashed?: boolean };
+          if (info && !info.trashed && info.modifiedTime) {
+            modifiedTimeStr = info.modifiedTime;
+          } else {
+            this.indexFileId = null;
+          }
+        } else if (res.status === 404) {
+          this.indexFileId = null;
+        }
+      }
+
+      if (!modifiedTimeStr) {
+        const folderId = await this.getBullsNoteFolderId();
+        const fileInfo = await this.getFileInfoByName(folderId, 'index.json');
+        if (!fileInfo) return false;
+        this.indexFileId = fileInfo.id;
+        modifiedTimeStr = fileInfo.modifiedTime;
+      }
+
+      const remoteMtime = new Date(modifiedTimeStr).getTime();
       const lastSyncedAt = this.getConfig().lastSyncedAt || 0;
 
       // 원격 수정 시간이 마지막 동기화 시간보다 3초 이상 최신이면 변경 있음으로 판정
       return remoteMtime > lastSyncedAt + 3000;
     } catch {
       return false;
+    } finally {
+      this.isCheckingRemote = false;
     }
   }
 
@@ -1040,6 +1127,15 @@ class GoogleDriveServiceImpl {
       return {
         success: false,
         error: 'Google 계정이 연동되지 않았습니다.',
+        notes: localNotes,
+        projects: localProjects,
+        hasRemoteChanges: false,
+      };
+    }
+    if (this.isOffline()) {
+      return {
+        success: false,
+        error: '현재 오프라인 상태입니다. 인터넷 연결 시 자동으로 동기화됩니다.',
         notes: localNotes,
         projects: localProjects,
         hasRemoteChanges: false,
@@ -1244,27 +1340,30 @@ class GoogleDriveServiceImpl {
         (remoteIndex.deletedNotes || []).map((r) => [r.id, r.deletedAt]),
       );
 
-      // 3-0. 스토리지(BullsNote/notes/) 내 고아 노트 파일(index.json에서 누락된 파일) 자동 스캔 및 복원
-      const storageNoteFiles = await this.listNoteFilesInFolder(notesFolderId);
-      for (const sf of storageNoteFiles) {
-        const match = /^note_(.+)\.json$/.exec(sf.name);
-        if (!match) continue;
-        const noteId = match[1];
-        if (SEED_NOTE_IDS.has(noteId)) continue;
-        if (nextNoteIndex[noteId]) continue;
-        if (localDeletedNoteMap.has(noteId) || remoteDeletedNoteMap.has(noteId)) continue;
+      // 3-0. 스토리지(BullsNote/notes/) 내 고아 노트 파일(index.json에서 누락된 파일) 자동 스캔 및 복원 (세션당 1회 또는 최초 동기화 시에만 실행하여 저속 네트워크 부하 방지)
+      if (!this.orphanScanCompleted || isInitialLocalSync) {
+        const storageNoteFiles = await this.listNoteFilesInFolder(notesFolderId);
+        this.orphanScanCompleted = true;
+        for (const sf of storageNoteFiles) {
+          const match = /^note_(.+)\.json$/.exec(sf.name);
+          if (!match) continue;
+          const noteId = match[1];
+          if (SEED_NOTE_IDS.has(noteId)) continue;
+          if (nextNoteIndex[noteId]) continue;
+          if (localDeletedNoteMap.has(noteId) || remoteDeletedNoteMap.has(noteId)) continue;
 
-        const restoredModifiedMs = sf.modifiedTime ? new Date(sf.modifiedTime).getTime() : Date.now();
-        const restoredEntry: RemoteNoteIndexEntry = {
-          id: noteId,
-          fileId: sf.id,
-          updatedAt: Number.isFinite(restoredModifiedMs) ? restoredModifiedMs : Date.now(),
-          title: noteId,
-          projectId: 'default',
-        };
-        nextNoteIndex[noteId] = restoredEntry;
-        remoteIndex.noteIndex = nextNoteIndex;
-        shouldUpdateIndex = true;
+          const restoredModifiedMs = sf.modifiedTime ? new Date(sf.modifiedTime).getTime() : Date.now();
+          const restoredEntry: RemoteNoteIndexEntry = {
+            id: noteId,
+            fileId: sf.id,
+            updatedAt: Number.isFinite(restoredModifiedMs) ? restoredModifiedMs : Date.now(),
+            title: noteId,
+            projectId: 'default',
+          };
+          nextNoteIndex[noteId] = restoredEntry;
+          remoteIndex.noteIndex = nextNoteIndex;
+          shouldUpdateIndex = true;
+        }
       }
 
       const remoteHasRealNotes = Object.keys(remoteIndex.noteIndex || {}).some(
@@ -1355,11 +1454,11 @@ class GoogleDriveServiceImpl {
             // 로컬 히스토리와 병합하여 로컬 30개 히스토리 보존
             const mergedHistory = localExisting?.history?.length
               ? [
-                ...(downloaded.history || []),
-                ...localExisting.history.filter(
-                  (lh) => !(downloaded.history || []).some((dh) => dh.savedAt === lh.savedAt),
-                ),
-              ].slice(0, 30)
+                  ...(downloaded.history || []),
+                  ...localExisting.history.filter(
+                    (lh) => !(downloaded.history || []).some((dh) => dh.savedAt === lh.savedAt),
+                  ),
+                ].slice(0, 30)
               : downloaded.history || [];
 
             const syncedNote: Note = {

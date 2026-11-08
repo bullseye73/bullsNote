@@ -109,20 +109,35 @@ function formatCalendarApiError(status: number, rawText: string, context: string
 }
 
 class GoogleCalendarServiceImpl {
-  /** 인증 헤더 포함 fetch (401 만료 시 1회 자동 토큰 갱신 재시도) */
-  private async fetchWithAuth(url: string, init: RequestInit = {}): Promise<Response> {
+  /** 인증 헤더 포함 fetch (10초 타임아웃 + 오프라인 차단 + 401 만료 시 1회 자동 토큰 갱신 재시도) */
+  private async fetchWithAuth(url: string, init: RequestInit = {}, timeoutMs = 10_000): Promise<Response> {
+    if (GoogleDriveService.isOffline()) {
+      throw new Error('현재 오프라인 상태입니다. 인터넷 연결 후 캘린더에 동기화됩니다.');
+    }
+
     let token = await GoogleDriveService.getValidAccessToken(false);
     if (!token) {
       throw new Error('Google 계정이 연동되어 있지 않거나 인증 토큰이 만료되었습니다.');
     }
 
-    const makeRequest = (accessToken: string) => {
+    const makeRequest = async (accessToken: string) => {
       const headers = new Headers(init.headers || {});
       headers.set('Authorization', `Bearer ${accessToken}`);
       if (init.body && !headers.has('Content-Type')) {
         headers.set('Content-Type', 'application/json');
       }
-      return fetch(url, { ...init, headers });
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        return await fetch(url, { ...init, headers, signal: controller.signal });
+      } catch (err) {
+        if (err instanceof Error && err.name === 'AbortError') {
+          throw new Error('Google 캘린더 서버 응답 시간이 초과되었습니다.');
+        }
+        throw err;
+      } finally {
+        clearTimeout(timer);
+      }
     };
 
     let res = await makeRequest(token);

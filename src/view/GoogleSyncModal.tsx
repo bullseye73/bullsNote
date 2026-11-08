@@ -166,10 +166,10 @@ export function GoogleSyncModal({ opened, onClose }: GoogleSyncModalProps) {
   // 마지막 동기화 시간 텍스트 포맷
   const lastSyncText = lastSyncedAt
     ? new Date(lastSyncedAt).toLocaleTimeString('ko-KR', {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-    })
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      })
     : '기록 없음';
 
   const user = googleConfig?.user;

@@ -139,6 +139,7 @@ function registerGoogleAuthIpc(app) {
               method: 'POST',
               headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
               body: tokenParams.toString(),
+              signal: AbortSignal.timeout(12_000),
             });
 
             if (!tokenRes.ok) {
@@ -173,6 +174,7 @@ function registerGoogleAuthIpc(app) {
             try {
               const userRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
                 headers: { Authorization: `Bearer ${accessToken}` },
+                signal: AbortSignal.timeout(8_000),
               });
               if (userRes.ok) {
                 const u = await userRes.json();
@@ -312,6 +314,7 @@ function registerGoogleAuthIpc(app) {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: tokenParams.toString(),
+        signal: AbortSignal.timeout(10_000),
       });
 
       if (!res.ok) {

@@ -107,6 +107,28 @@ export class GeminiService {
     return updated;
   }
 
+  private static async fetchWithTimeout(
+    url: string,
+    init: RequestInit = {},
+    timeoutMs = 15_000,
+  ): Promise<Response> {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      throw new Error('현재 오프라인 상태입니다. 인터넷 연결을 확인해주세요.');
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, { ...init, signal: controller.signal });
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        throw new Error('네트워크 응답 시간이 초과되었습니다. 인터넷 상태를 확인 후 다시 시도해주세요.');
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   /**
    * 해당 API 키로 현재 실제 사용 가능한 Google Gemini 모델 목록을 실시간 조회
    */
@@ -114,7 +136,7 @@ export class GeminiService {
     if (!apiKey.trim()) return [];
     try {
       const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey.trim())}`;
-      const response = await fetch(url);
+      const response = await this.fetchWithTimeout(url, {}, 10_000);
       if (!response.ok) return [];
 
       const data = await response.json();
@@ -148,14 +170,18 @@ export class GeminiService {
     const model = this.cleanModelId(rawModel);
     try {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey.trim())}`;
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: 'Hello, respond with "OK"' }] }],
-          generationConfig: { maxOutputTokens: 10 },
-        }),
-      });
+      const response = await this.fetchWithTimeout(
+        url,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: 'Hello, respond with "OK"' }] }],
+            generationConfig: { maxOutputTokens: 10 },
+          }),
+        },
+        10_000,
+      );
 
       if (!response.ok) {
         const errJson = await response.json().catch(() => ({}));
@@ -194,11 +220,15 @@ export class GeminiService {
       };
     }
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody),
-    });
+    const response = await this.fetchWithTimeout(
+      url,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody),
+      },
+      45_000,
+    );
 
     if (!response.ok) {
       const errJson = await response.json().catch(() => ({}));
