@@ -933,10 +933,6 @@ export function PlannerView() {
             userSelect: 'none',
               }}
             >
-            <div>Task Name (작업명)</div>
-            {!isMobile && <div style={{ textAlign: 'center' }}>Start Date</div>}
-            {!isMobile && <div style={{ textAlign: 'center' }}>Duration (평일)</div>}
-            <div style={{ textAlign: 'center' }}>Due Date · 09시 알림</div>
             <Tooltip label="클릭/터치하여 작업명(Task Name) 기준 오름차순·내림차순 정렬" openDelay={300}>
               <Group
                 gap={4}
