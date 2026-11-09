@@ -875,7 +875,6 @@ function BlockEditor({
                 note.todoMeta?.startDate || toIsoDateLocal(new Date(note.createdAt || Date.now()));
               const dueStr = note.todoMeta?.dueDate || startStr;
               const durDays = note.todoMeta?.durationDays || 1;
-              const useWorking = note.todoMeta?.useWorkingDays !== false;
               const dBadge = getDueDateBadgeInfo(note.todoMeta?.dueDate, effStatus);
 
               return (
@@ -929,17 +928,9 @@ function BlockEditor({
                         color: 'var(--mantine-color-text)',
                       }}
                     />
-                    <Tooltip label="클릭하여 주말·공휴일 제외(평일) / 달력 전체 일수 전환">
-                      <Badge
-                        size="xs"
-                        color={useWorking ? 'teal' : 'gray'}
-                        variant={useWorking ? 'light' : 'outline'}
-                        style={{ cursor: 'pointer' }}
-                        onClick={() => updateTaskSchedule(note.id, { useWorkingDays: !useWorking })}
-                      >
-                        {useWorking ? '평일(주말·공휴일 제외)' : '달력 일수'}
-                      </Badge>
-                    </Tooltip>
+                    <Text size="11px" c="dimmed">
+                      일
+                    </Text>
                   </Group>
 
                   <Group gap={4} wrap="nowrap">
@@ -1092,7 +1083,7 @@ function BlockEditor({
             ) {
               try {
                 editor.focus();
-              } catch {}
+              } catch { }
             }
           }}
           onClickCapture={(e) => {

@@ -30,6 +30,8 @@ desktop.ini
 .env
 .env.*
 !.env.example
+scripts/playmcp_auth.json
+scripts/*.log
 
 # npm 디버그 로그
 npm-debug.log*
@@ -41,3 +43,6 @@ edom.html
 etest-capture.js
 etest-capture-*.js
 /etest/
+scripts/com.bullsnote.semi-briefing.plist
+.gitignore
+scripts/semi_briefing_agent.mjs
