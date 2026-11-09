@@ -1079,10 +1079,8 @@ export function PlannerView() {
                     height: ROW_HEIGHT,
                     display: 'grid',
                     gridTemplateColumns: isMobile
-                      ? '1fr 78px'
-                      : 'minmax(190px, 1fr) 118px 104px 158px',
-                          ? '1fr 86px'
-                    : 'minmax(200px, 1fr) 118px 82px 164px',
+                      ? '1fr 86px'
+                      : 'minmax(200px, 1fr) 118px 82px 164px',
                     alignItems: 'center',
           padding: '0 8px',
           borderBottom: '1px solid var(--bn-border-subtle)',
@@ -1340,62 +1338,34 @@ export function PlannerView() {
             </Box>
           )}
 
-          {/* 컬럼 3: Duration (Working Days 소요일 + 주말/공휴일 제외 토글) */}
           {/* 컬럼 3: Duration (소요일 숫자 입력) */}
           {!isMobile && (
-            <Group gap={3} justify="center" wrap="nowrap">
-              <Group justify="center" wrap="nowrap">
-                <NumberInput
-                  size="xs"
-                  min={1}
-                  max={365}
-                  value={schedule.durationDays}
-                  onChange={(val) => {
-                    const num = Number(val);
-                    if (!Number.isFinite(num) || num < 1) return;
-                    updateTaskSchedule(n.id, { durationDays: num });
-                  }}
-                  styles={{
-                    root: { width: 52 },
-                    root: { width: 58 },
-                    input: {
-                      textAlign: 'center',
-                      paddingLeft: 4,
-                      paddingRight: 18,
-                      fontSize: 12,
-                      fontWeight: 600,
-                      height: 26,
-                      minHeight: 26,
-                    },
-                  }}
-                />
-                <Tooltip
-                  label={
-                    schedule.useWorkingDays
-                      ? `주말·공휴일 제외(Working Day) 적용 중${schedule.weekendCount + schedule.holidays.length > 0
-                        ? ` (기간 내 휴일 ${schedule.weekendCount + schedule.holidays.length
-                        }일 자동 제외됨)`
-                        : ''
-                      } — 클릭 시 주말 포함으로 전환`
-                      : '달력 일수(주말·공휴일 포함) 적용 중 — 클릭 시 주말·공휴일 제외(평일)로 전환'
-                  }
-                >
-                  <Badge
-                    size="xs"
-                    variant={schedule.useWorkingDays ? 'light' : 'outline'}
-                    color={schedule.useWorkingDays ? 'teal' : 'gray'}
-                    style={{ cursor: 'pointer', padding: '0 4px' }}
-                    onClick={() =>
-                      updateTaskSchedule(n.id, {
-                        useWorkingDays: !schedule.useWorkingDays,
-                      })
-                    }
-                  >
-                    {schedule.useWorkingDays ? '평일' : '전체'}
-                  </Badge>
-                </Tooltip>
-              </Group>
-                      )}
+            <Group justify="center" wrap="nowrap">
+              <NumberInput
+                size="xs"
+                min={1}
+                max={365}
+                value={schedule.durationDays}
+                onChange={(val) => {
+                  const num = Number(val);
+                  if (!Number.isFinite(num) || num < 1) return;
+                  updateTaskSchedule(n.id, { durationDays: num });
+                }}
+                styles={{
+                  root: { width: 58 },
+                  input: {
+                    textAlign: 'center',
+                    paddingLeft: 4,
+                    paddingRight: 18,
+                    fontSize: 12,
+                    fontWeight: 600,
+                    height: 26,
+                    minHeight: 26,
+                  },
+                }}
+              />
+            </Group>
+          )}
 
               {/* 컬럼 4: Due Date (마감일 직접 선택 + D-Day + 오전 09:00 자동 알림 표시) */}
               <Group gap={4} justify="center" wrap="nowrap">
