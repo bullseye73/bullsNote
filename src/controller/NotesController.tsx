@@ -57,6 +57,17 @@ import { hasAnyEncryptedNotes, hasLegacyEncryptedText, recoverEncryptedNotes } f
 import { parseSearchQuery, searchNotes } from '../model/SearchService';
 import { formatDateIso } from '../model/dateUtils';
 import { GeminiService } from '../model/GeminiService';
+import {
+  CustomHoliday,
+  SchedulePatchInput,
+  buildDueDateMorningReminder,
+  getTodayIsoStr,
+  loadCustomHolidays,
+  resolveTaskSchedulePatch,
+  saveCustomHolidays,
+  snapToWorkingDay,
+  toIsoDateLocal,
+} from '../model/PlannerService';
 
 function getVault(): VaultApi | null {
   return window.bullsNote?.vault ?? null;
@@ -134,6 +145,10 @@ export interface NotesState {
   googleSyncModalOpened: boolean;
   geminiModalOpened: boolean;
   geminiModalTab: 'clipboard' | 'prompt' | 'settings';
+  /** 플래너(Schedule / 간트 차트) 화면 활성화 여부 */
+  plannerViewActive: boolean;
+  /** 사용자 지정 공휴일/휴무일 목록 */
+  customHolidays: CustomHoliday[];
 }
 
 export interface NotesActions {
@@ -201,6 +216,26 @@ export interface NotesActions {
     items: ExtractedChecklistItem[]
   ): { createdCount: number; updatedCount: number; duplicateCount: number };
   changeTodoStatus(todoNoteId: string, newStatus: TodoStatus, moveToGroupRoot?: boolean): void;
+  /** 플래너(Schedule) 액션 */
+  openPlannerView(): void;
+  closePlannerView(): void;
+  updateTaskSchedule(
+    noteId: string,
+    patch: SchedulePatchInput,
+    options?: { autoReminder?: boolean }
+  ): void;
+  createPlannerTask(params: {
+    title: string;
+    parentId?: string | null;
+    status?: TodoStatus;
+    startDate?: string;
+    durationDays?: number;
+    dueDate?: string;
+    useWorkingDays?: boolean;
+    color?: string;
+  }): string;
+  addCustomHoliday(date: string, name: string): void;
+  removeCustomHoliday(date: string): void;
 }
 
 const Ctx = createContext<(NotesState & NotesActions) | null>(null);
@@ -289,6 +324,10 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [showFavoriteOnly, setShowFavoriteOnly] = useState(false);
+  const [plannerViewActive, setPlannerViewActive] = useState(false);
+  const [customHolidays, setCustomHolidays] = useState<CustomHoliday[]>(() => loadCustomHolidays());
+  const customHolidaysRef = useRef(customHolidays);
+  customHolidaysRef.current = customHolidays;
   const [activeAlarmNote, setActiveAlarmNote] = useState<Note | null>(null);
   const triggeredAlarmsRef = useRef<Set<string>>(new Set());
 
@@ -939,6 +978,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   const selectProject = useCallback(
     (id: string) => {
+      setPlannerViewActive(false);
       setSelectedProjectId(id);
       setActiveTag(null);
       setSelectedDate(null);
@@ -2336,6 +2376,198 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     [queueNoteSync, syncNoteReminderWithCalendar],
   );
 
+  // --- 플래너(Schedule) 전용 액션 ---
+  const openPlannerView = useCallback(() => {
+    setShowFavoriteOnly(false);
+    setActiveTag(null);
+    setSelectedDate(null);
+    setSelectedProjectId(TODO_PROJECT_ID);
+    setPlannerViewActive(true);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('bullsnote:mobile-open-list'));
+    }
+  }, []);
+
+  const closePlannerView = useCallback(() => {
+    setPlannerViewActive(false);
+  }, []);
+
+  const addCustomHoliday = useCallback((date: string, name: string) => {
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+    const cleanName = name.trim() || '사용자 지정 휴일';
+    setCustomHolidays((prev) => {
+      const filtered = prev.filter((h) => h.date !== date);
+      const next = [...filtered, { date, name: cleanName }].sort((a, b) =>
+        a.date.localeCompare(b.date)
+      );
+      saveCustomHolidays(next);
+      return next;
+    });
+  }, []);
+
+  const removeCustomHoliday = useCallback((date: string) => {
+    setCustomHolidays((prev) => {
+      const next = prev.filter((h) => h.date !== date);
+      saveCustomHolidays(next);
+      return next;
+    });
+  }, []);
+
+  /**
+   * 작업(Task)의 시작일·소요일(Working Days)·마감일(Due Date) 변경 및 Due Date 오전 09:00 자동 알림 등록
+   */
+  const updateTaskSchedule = useCallback(
+    (
+      noteId: string,
+      patch: SchedulePatchInput,
+      options?: { autoReminder?: boolean }
+    ) => {
+      const autoReminder = options?.autoReminder !== false;
+      setNotes((prev) =>
+        prev.map((n) => {
+          if (n.id !== noteId || isSystemGroupNote(n)) return n;
+
+          const effectiveStatus = getEffectiveTodoStatus(n, prev);
+          const fallbackStart = toIsoDateLocal(new Date(n.createdAt || Date.now()));
+          const resolved = resolveTaskSchedulePatch(
+            n.todoMeta,
+            patch,
+            fallbackStart,
+            customHolidaysRef.current
+          );
+
+          const nextTodoMeta = {
+            ...(n.todoMeta || { status: effectiveStatus }),
+            status: n.todoMeta?.status || effectiveStatus,
+            startDate: resolved.startDate,
+            dueDate: resolved.dueDate,
+            durationDays: resolved.durationDays,
+            useWorkingDays: resolved.useWorkingDays,
+            progress:
+              resolved.progress !== null && resolved.progress !== undefined
+                ? resolved.progress
+                : n.todoMeta?.progress ?? null,
+          };
+
+          const prevEventId = n.reminder?.calendarEventId ?? null;
+          const prevDueDate = n.todoMeta?.dueDate ?? null;
+          let nextReminder = n.reminder ?? null;
+
+          // Due Date가 지정되거나 변경된 경우 오전 09:00 자동 알림 등록/갱신
+          if (
+            autoReminder &&
+            resolved.dueDate &&
+            (patch.dueDate !== undefined ||
+              patch.startDate !== undefined ||
+              patch.durationDays !== undefined ||
+              patch.useWorkingDays !== undefined ||
+              resolved.dueDate !== prevDueDate ||
+              !n.reminder)
+          ) {
+            nextReminder = buildDueDateMorningReminder(
+              resolved.dueDate,
+              n.reminder,
+              effectiveStatus
+            );
+          }
+
+          const updated: Note = {
+            ...n,
+            todoMeta: nextTodoMeta,
+            reminder: nextReminder,
+            updatedAt: Date.now(),
+          };
+
+          queueNoteSync(updated);
+          if (nextReminder && (nextReminder.targetAt !== n.reminder?.targetAt || !n.reminder)) {
+            syncNoteReminderWithCalendar(updated, prevEventId);
+          }
+          return updated;
+        })
+      );
+    },
+    [queueNoteSync, syncNoteReminderWithCalendar]
+  );
+
+  /**
+   * 플래너에서 새 일정 작업(Task) 직접 생성 (Due Date 09:00 자동 알림 연동 포함)
+   */
+  const createPlannerTask = useCallback(
+    (params: {
+      title: string;
+      parentId?: string | null;
+      status?: TodoStatus;
+      startDate?: string;
+      durationDays?: number;
+      dueDate?: string;
+      useWorkingDays?: boolean;
+      color?: string;
+    }): string => {
+      const status: TodoStatus = params.status || 'todo';
+      const parentId =
+        params.parentId && !isSystemGroupNote(params.parentId)
+          ? params.parentId
+          : STATUS_TO_GROUP_ID[status] || TODO_GROUP_TODO_ID;
+
+      const useWorkingDays = params.useWorkingDays !== false;
+      const defaultStart = snapToWorkingDay(
+        params.startDate || getTodayIsoStr(),
+        useWorkingDays,
+        customHolidaysRef.current,
+        1
+      );
+      const resolved = resolveTaskSchedulePatch(
+        { status, useWorkingDays },
+        {
+          startDate: defaultStart,
+          durationDays: params.durationDays ?? 1,
+          dueDate: params.dueDate,
+          useWorkingDays,
+        },
+        defaultStart,
+        customHolidaysRef.current
+      );
+
+      let taskColor = params.color || 'orange';
+      if (!params.color && parentId && !isSystemGroupNote(parentId)) {
+        const pNote = notesRef.current.find((x) => x.id === parentId);
+        if (pNote?.color) taskColor = pNote.color;
+      }
+
+      const reminder = buildDueDateMorningReminder(resolved.dueDate, null, status);
+
+      const newNote = createEmptyNote({
+        title: params.title.trim() || '새 일정 작업',
+        projectId: TODO_PROJECT_ID,
+        parentId,
+        color: taskColor,
+        tags: ['일정', status],
+        reminder,
+        todoMeta: {
+          status,
+          startDate: resolved.startDate,
+          dueDate: resolved.dueDate,
+          durationDays: resolved.durationDays,
+          useWorkingDays: resolved.useWorkingDays,
+          progress: status === 'done' ? 100 : status === 'doing' ? 50 : 0,
+        },
+        content: JSON.stringify([
+          {
+            type: 'paragraph',
+            content: '',
+          },
+        ]),
+      });
+
+      setNotes((prev) => [newNote, ...prev]);
+      setSelectedId(newNote.id);
+      queueNoteSync(newNote);
+      syncNoteReminderWithCalendar(newNote, null);
+      return newNote.id;
+    },
+    [queueNoteSync, syncNoteReminderWithCalendar]
+  );
+
   const hasEncryptedNotes = useMemo(() => hasAnyEncryptedNotes(notes), [notes]);
 
   const decryptAllLegacyNotes = useCallback(
@@ -2467,6 +2699,14 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       createNoteFromClipboard,
       createTodosFromChecklist,
       changeTodoStatus,
+      plannerViewActive,
+      customHolidays,
+      openPlannerView,
+      closePlannerView,
+      updateTaskSchedule,
+      createPlannerTask,
+      addCustomHoliday,
+      removeCustomHoliday,
     }),
     [
       projects,
@@ -2559,6 +2799,14 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       createNoteFromClipboard,
       createTodosFromChecklist,
       changeTodoStatus,
+      plannerViewActive,
+      customHolidays,
+      openPlannerView,
+      closePlannerView,
+      updateTaskSchedule,
+      createPlannerTask,
+      addCustomHoliday,
+      removeCustomHoliday,
     ],
   );
 

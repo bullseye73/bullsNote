@@ -46,6 +46,7 @@ import {
 } from '../model/TodoService';
 import { buildNoteHierarchy, cleanExcerpt } from '../model/treeUtils';
 import { GoogleDriveService } from '../model/GoogleDriveService';
+import { getDueDateBadgeInfo } from '../model/PlannerService';
 
 function RowActions({
   id,
@@ -594,6 +595,28 @@ function TreeRow({
                 그룹
               </Badge>
             )}
+            {isTodoItem &&
+              n.todoMeta?.dueDate &&
+              (() => {
+                const dBadge = getDueDateBadgeInfo(n.todoMeta.dueDate, effectiveTodoStatus);
+                if (!dBadge) return null;
+                return (
+                  <Tooltip
+                    label={`일정: ${n.todoMeta.startDate || ''} ~ ${n.todoMeta.dueDate} (${
+                      n.todoMeta.durationDays || 1
+                    }일)`}
+                  >
+                    <Badge
+                      size="xs"
+                      color={dBadge.color}
+                      variant={dBadge.isOverdue ? 'filled' : 'light'}
+                      style={{ flexShrink: 0, paddingLeft: 4, paddingRight: 4 }}
+                    >
+                      {dBadge.label}
+                    </Badge>
+                  </Tooltip>
+                );
+              })()}
             {!isSystemGroup && GoogleDriveService.isNoteUnsynced(n) && (
               <Tooltip label="미동기화 노트 (Google Drive 동기화 완료 시 자동으로 표시가 사라집니다)">
                 <Badge

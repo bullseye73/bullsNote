@@ -314,6 +314,16 @@ export interface TodoMeta {
   status: TodoStatus;
   completedAt?: number | null;
   droppedAt?: number | null;
+  /** 플래너(Schedule) 시작일 (YYYY-MM-DD) */
+  startDate?: string | null;
+  /** 플래너(Schedule) 마감일 / Due Date (YYYY-MM-DD) */
+  dueDate?: string | null;
+  /** 실작업 소요일 (Working Days 또는 달력 일수, 최소 1) */
+  durationDays?: number | null;
+  /** 주말 및 공휴일 제외(Working Day) 적용 여부 (기본값 true) */
+  useWorkingDays?: boolean;
+  /** 작업 진행률 (0 ~ 100) */
+  progress?: number | null;
 }
 
 export interface Note {

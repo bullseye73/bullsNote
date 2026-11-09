@@ -130,6 +130,9 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
     isSyncing,
     syncError,
     openGoogleSyncModal,
+    plannerViewActive,
+    openPlannerView,
+    closePlannerView,
   } = useNotes();
 
   // 모든 검색/태그/날짜/퀵필터 조건을 일괄 초기화하여 대상 목록을 온전히 표시
@@ -427,13 +430,14 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
         </Group>
       </div>
 
-      {/* 고정 퀵 내비게이션: Daily Notes · Gemini AI · 즐겨찾기 · 할일관리 */}
+      {/* 고정 퀵 내비게이션: Daily Notes · Gemini AI · 즐겨찾기 · 할일관리 · 플래너 */}
       <Stack gap={2}>
         <NavLink
           label="Daily Notes (오늘)"
           leftSection={<IconCalendarEvent size={15} color="var(--mantine-color-teal-5)" />}
-          active={isDailyTodayActive}
+          active={isDailyTodayActive && !plannerViewActive}
           onClick={() => {
+            closePlannerView();
             if (isDailyTodayActive) {
               setSelectedDate(null);
             } else {
@@ -442,7 +446,7 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
             }
           }}
           rightSection={
-            isDailyTodayActive ? (
+            isDailyTodayActive && !plannerViewActive ? (
               <Badge size="xs" variant="light" color="teal">
                 오늘
               </Badge>
@@ -470,8 +474,9 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
         <NavLink
           label="즐겨찾기"
           leftSection={<IconStar size={15} color="var(--mantine-color-yellow-5)" />}
-          active={showFavoriteOnly}
+          active={showFavoriteOnly && !plannerViewActive}
           onClick={() => {
+            closePlannerView();
             const next = !showFavoriteOnly;
             setShowFavoriteOnly(next);
             if (next) {
@@ -481,8 +486,8 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
           rightSection={
             <Badge
               size="xs"
-              variant={showFavoriteOnly ? 'filled' : 'subtle'}
-              color={showFavoriteOnly ? 'yellow' : 'gray'}
+              variant={showFavoriteOnly && !plannerViewActive ? 'filled' : 'subtle'}
+              color={showFavoriteOnly && !plannerViewActive ? 'yellow' : 'gray'}
             >
               {notes.filter((n) => n.favorite).length}
             </Badge>
@@ -495,8 +500,9 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
         <NavLink
           label="할일관리"
           leftSection={<span style={{ fontSize: 14, lineHeight: 1 }}>📋</span>}
-          active={selectedProjectId === TODO_PROJECT_ID && !showFavoriteOnly}
+          active={selectedProjectId === TODO_PROJECT_ID && !showFavoriteOnly && !plannerViewActive}
           onClick={() => {
+            closePlannerView();
             setShowFavoriteOnly(false);
             resetAllFilters();
             selectProject(TODO_PROJECT_ID);
@@ -504,8 +510,16 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
           rightSection={
             <Badge
               size="xs"
-              variant={selectedProjectId === TODO_PROJECT_ID && !showFavoriteOnly ? 'filled' : 'subtle'}
-              color={selectedProjectId === TODO_PROJECT_ID && !showFavoriteOnly ? 'blue' : 'gray'}
+              variant={
+                selectedProjectId === TODO_PROJECT_ID && !showFavoriteOnly && !plannerViewActive
+                  ? 'filled'
+                  : 'subtle'
+              }
+              color={
+                selectedProjectId === TODO_PROJECT_ID && !showFavoriteOnly && !plannerViewActive
+                  ? 'blue'
+                  : 'gray'
+              }
             >
               {notes.filter((n) => n.projectId === TODO_PROJECT_ID && !n.systemGroupType).length}
             </Badge>
@@ -513,6 +527,28 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
           styles={{
             root: { borderRadius: 8, padding: '5px 8px' },
             label: { fontSize: 12.5, fontWeight: 500 },
+          }}
+        />
+        <NavLink
+          label="플래너 (Schedule)"
+          leftSection={<span style={{ fontSize: 14, lineHeight: 1 }}>📊</span>}
+          active={plannerViewActive}
+          onClick={() => {
+            resetAllFilters();
+            openPlannerView();
+          }}
+          rightSection={
+            <Badge
+              size="xs"
+              variant={plannerViewActive ? 'filled' : 'light'}
+              color={plannerViewActive ? 'orange' : 'gray'}
+            >
+              간트
+            </Badge>
+          }
+          styles={{
+            root: { borderRadius: 8, padding: '5px 8px' },
+            label: { fontSize: 12.5, fontWeight: plannerViewActive ? 700 : 500 },
           }}
         />
       </Stack>
@@ -588,7 +624,8 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
               const hasChildren = node.children.length > 0;
               const isCollapsed = collapsedProjects.has(proj.id);
               const count = notes.filter((n) => (n.projectId || 'default') === proj.id).length;
-              const isSelected = proj.id === selectedProjectId && !showFavoriteOnly;
+              const isSelected =
+                proj.id === selectedProjectId && !showFavoriteOnly && !plannerViewActive;
 
               const descendantIds = getProjectDescendantIds(projects, proj.id);
               const subFolderCount = Math.max(0, descendantIds.size - 1);

@@ -87,6 +87,7 @@ import { InlineHistoryDiffView } from './InlineHistoryDiffView';
 import { NoteTableOfContents } from './NoteTableOfContents';
 import { EditorAiModal } from './EditorAiModal';
 import { formatDateIso } from '../model/dateUtils';
+import { getDueDateBadgeInfo, toIsoDateLocal } from '../model/PlannerService';
 import { getDateAtSuggestions, getDateSlashMenuItems } from '../model/dateSuggestions';
 import { getCombinedAtSuggestions, getNoteSlashMenuItems } from '../model/noteSuggestions';
 import { getAiSlashMenuItems } from '../model/aiSlashMenu';
@@ -151,6 +152,8 @@ function BlockEditor({
     setSearch,
     changeTodoStatus,
     createTodosFromChecklist,
+    updateTaskSchedule,
+    openPlannerView,
   } = useNotes();
   const scheme = useComputedColorScheme('light');
   const [datePickerOpen, setDatePickerOpen] = useState(false);
@@ -799,7 +802,7 @@ function BlockEditor({
         />
       </div>
 
-      {/* 할일 항목인 경우 상단 원클릭 상태 전환 칩 바 */}
+      {/* 할일 항목인 경우 상단 원클릭 상태 전환 + 플래너 일정(Start Date / Working Days / Due Date 09:00 알림) 통합 바 */}
       {note.projectId === TODO_PROJECT_ID && !note.systemGroupType && (
         <Paper
           className="no-print"
@@ -813,46 +816,167 @@ function BlockEditor({
             marginBottom: 2,
           }}
         >
-          <Group justify="space-between" align="center" wrap="wrap">
-            <Group gap="xs" wrap="wrap">
-              <Badge color="blue" variant="filled" size="sm">
-                할일 항목
-              </Badge>
-              <Text size="xs" fw={600} c="dimmed">
-                상태 변경:
-              </Text>
+          <Stack gap={6}>
+            <Group justify="space-between" align="center" wrap="wrap">
+              <Group gap="xs" wrap="wrap">
+                <Badge color="blue" variant="filled" size="sm">
+                  할일 항목
+                </Badge>
+                <Text size="xs" fw={600} c="dimmed">
+                  상태 변경:
+                </Text>
+                <Group gap={6}>
+                  {TODO_GROUPS.map((g) => {
+                    const currentStatus: TodoStatus = getEffectiveTodoStatus(note, notes);
+                    const isCurrent = currentStatus === g.status;
+                    return (
+                      <Chip
+                        key={g.status}
+                        size="xs"
+                        checked={isCurrent}
+                        color={g.color}
+                        variant={isCurrent ? 'filled' : 'outline'}
+                        onChange={() => changeTodoStatus(note.id, g.status)}
+                      >
+                        {g.title}
+                      </Chip>
+                    );
+                  })}
+                </Group>
+              </Group>
+
               <Group gap={6}>
-                {TODO_GROUPS.map((g) => {
-                  const currentStatus: TodoStatus = getEffectiveTodoStatus(note, notes);
-                  const isCurrent = currentStatus === g.status;
-                  return (
-                    <Chip
-                      key={g.status}
-                      size="xs"
-                      checked={isCurrent}
-                      color={g.color}
-                      variant={isCurrent ? 'filled' : 'outline'}
-                      onChange={() => changeTodoStatus(note.id, g.status)}
-                    >
-                      {g.title}
-                    </Chip>
-                  );
-                })}
+                <Button
+                  size="compact-xs"
+                  variant="light"
+                  color="orange"
+                  onClick={() => openPlannerView()}
+                >
+                  📊 플래너 간트차트 열기
+                </Button>
+                {resolveSourceNoteId(note) && (
+                  <Button
+                    size="compact-xs"
+                    variant="subtle"
+                    color="blue"
+                    leftSection={<IconArrowLeft size={13} />}
+                    onClick={() => select(resolveSourceNoteId(note)!)}
+                  >
+                    원본 노트로 이동
+                  </Button>
+                )}
               </Group>
             </Group>
 
-            {resolveSourceNoteId(note) && (
-              <Button
-                size="compact-xs"
-                variant="subtle"
-                color="blue"
-                leftSection={<IconArrowLeft size={13} />}
-                onClick={() => select(resolveSourceNoteId(note)!)}
-              >
-                원본 노트로 이동
-              </Button>
-            )}
-          </Group>
+            {/* 플래너 일정(Start Date · Working Day 소요일 · Due Date 09:00 자동 알림) 빠른 설정 줄 */}
+            {(() => {
+              const effStatus = getEffectiveTodoStatus(note, notes);
+              const startStr =
+                note.todoMeta?.startDate || toIsoDateLocal(new Date(note.createdAt || Date.now()));
+              const dueStr = note.todoMeta?.dueDate || startStr;
+              const durDays = note.todoMeta?.durationDays || 1;
+              const useWorking = note.todoMeta?.useWorkingDays !== false;
+              const dBadge = getDueDateBadgeInfo(note.todoMeta?.dueDate, effStatus);
+
+              return (
+                <Group gap="xs" wrap="wrap" align="center">
+                  <Text size="11.5px" fw={600} c="dimmed">
+                    🗓️ 일정(Schedule):
+                  </Text>
+                  <Group gap={4} wrap="nowrap">
+                    <Text size="11px" c="dimmed">
+                      시작일
+                    </Text>
+                    <input
+                      type="date"
+                      value={startStr}
+                      onChange={(e) => {
+                        if (!e.currentTarget.value) return;
+                        updateTaskSchedule(note.id, { startDate: e.currentTarget.value });
+                      }}
+                      style={{
+                        fontSize: 11.5,
+                        padding: '1px 5px',
+                        borderRadius: 4,
+                        border: '1px solid var(--bn-border-subtle)',
+                        backgroundColor: 'var(--mantine-color-body)',
+                        color: 'var(--mantine-color-text)',
+                      }}
+                    />
+                  </Group>
+
+                  <Group gap={4} wrap="nowrap">
+                    <Text size="11px" c="dimmed">
+                      소요일
+                    </Text>
+                    <input
+                      type="number"
+                      min={1}
+                      max={365}
+                      value={durDays}
+                      onChange={(e) => {
+                        const v = Math.max(1, Number(e.currentTarget.value) || 1);
+                        updateTaskSchedule(note.id, { durationDays: v });
+                      }}
+                      style={{
+                        width: 48,
+                        fontSize: 11.5,
+                        textAlign: 'center',
+                        padding: '1px 4px',
+                        borderRadius: 4,
+                        border: '1px solid var(--bn-border-subtle)',
+                        backgroundColor: 'var(--mantine-color-body)',
+                        color: 'var(--mantine-color-text)',
+                      }}
+                    />
+                    <Tooltip label="클릭하여 주말·공휴일 제외(평일) / 달력 전체 일수 전환">
+                      <Badge
+                        size="xs"
+                        color={useWorking ? 'teal' : 'gray'}
+                        variant={useWorking ? 'light' : 'outline'}
+                        style={{ cursor: 'pointer' }}
+                        onClick={() => updateTaskSchedule(note.id, { useWorkingDays: !useWorking })}
+                      >
+                        {useWorking ? '평일(주말·공휴일 제외)' : '달력 일수'}
+                      </Badge>
+                    </Tooltip>
+                  </Group>
+
+                  <Group gap={4} wrap="nowrap">
+                    <Text size="11px" fw={700} c="dimmed">
+                      Due Date (09시 알림):
+                    </Text>
+                    <input
+                      type="date"
+                      value={dueStr}
+                      onChange={(e) => {
+                        if (!e.currentTarget.value) return;
+                        updateTaskSchedule(note.id, { dueDate: e.currentTarget.value });
+                      }}
+                      style={{
+                        fontSize: 11.5,
+                        fontWeight: 600,
+                        padding: '1px 5px',
+                        borderRadius: 4,
+                        border: '1px solid var(--bn-border-subtle)',
+                        backgroundColor: 'var(--mantine-color-body)',
+                        color: 'var(--mantine-color-text)',
+                      }}
+                    />
+                    {dBadge && (
+                      <Badge
+                        size="xs"
+                        color={dBadge.color}
+                        variant={dBadge.isOverdue ? 'filled' : 'light'}
+                      >
+                        {dBadge.label}
+                      </Badge>
+                    )}
+                  </Group>
+                </Group>
+              );
+            })()}
+          </Stack>
         </Paper>
       )}
 

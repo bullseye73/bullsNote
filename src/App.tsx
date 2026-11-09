@@ -29,6 +29,7 @@ import { useDisclosure, useHotkeys, useMediaQuery } from '@mantine/hooks';
 import {
   IconBrandGoogleDrive,
   IconCalendarEvent,
+  IconCalendarStats,
   IconChecklist,
   IconChevronRight,
   IconFolder,
@@ -46,6 +47,7 @@ import { NotesProvider, useNotes } from './controller/NotesController';
 import { ErrorBoundary } from './view/ErrorBoundary';
 import { NoteEditorView } from './view/NoteEditorView';
 import { NoteListView } from './view/NoteListView';
+import { PlannerView } from './view/PlannerView';
 import { SidebarView } from './view/SidebarView';
 import { AlarmModal } from './view/AlarmModal';
 import { GoogleSyncModal } from './view/GoogleSyncModal';
@@ -206,6 +208,9 @@ function Shell() {
     geminiModalTab,
     openGeminiModal,
     closeGeminiModal,
+    plannerViewActive,
+    openPlannerView,
+    closePlannerView,
   } = useNotes();
 
   // 모바일/태블릿 뷰 전환 이벤트 수신 (노트 클릭 시 에디터 전환, 폴더 클릭 시 목록 전환)
@@ -293,7 +298,7 @@ function Shell() {
     ? `마지막 동기화: ${new Date(lastSyncedAt).toLocaleTimeString()}`
     : '동기화 이력 없음';
 
-  const isTodoBoard = selectedProjectId === TODO_PROJECT_ID && !showFavoriteOnly;
+  const isTodoBoard = selectedProjectId === TODO_PROJECT_ID && !showFavoriteOnly && !plannerViewActive;
   const projectPath = selectedProject ? getProjectPath(projects, selectedProject.id) : [];
   const formatProjLabel = (p?: { name?: string; icon?: string } | null) =>
     p ? (p.icon ? `${p.icon} ${p.name}` : p.name || '기본 프로젝트') : '기본 프로젝트';
@@ -301,7 +306,9 @@ function Shell() {
     projectPath.length > 1
       ? projectPath.map((p) => formatProjLabel(p)).join(' / ')
       : formatProjLabel(selectedProject);
-  const contextLabel = showFavoriteOnly
+  const contextLabel = plannerViewActive
+    ? '📊 플래너 (Schedule)'
+    : showFavoriteOnly
     ? '⭐ 즐겨찾기'
     : isTodoBoard
     ? '📋 할일관리'
@@ -418,7 +425,7 @@ function Shell() {
             )}
             {mobilePane === 'list' && (
               <Box style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-                <ListPanel />
+                {plannerViewActive ? <PlannerView /> : <ListPanel />}
               </Box>
             )}
             {mobilePane === 'editor' && (
@@ -460,6 +467,7 @@ function Shell() {
 
             <UnstyledButton
               onClick={() => {
+                closePlannerView();
                 setShowFavoriteOnly(false);
                 if (selectedProjectId === TODO_PROJECT_ID) {
                   selectProject(defaultRegularId);
@@ -474,19 +482,20 @@ function Shell() {
                 gap: 2,
                 height: '100%',
                 color:
-                  mobilePane === 'list' && !isTodoBoard
+                  mobilePane === 'list' && !isTodoBoard && !plannerViewActive
                     ? 'var(--mantine-color-blue-6)'
                     : 'var(--bn-text-muted)',
               }}
             >
               <IconNotes size={19} />
-              <Text size="10px" fw={mobilePane === 'list' && !isTodoBoard ? 700 : 500}>
+              <Text size="10px" fw={mobilePane === 'list' && !isTodoBoard && !plannerViewActive ? 700 : 500}>
                 노트목록
               </Text>
             </UnstyledButton>
 
             <UnstyledButton
               onClick={() => {
+                closePlannerView();
                 setShowFavoriteOnly(false);
                 selectProject(TODO_PROJECT_ID);
                 setMobilePane('list');
@@ -499,14 +508,38 @@ function Shell() {
                 gap: 2,
                 height: '100%',
                 color:
-                  mobilePane === 'list' && isTodoBoard
+                  mobilePane === 'list' && isTodoBoard && !plannerViewActive
                     ? 'var(--mantine-color-teal-6)'
                     : 'var(--bn-text-muted)',
               }}
             >
               <IconChecklist size={19} />
-              <Text size="10px" fw={mobilePane === 'list' && isTodoBoard ? 700 : 500}>
+              <Text size="10px" fw={mobilePane === 'list' && isTodoBoard && !plannerViewActive ? 700 : 500}>
                 할일관리
+              </Text>
+            </UnstyledButton>
+
+            <UnstyledButton
+              onClick={() => {
+                openPlannerView();
+                setMobilePane('list');
+              }}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 2,
+                height: '100%',
+                color:
+                  mobilePane === 'list' && plannerViewActive
+                    ? 'var(--mantine-color-orange-6)'
+                    : 'var(--bn-text-muted)',
+              }}
+            >
+              <IconCalendarStats size={19} />
+              <Text size="10px" fw={mobilePane === 'list' && plannerViewActive ? 700 : 500}>
+                플래너
               </Text>
             </UnstyledButton>
 
@@ -816,45 +849,51 @@ function Shell() {
 
       <AppShell.Main h="calc(100vh - 40px)">
         <ErrorBoundary title="화면을 표시하지 못했습니다">
-          <div style={{ display: 'flex', height: '100%' }}>
-            {listOpened && (
-              <>
-                <div
-                  className="no-print"
-                  style={{
-                    width: isTablet ? 290 : list.width,
-                    flexShrink: 0,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    minHeight: 0,
-                  }}
-                >
-                  <ListPanel />
-                </div>
-                {!isTablet && (
-                  <div className="no-print">
-                    <ResizeSplitter
-                      onMouseDown={list.startResize}
-                      onDoubleClick={list.resetWidth}
-                      title="마우스 드래그로 노트 목록 너비 조절 (더블클릭 시 기본값)"
-                    />
-                  </div>
-                )}
-              </>
-            )}
-            <div
-              className="note-editor-wrapper"
-              style={{
-                flex: 1,
-                minWidth: 0,
-                minHeight: 0,
-                overflow: 'hidden',
-                backgroundColor: 'var(--bn-surface-editor)',
-              }}
-            >
-              <NoteEditorView />
+          {plannerViewActive ? (
+            <div style={{ display: 'flex', height: '100%', width: '100%', overflow: 'hidden' }}>
+              <PlannerView />
             </div>
-          </div>
+          ) : (
+            <div style={{ display: 'flex', height: '100%' }}>
+              {listOpened && (
+                <>
+                  <div
+                    className="no-print"
+                    style={{
+                      width: isTablet ? 290 : list.width,
+                      flexShrink: 0,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      minHeight: 0,
+                    }}
+                  >
+                    <ListPanel />
+                  </div>
+                  {!isTablet && (
+                    <div className="no-print">
+                      <ResizeSplitter
+                        onMouseDown={list.startResize}
+                        onDoubleClick={list.resetWidth}
+                        title="마우스 드래그로 노트 목록 너비 조절 (더블클릭 시 기본값)"
+                      />
+                    </div>
+                  )}
+                </>
+              )}
+              <div
+                className="note-editor-wrapper"
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  minHeight: 0,
+                  overflow: 'hidden',
+                  backgroundColor: 'var(--bn-surface-editor)',
+                }}
+              >
+                <NoteEditorView />
+              </div>
+            </div>
+          )}
         </ErrorBoundary>
       </AppShell.Main>
 
