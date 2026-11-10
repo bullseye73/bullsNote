@@ -137,6 +137,18 @@ function dataUrlToFile(dataUrl: string, fileName: string): File | null {
   }
 }
 
+/** 바이너리 SHA-256 16진 문자열 (Drive 이미지 중복 업로드 방지용 콘텐츠 해시) */
+async function sha256Hex(data: ArrayBuffer): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+/** Drive appProperties 키: 업로드 이미지의 콘텐츠 해시 / 소속 노트 ID */
+const APP_PROP_HASH = 'bnHash';
+const APP_PROP_NOTE = 'bnNote';
+
 /** 네트워크 지연/단절 시 무한 대기(ANR) 방지를 위한 타임아웃 fetch 헬퍼 */
 async function fetchWithTimeout(
   url: string,
@@ -173,6 +185,8 @@ class GoogleDriveServiceImpl {
   /** 노트 내 이미지 표시를 위한 Drive FileId -> ObjectURL 메모리 캐시 */
   private attachmentBlobUrlCache = new Map<string, string>();
   private inFlightBlobPromises = new Map<string, Promise<string>>();
+  /** `${attachmentsFolderId}:${noteId}:${sha256}` -> 이미 업로드된 첨부 (세션 내 중복 업로드 방지) */
+  private uploadedImageByHash = new Map<string, NoteAttachment>();
 
   /** 현재 브라우저/기기가 오프라인 상태인지 즉시 판별 */
   isOffline(): boolean {
@@ -1037,8 +1051,11 @@ class GoogleDriveServiceImpl {
               const fileName = block.props.name || `image_${Date.now()}_${++imgCounter}.${safeExt}`;
               const file = dataUrlToFile(block.props.url, fileName);
               if (file) {
-                const att = await this.uploadAttachment(note.id, file);
-                nextAttachments.push(att);
+                // 동일 이미지(콘텐츠 해시)가 이미 업로드되어 있으면 재업로드하지 않고 기존 파일 재사용
+                const att = await this.uploadImageDeduped(note.id, file);
+                if (!nextAttachments.some((a) => a.storagePath === att.storagePath)) {
+                  nextAttachments.push(att);
+                }
                 block.props.url = att.url;
                 if (!block.props.name) block.props.name = att.name;
                 modified = true;
@@ -1571,16 +1588,24 @@ class GoogleDriveServiceImpl {
    * 첨부파일 및 이미지를 BullsNote/attachments 폴더에 분리 업로드
    * - 이미지 파일인 경우 업로드 즉시 메모리 ObjectURL 캐시에 등록하여 노트 본문에서 즉시 보이도록 처리
    */
-  async uploadAttachment(noteId: string, file: File): Promise<NoteAttachment> {
+  async uploadAttachment(
+    noteId: string,
+    file: File,
+    opts: { contentHash?: string } = {},
+  ): Promise<NoteAttachment> {
     const attFolderId = await this.getAttachmentsFolderId();
     const safeName = file.name.replace(/[/\\?%*:|"<>]/g, '_');
     const uploadName = `${noteId}_${Date.now()}_${safeName}`;
 
-    const metadata = {
+    const metadata: Record<string, unknown> = {
       name: uploadName,
       parents: [attFolderId],
       mimeType: file.type || 'application/octet-stream',
     };
+    if (opts.contentHash) {
+      // 앱 전용 속성(appProperties)에 콘텐츠 해시를 기록해 다음 동기화 때 같은 이미지를 찾아 재사용
+      metadata.appProperties = { [APP_PROP_HASH]: opts.contentHash, [APP_PROP_NOTE]: noteId };
+    }
 
     const boundary = '-------BullsNoteAttBoundary' + Math.random().toString(36).substring(2);
     const metadataPart = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(
@@ -1640,6 +1665,66 @@ class GoogleDriveServiceImpl {
       url: data.webViewLink || `https://drive.google.com/file/d/${fileId}/view`,
       createdAt: Date.now(),
     };
+  }
+
+  /**
+   * 콘텐츠 해시 기반 중복 제거 업로드 (노트 단위)
+   * - 같은 노트에 같은 이미지가 이미 업로드되어 있으면(세션 캐시 → Drive appProperties 조회) 기존 파일을 재사용
+   * - 노트 단위로만 공유하므로 한 노트의 첨부 삭제가 다른 노트 이미지를 깨뜨리지 않음
+   */
+  private async uploadImageDeduped(noteId: string, file: File): Promise<NoteAttachment> {
+    const hash = await sha256Hex(await file.arrayBuffer());
+    const attFolderId = await this.getAttachmentsFolderId();
+    const key = `${attFolderId}:${noteId}:${hash}`;
+
+    const cached = this.uploadedImageByHash.get(key);
+    if (cached) return cached;
+
+    const existing = await this.findImageByHash(attFolderId, noteId, hash, file);
+    if (existing) {
+      this.uploadedImageByHash.set(key, existing);
+      return existing;
+    }
+
+    const uploaded = await this.uploadAttachment(noteId, file, { contentHash: hash });
+    this.uploadedImageByHash.set(key, uploaded);
+    return uploaded;
+  }
+
+  /** attachments 폴더에서 appProperties(해시+노트ID)가 일치하는 기존 업로드 파일 조회 */
+  private async findImageByHash(
+    attFolderId: string,
+    noteId: string,
+    hash: string,
+    file: File,
+  ): Promise<NoteAttachment | null> {
+    // hash 는 16진수, noteId 는 [A-Za-z0-9_-] 이므로 쿼리 문자열에 그대로 넣어도 안전 (방어적으로 재검증)
+    if (!/^[a-f0-9]{64}$/.test(hash) || !/^[A-Za-z0-9_-]+$/.test(noteId)) return null;
+    const q =
+      `'${attFolderId}' in parents and trashed = false` +
+      ` and appProperties has { key='${APP_PROP_HASH}' and value='${hash}' }` +
+      ` and appProperties has { key='${APP_PROP_NOTE}' and value='${noteId}' }`;
+    try {
+      const res = await this.driveFetch(
+        `/files?q=${encodeURIComponent(q)}&pageSize=1&fields=files(id,name,size,mimeType,webViewLink)`,
+      );
+      if (!res.ok) return null;
+      const data = await res.json();
+      const f = Array.isArray(data.files) ? data.files[0] : null;
+      if (!f || !f.id) return null;
+      return {
+        id: createNoteId(),
+        name: file.name,
+        size: Number(f.size) || file.size,
+        type: f.mimeType || file.type || 'application/octet-stream',
+        storagePath: f.id,
+        url: f.webViewLink || `https://drive.google.com/file/d/${f.id}/view`,
+        createdAt: Date.now(),
+      };
+    } catch {
+      // 조회 실패 시에는 업로드로 진행 (동기화 자체를 막지 않음)
+      return null;
+    }
   }
 
   /**
@@ -1709,6 +1794,9 @@ class GoogleDriveServiceImpl {
       if (cachedUrl) {
         URL.revokeObjectURL(cachedUrl);
         this.attachmentBlobUrlCache.delete(storagePath);
+      }
+      for (const [key, att] of this.uploadedImageByHash) {
+        if (att.storagePath === storagePath) this.uploadedImageByHash.delete(key);
       }
       await this.driveFetch(`/files/${storagePath}`, { method: 'DELETE' });
     } catch (e) {
