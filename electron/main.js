@@ -4,6 +4,7 @@ const fs = require('fs');
 const packageJson = require('../package.json');
 const { registerVaultIpc } = require('./vault-ipc');
 const { registerGoogleAuthIpc } = require('./google-auth-ipc');
+const { registerMcpIpc } = require('./mcp-ipc');
 const { setupTray } = require('./tray');
 const { isAppUrl } = require('./app-origin');
 const { secureHandle } = require('./ipc-guard');
@@ -283,6 +284,7 @@ app.whenReady().then(() => {
   setupAppMenu();
   registerVaultIpc(app);
   registerGoogleAuthIpc(app);
+  registerMcpIpc(app);
 
   secureHandle('window:setTitleBarTheme', (_event, isDark) => {
     if (!mainWindow || mainWindow.isDestroyed()) return false;

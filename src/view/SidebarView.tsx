@@ -36,6 +36,7 @@ import {
   IconIndentDecrease,
   IconIndentIncrease,
   IconPencil,
+  IconPlugConnected,
   IconPlus,
   IconRefresh,
   IconSearch,
@@ -60,6 +61,7 @@ import { TODO_PROJECT_ID } from '../model/TodoService';
 import { SHORTCUTS } from '../model/shortcutUtils';
 import { SortMenu } from './SortMenu';
 import { MiniCalendar } from './MiniCalendar';
+import { McpConnectModal } from './McpConnectModal';
 
 const POPULAR_ICONS = [
   '📁',
@@ -175,6 +177,7 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
 
   // 프로젝트 생성/수정 모달 상태
   const [modalOpened, { open: openModal, close: closeModal }] = useDisclosure(false);
+  const [mcpOpened, { open: openMcp, close: closeMcp }] = useDisclosure(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [formName, setFormName] = useState('');
   const [formIcon, setFormIcon] = useState('');
@@ -1103,6 +1106,13 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
                 <IconFolder size={12} />
               </ActionIcon>
             </Tooltip>
+            {window.bullsNote?.mcp && (
+              <Tooltip label="AI 연결 (Claude · Gemini에서 노트 저장)">
+                <ActionIcon size="xs" variant="subtle" color="gray" onClick={openMcp}>
+                  <IconPlugConnected size={12} />
+                </ActionIcon>
+              </Tooltip>
+            )}
             <Tooltip label="외부 변경 동기화">
               <ActionIcon size="xs" variant="subtle" color="gray" onClick={() => void resync()}>
                 <IconRefresh size={12} />
@@ -1120,6 +1130,8 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
           {storageError}
         </Text>
       ) : null}
+
+      <McpConnectModal opened={mcpOpened} onClose={closeMcp} />
 
       {/* 프로젝트 생성/수정 모달 */}
       <Modal

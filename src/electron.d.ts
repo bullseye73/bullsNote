@@ -47,6 +47,29 @@ export interface GoogleAuthApi {
   refreshToken(opts: { clientId?: string; clientSecret?: string; refreshToken: string }): Promise<GoogleRefreshTokenResult>;
 }
 
+export interface McpClientStatus {
+  id: string;
+  name: string;
+  configPath: string;
+  /** 해당 AI 클라이언트의 설정 폴더가 존재하는지 (설치 여부 추정) */
+  installed: boolean;
+  connected: boolean;
+  /** 등록된 실행 경로가 현재 앱 위치와 일치하는지 */
+  upToDate: boolean;
+  error?: string;
+}
+
+export interface McpStatus {
+  entry: { command: string; args: string[]; env: Record<string, string> };
+  clients: McpClientStatus[];
+}
+
+export interface McpApi {
+  status(): Promise<McpStatus>;
+  connect(id: string): Promise<McpStatus>;
+  disconnect(id: string): Promise<McpStatus>;
+}
+
 declare global {
   interface Window {
     bullsNote?: {
@@ -56,6 +79,7 @@ declare global {
       notification?: NotificationApi;
       print?: PrintApi;
       googleAuth?: GoogleAuthApi;
+      mcp?: McpApi;
     };
   }
 }

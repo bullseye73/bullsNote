@@ -42,6 +42,11 @@ contextBridge.exposeInMainWorld('bullsNote', {
   print: {
     exportPdf: (title) => ipcRenderer.invoke('print:exportPdf', { title }),
   },
+  mcp: {
+    status: () => ipcRenderer.invoke('mcp:status'),
+    connect: (id) => ipcRenderer.invoke('mcp:connect', id),
+    disconnect: (id) => ipcRenderer.invoke('mcp:disconnect', id),
+  },
   googleAuth: {
     startLogin: (opts) => ipcRenderer.invoke('googleAuth:startLogin', opts),
     refreshToken: (opts) => ipcRenderer.invoke('googleAuth:refreshToken', opts),

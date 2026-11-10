@@ -1,6 +1,6 @@
 {
   "name": "bullsnote",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "description": "BullsNote - 크로스플랫폼 지식관리 메모장 (Notion-like, hashtag 지원)",
   "author": {
     "name": "BullsNote",
@@ -65,6 +65,9 @@
     "directories": {
       "output": "release"
     },
+    "asarUnpack": [
+      "electron/mcp/**"
+    ],
     "files": [
       "dist/**/*",
       "electron/**/*",
