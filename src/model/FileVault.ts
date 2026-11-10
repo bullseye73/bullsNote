@@ -110,11 +110,37 @@ export function parseNoteFile(id: string, text: string): ParsedNoteFile | null {
 const DATA_URL_IMG_RE = /!\[([^\]]*)\]\(data:(image\/[A-Za-z0-9.+-]+);base64,([A-Za-z0-9+/=]+)\)/g;
 const ASSET_IMG_RE = /!\[([^\]]*)\]\(assets\/([A-Za-z0-9_-]+\.[A-Za-z0-9]+)\)/g;
 
+/** electron/vault-ipc.js 의 ASSET_EXTS 와 동일하게 유지 */
+const ASSET_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif']);
+
 function extOf(mime: string): string {
   const sub = mime.split('/')[1] || 'png';
   if (sub === 'jpeg') return 'jpg';
   if (sub === 'svg+xml') return 'svg';
   return sub.replace(/[^A-Za-z0-9]/g, '') || 'png';
+}
+
+/** 이미지 데이터 콘텐츠 해시 (동일 이미지 = 동일 파일명 → 저장마다 새 에셋 파일이 생기지 않도록) */
+async function contentHash(b64: string): Promise<string> {
+  try {
+    if (globalThis.crypto?.subtle) {
+      const digest = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(b64));
+      return Array.from(new Uint8Array(digest).slice(0, 12))
+        .map((x) => x.toString(16).padStart(2, '0'))
+        .join('');
+    }
+  } catch {
+    /* fallback below */
+  }
+  // FNV-1a 64bit 근사 (subtle 미지원 환경 폴백)
+  let h1 = 0x811c9dc5;
+  let h2 = 0x01000193;
+  for (let i = 0; i < b64.length; i++) {
+    const c = b64.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 0x01000193);
+    h2 = Math.imul(h2 ^ c, 0x811c9dc5);
+  }
+  return (h1 >>> 0).toString(16).padStart(8, '0') + (h2 >>> 0).toString(16).padStart(8, '0');
 }
 
 /** 저장용: dataURL 이미지 -> assets/ 파일로 분리 */
@@ -126,11 +152,16 @@ export async function swapDataUrlsToAssets(
   const jobs: Array<Promise<{ from: string; to: string }>> = [];
   let m: RegExpExecArray | null;
   DATA_URL_IMG_RE.lastIndex = 0;
-  let i = 0;
   while ((m = DATA_URL_IMG_RE.exec(md)) !== null) {
     const [full, alt, mime, b64] = m;
-    const name = `${noteId}-${Date.now().toString(36)}-${i++}.${extOf(mime)}`;
-    jobs.push(writeAsset(name, b64).then((rel) => ({ from: full, to: `![${alt}](${rel})` })));
+    const ext = extOf(mime);
+    // 메인 프로세스 허용 확장자 외(예: tiff, x-icon)는 파일로 분리하지 않고 본문 dataURL 유지
+    if (!ASSET_EXTS.has(ext.toLowerCase())) continue;
+    jobs.push(
+      contentHash(b64)
+        .then((hash) => writeAsset(`${noteId}-${hash}.${ext}`, b64))
+        .then((rel) => ({ from: full, to: `![${alt}](${rel})` })),
+    );
   }
   if (jobs.length === 0) return md;
   const reps = await Promise.all(jobs);

@@ -1,6 +1,6 @@
 {
   "name": "bullsnote",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "BullsNote - 크로스플랫폼 지식관리 메모장 (Notion-like, hashtag 지원)",
   "author": {
     "name": "BullsNote",
@@ -26,7 +26,6 @@
     "dist:linux": "npm run build && electron-builder --linux",
     "dist:mac": "npm run build && electron-builder --mac"
   },
-  "dependencies": {},
   "devDependencies": {
     "@blocknote/ariakit": "0.55.0",
     "@blocknote/core": "0.55.0",
@@ -38,8 +37,8 @@
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.3",
     "concurrently": "^9.0.1",
-    "electron": "^32.1.2",
-    "electron-builder": "^25.1.8",
+    "electron": "^44.10.2",
+    "electron-builder": "^26.18.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "shiki": "^4.5.0",

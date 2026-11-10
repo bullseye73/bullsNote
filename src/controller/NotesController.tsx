@@ -75,6 +75,21 @@ function getVault(): VaultApi | null {
 
 type Headless = { toBlocks(md: string): Promise<unknown[]>; toMarkdown(contentJson: string): string };
 let headlessCache: Headless | null = null;
+/** 브라우저 유휴 시간에 콜백 실행 (미지원 환경은 setTimeout 폴백). 취소 함수 반환 */
+function runWhenIdle(cb: () => void, timeout = 2000): () => void {
+  if (typeof window.requestIdleCallback === 'function') {
+    const id = window.requestIdleCallback(() => cb(), { timeout });
+    return () => window.cancelIdleCallback(id);
+  }
+  const id = window.setTimeout(cb, 0);
+  return () => window.clearTimeout(id);
+}
+
+/** 긴 비동기 루프 중간에 이벤트 루프를 양보해 입력·렌더링이 밀리지 않도록 함 */
+function yieldToMain(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 async function getHeadless(): Promise<Headless> {
   if (headlessCache) return headlessCache;
   const { BlockNoteEditor } = await import('@blocknote/core');
@@ -128,6 +143,10 @@ export interface NotesState {
   vaultPath: string;
   vaultError: string;
   storageError: string;
+  /** 현재 편집 중인 노트가 볼트 외부에서 변경되었을 때의 비차단 알림 상태 */
+  externalChange: { noteId: string; title: string } | null;
+  acceptExternalChange: () => void;
+  dismissExternalChange: () => void;
   activeAlarmNote: Note | null;
   /** Google Drive 클라우드 연동 상태 */
   googleConnected: boolean;
@@ -296,6 +315,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const [vaultPath, setVaultPath] = useState('');
   const [vaultError, setVaultError] = useState('');
   const [storageError, setStorageError] = useState('');
+  const [externalChange, setExternalChange] = useState<{ noteId: string; title: string } | null>(null);
+  const externalApplyRef = useRef<(() => void) | null>(null);
   const [vaultGen, setVaultGen] = useState(0);
   const vaultInitGenRef = useRef(-1);
   const [search, setSearch] = useState('');
@@ -470,6 +491,12 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isSavePendingRef = useRef(false);
   const flushSaveRef = useRef<(() => Promise<void>) | null>(null);
+  /** 마지막으로 직렬화·저장을 마친 노트 객체 (불변 상태이므로 참조가 같으면 변경 없음) */
+  const lastProcessedNoteRef = useRef(new Map<string, Note>());
+  /** 마지막으로 기록한 sidecar 입력 (projects 및 노트별 history 참조) */
+  const lastSidecarRef = useRef<{ projects: unknown; histories: Map<string, unknown> } | null>(null);
+  /** 볼트 저장 직렬화 체인 (저장 작업이 겹쳐 실행되지 않도록) */
+  const saveChainRef = useRef<Promise<void>>(Promise.resolve());
 
   const doLocalSave = useCallback(
     async (currentNotes: Note[], seq: number) => {
@@ -507,14 +534,18 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     if (localSaveTimerRef.current) {
       clearTimeout(localSaveTimerRef.current);
     }
+    // 전체 노트 JSON 직렬화 + localStorage 동기 기록은 메인 스레드를 점유하므로
+    // 입력이 잠잠해진 뒤(800ms) 브라우저 유휴 시간에 실행해 타이핑 중 끊김(ANR)을 줄임
+    let cancelIdle: (() => void) | null = null;
     localSaveTimerRef.current = setTimeout(() => {
-      void runSave();
-    }, 400);
+      cancelIdle = runWhenIdle(() => void runSave(), 2000);
+    }, 800);
 
     return () => {
       if (localSaveTimerRef.current) {
         clearTimeout(localSaveTimerRef.current);
       }
+      if (cancelIdle) cancelIdle();
     };
   }, [notes, vaultMode, doLocalSave]);
 
@@ -566,6 +597,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!vaultMode || vaultInitGenRef.current === vaultGen) return;
     vaultInitGenRef.current = vaultGen;
+    lastProcessedNoteRef.current.clear();
+    lastSidecarRef.current = null;
     (async () => {
       const vault = getVault()!;
       try {
@@ -610,6 +643,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
             histories: Object.fromEntries(migrated.map((n) => [n.id, n.history])),
           });
           const sortedMigrated = migrated.sort(sortNotes);
+          lastProcessedNoteRef.current = new Map(sortedMigrated.map((n) => [n.id, n]));
           setNotes(sortedMigrated);
           setSelectedId((prev) => {
             if (prev && !isSystemGroupNote(prev) && sortedMigrated.some((n) => n.id === prev)) return prev;
@@ -656,6 +690,11 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
           }
           const { notes: loaded } = ensureTodoProjectAndGroups(loadedProjects, loadedRaw);
           const sortedLoaded = loaded.sort(sortNotes);
+          // 파일에서 그대로 읽은(보정되지 않은) 노트는 이미 디스크와 동일하므로 첫 저장 시 재직렬화 생략
+          const fromDisk = new Set<Note>(loadedRaw);
+          lastProcessedNoteRef.current = new Map(
+            sortedLoaded.filter((n) => fromDisk.has(n)).map((n) => [n.id, n]),
+          );
           setNotes(sortedLoaded);
           setSelectedId((prev) => {
             if (prev && !isSystemGroupNote(prev) && sortedLoaded.some((n) => n.id === prev)) return prev;
@@ -696,6 +735,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         const seen = new Set<string>();
         for (const n of notes) {
           seen.add(n.id);
+          // 변경되지 않은 노트(동일 객체 참조)는 Markdown 변환·이미지 분리·IPC를 모두 생략
+          if (lastProcessedNoteRef.current.get(n.id) === n) continue;
           const body = await swapDataUrlsToAssets(
             headless.toMarkdown(n.content),
             n.id,
@@ -703,26 +744,47 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
           );
           const text = serializeNoteFile(n, body);
           if (lastSavedRef.current.get(n.id) !== text) {
-            await vault.write(n.id, text);
+            const written = await vault.write(n.id, text);
             lastSavedRef.current.set(n.id, text);
-            const { files } = await vault.list();
-            const f = files.find((x) => x.id === n.id);
-            if (f) lastWrittenRef.current.set(n.id, f.mtimeMs);
+            if (typeof written === 'number') {
+              lastWrittenRef.current.set(n.id, written);
+            } else {
+              // 구버전 메인 프로세스 호환 (mtime 미반환)
+              const { files } = await vault.list();
+              const f = files.find((x) => x.id === n.id);
+              if (f) lastWrittenRef.current.set(n.id, f.mtimeMs);
+            }
           }
+          lastProcessedNoteRef.current.set(n.id, n);
+          // 변경 노트가 많을 때 UI 이벤트가 처리될 수 있도록 매 노트마다 이벤트 루프 양보
+          await yieldToMain();
         }
         for (const id of [...lastSavedRef.current.keys()]) {
           if (!seen.has(id)) {
             await vault.delete(id);
             lastSavedRef.current.delete(id);
             lastWrittenRef.current.delete(id);
+            lastProcessedNoteRef.current.delete(id);
           }
         }
-        const prev = (await vault.readSidecar()) as Record<string, unknown>;
-        await vault.writeSidecar({
-          ...prev,
-          projects,
-          histories: Object.fromEntries(notes.map((n) => [n.id, n.history])),
-        });
+        const prevSidecar = lastSidecarRef.current;
+        const sidecarChanged =
+          !prevSidecar ||
+          prevSidecar.projects !== projects ||
+          prevSidecar.histories.size !== notes.length ||
+          notes.some((n) => prevSidecar.histories.get(n.id) !== n.history);
+        if (sidecarChanged) {
+          const prev = (await vault.readSidecar()) as Record<string, unknown>;
+          await vault.writeSidecar({
+            ...prev,
+            projects,
+            histories: Object.fromEntries(notes.map((n) => [n.id, n.history])),
+          });
+          lastSidecarRef.current = {
+            projects,
+            histories: new Map(notes.map((n) => [n.id, n.history as unknown])),
+          };
+        }
         setVaultError('');
       } catch (e) {
         setVaultError(`저장 실패: ${e instanceof Error ? e.message : e}`);
@@ -735,7 +797,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
-      void doSave();
+      // 이전 저장이 진행 중이면 끝난 뒤 실행 (동시 실행으로 인한 중복 IPC·경합 방지)
+      saveChainRef.current = saveChainRef.current.then(doSave, doSave);
     }, 1200);
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
@@ -859,10 +922,12 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
               ),
             );
           if (selectedIdRef.current === f.id) {
-            if (confirm(`"${parsed.title}" 노트가 외부에서 변경되었습니다. 외부 버전으로 다시 불러올까요?`)) {
+            // 동기 confirm()은 응답 전까지 렌더러 전체(저장·알람·동기화)를 정지시키므로 비차단 알림으로 대체
+            externalApplyRef.current = () => {
               apply();
               lastSavedRef.current.set(f.id, text);
-            }
+            };
+            setExternalChange({ noteId: f.id, title: parsed.title });
           } else {
             apply();
             lastSavedRef.current.set(f.id, text);
@@ -894,8 +959,24 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     setVaultPath(p);
     lastSavedRef.current.clear();
     lastWrittenRef.current.clear();
+    lastProcessedNoteRef.current.clear();
+    lastSidecarRef.current = null;
+    externalApplyRef.current = null;
+    setExternalChange(null);
     setReady(false);
     setVaultGen((g) => g + 1);
+  }, []);
+
+  const acceptExternalChange = useCallback(() => {
+    const fn = externalApplyRef.current;
+    externalApplyRef.current = null;
+    setExternalChange(null);
+    if (fn) fn();
+  }, []);
+
+  const dismissExternalChange = useCallback(() => {
+    externalApplyRef.current = null;
+    setExternalChange(null);
   }, []);
 
   const resync = useCallback(async () => {
@@ -2633,6 +2714,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       vaultPath,
       vaultError,
       storageError,
+      externalChange,
+      acceptExternalChange,
+      dismissExternalChange,
       activeAlarmNote,
       googleConnected,
       googleConfig,
@@ -2735,6 +2819,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       vaultPath,
       vaultError,
       storageError,
+      externalChange,
+      acceptExternalChange,
+      dismissExternalChange,
       activeAlarmNote,
       googleConnected,
       googleConfig,

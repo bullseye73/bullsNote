@@ -1315,6 +1315,9 @@ export function NoteEditorView({
     setActiveTag,
     restoreHistory,
     storageError,
+    externalChange,
+    acceptExternalChange,
+    dismissExternalChange,
     hasEncryptedNotes,
     decryptAllLegacyNotes,
   } = useNotes();
@@ -1854,6 +1857,24 @@ export function NoteEditorView({
           >
             ⚠️ {storageError}
           </Badge>
+        )}
+
+        {externalChange && externalChange.noteId === selected.id && (
+          <Alert color="blue" variant="light" mb={8} title="외부에서 변경된 노트">
+            <Group justify="space-between" gap="xs" wrap="wrap">
+              <Text size="sm">
+                "{externalChange.title || '제목 없음'}" 노트가 외부에서 변경되었습니다. 외부 버전으로 다시 불러올까요?
+              </Text>
+              <Group gap={6}>
+                <Button size="xs" onClick={acceptExternalChange}>
+                  다시 불러오기
+                </Button>
+                <Button size="xs" variant="default" onClick={dismissExternalChange}>
+                  현재 내용 유지
+                </Button>
+              </Group>
+            </Group>
+          </Alert>
         )}
 
         {(hasEncryptedNotes || hasLegacyEncryptedText(selected.content)) && (

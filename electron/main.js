@@ -1,10 +1,12 @@
-const { app, BrowserWindow, nativeImage, shell, ipcMain, Notification, Menu, MenuItem, dialog, nativeTheme } = require('electron');
+const { app, BrowserWindow, nativeImage, shell, Notification, Menu, MenuItem, dialog, nativeTheme } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const packageJson = require('../package.json');
 const { registerVaultIpc } = require('./vault-ipc');
 const { registerGoogleAuthIpc } = require('./google-auth-ipc');
 const { setupTray } = require('./tray');
+const { isAppUrl } = require('./app-origin');
+const { secureHandle } = require('./ipc-guard');
 
 const isDev = !app.isPackaged;
 app.name = 'BullsNote';
@@ -92,6 +94,42 @@ function getPlatformIconPath() {
   return path.join(__dirname, 'assets', fileName);
 }
 
+/** 내부 노트 링크(#note-ID, note://ID)에서 노트 ID 추출 */
+function extractNoteId(url) {
+  if (typeof url !== 'string') return null;
+  const m = url.match(/#note-([a-zA-Z0-9_-]+)/) || url.match(/^note:\/\/([a-zA-Z0-9_-]+)/);
+  return m && m[1] ? m[1] : null;
+}
+
+/** http/https 만 시스템 브라우저로 오픈 (file:, javascript:, 커스텀 스킴 등은 무시) */
+function openExternalSafe(url) {
+  try {
+    const u = new URL(url);
+    if (u.protocol === 'http:' || u.protocol === 'https:') {
+      shell.openExternal(u.toString()).catch(() => {});
+    }
+  } catch {
+    /* invalid url */
+  }
+}
+
+// 모든 webContents(혹시 생길 수 있는 자식 창·webview 포함)에 대한 전역 방어선
+app.on('web-contents-created', (_event, contents) => {
+  contents.on('will-attach-webview', (e) => e.preventDefault());
+  contents.setWindowOpenHandler(({ url }) => {
+    openExternalSafe(url);
+    return { action: 'deny' };
+  });
+  contents.on('will-navigate', (e, url) => {
+    if (!isAppUrl(url) && !extractNoteId(url)) {
+      e.preventDefault();
+    }
+  });
+  contents.on('will-redirect', (e, url) => {
+    if (!isAppUrl(url)) e.preventDefault();
+  });
+});
+
 function createWindow() {
   const iconPath = getPlatformIconPath();
   const appVersion = packageJson.version || app.getVersion();
@@ -121,7 +159,9 @@ function createWindow() {
       additionalArguments: [`--app-version=${appVersion}`],
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
       spellcheck: true,
     },
     autoHideMenuBar: true,
@@ -174,56 +214,28 @@ function createWindow() {
   });
 
   // 외부 링크 클릭 시 새 Electron 창 대신 시스템 기본 브라우저로 오픈
+  // (앱 내부에 어떤 자식 창도 만들지 않음: 자식 창은 preload를 상속하므로 외부 페이지에 API가 노출될 수 있음)
   win.webContents.setWindowOpenHandler(({ url }) => {
-    // Google OAuth 팝업 허용 (Google Identity Services 및 OAuth 팝업)
-    if (url.startsWith('https://accounts.google.com/')) {
-      return {
-        action: 'allow',
-        overrideBrowserWindowOptions: {
-          width: 520,
-          height: 680,
-          autoHideMenuBar: true,
-        },
-      };
-    }
-
-    // 내부 URL 또는 노트 내부 링크(#note-, note://)인 경우 외부 브라우저 오픈 차단
-    const isDevUrl = isDev && url.startsWith('http://localhost:5190');
-    const isInternalNote = url.includes('#note-') || url.startsWith('note:');
-    if (isDevUrl || isInternalNote || url.startsWith('file://')) {
-      const noteMatch = url.match(/#note-([a-zA-Z0-9_-]+)/) || url.match(/^note:\/\/([a-zA-Z0-9_-]+)/);
-      if (noteMatch && noteMatch[1]) {
-        win.webContents.send('alarm:openNote', noteMatch[1]);
-      }
+    const noteId = extractNoteId(url);
+    if (noteId) {
+      win.webContents.send('alarm:openNote', noteId);
       return { action: 'deny' };
     }
-
-    if (url.startsWith('http:') || url.startsWith('https:')) {
-      shell.openExternal(url);
-    }
+    openExternalSafe(url);
     return { action: 'deny' };
   });
 
-  // 본문 내 외부 URL 탐색 방지 (개발 서버 또는 로컬 빌드 파일 외 외부 URL 이동 차단)
+  // 본문 내 링크로 인한 메인 창 이동 방지 (앱 index.html 외 모든 문서 이동 차단)
   win.webContents.on('will-navigate', (event, url) => {
-    const isDevUrl = isDev && url.startsWith('http://localhost:5190');
-    const isProdUrl = !isDev && url.startsWith('file://');
-    const isInternalNote = url.includes('#note-') || url.startsWith('note:');
-
-    if (isInternalNote) {
+    const noteId = extractNoteId(url);
+    if (noteId) {
       event.preventDefault();
-      const noteMatch = url.match(/#note-([a-zA-Z0-9_-]+)/) || url.match(/^note:\/\/([a-zA-Z0-9_-]+)/);
-      if (noteMatch && noteMatch[1]) {
-        win.webContents.send('alarm:openNote', noteMatch[1]);
-      }
+      win.webContents.send('alarm:openNote', noteId);
       return;
     }
-
-    if (!isDevUrl && !isProdUrl) {
+    if (!isAppUrl(url)) {
       event.preventDefault();
-      if (url.startsWith('http:') || url.startsWith('https:')) {
-        shell.openExternal(url);
-      }
+      openExternalSafe(url);
     }
   });
 
@@ -272,7 +284,7 @@ app.whenReady().then(() => {
   registerVaultIpc(app);
   registerGoogleAuthIpc(app);
 
-  ipcMain.handle('window:setTitleBarTheme', (_event, isDark) => {
+  secureHandle('window:setTitleBarTheme', (_event, isDark) => {
     if (!mainWindow || mainWindow.isDestroyed()) return false;
     if (process.platform !== 'darwin' && typeof mainWindow.setTitleBarOverlay === 'function') {
       try {
@@ -288,12 +300,12 @@ app.whenReady().then(() => {
     return true;
   });
 
-  ipcMain.handle('notification:show', (event, { title, body, noteId }) => {
+  secureHandle('notification:show', (event, { title, body, noteId }) => {
     if (!Notification.isSupported()) return false;
     try {
       const notif = new Notification({
-        title: title || 'BullsNote 알람',
-        body: body || '',
+        title: String(title || 'BullsNote 알람').slice(0, 200),
+        body: String(body || '').slice(0, 500),
         icon: path.join(__dirname, 'assets', process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
         silent: false,
       });
@@ -302,7 +314,9 @@ app.whenReady().then(() => {
           if (mainWindow.isMinimized()) mainWindow.restore();
           mainWindow.show();
           mainWindow.focus();
-          mainWindow.webContents.send('alarm:openNote', noteId);
+          if (typeof noteId === 'string' && /^[a-zA-Z0-9_-]+$/.test(noteId)) {
+            mainWindow.webContents.send('alarm:openNote', noteId);
+          }
         }
       });
       notif.show();
@@ -312,11 +326,11 @@ app.whenReady().then(() => {
     }
   });
 
-  ipcMain.handle('print:exportPdf', async (event, { title }) => {
+  secureHandle('print:exportPdf', async (event, { title }) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) return { success: false, error: '창을 찾을 수 없습니다.' };
 
-    const safeTitle = (title || '노트').replace(/[/\\?%*:|"<>]/g, '_').trim() || '노트';
+    const safeTitle = String(title || '노트').slice(0, 120).replace(/[/\\?%*:|"<>]/g, '_').trim() || '노트';
     const { canceled, filePath } = await dialog.showSaveDialog(win, {
       title: 'PDF로 내보내기',
       defaultPath: `${safeTitle}.pdf`,

@@ -4,7 +4,8 @@ export interface VaultApi {
   pickDir(): Promise<string | null>;
   list(): Promise<{ root: string; files: Array<{ id: string; mtimeMs: number }> }>;
   read(id: string): Promise<string | null>;
-  write(id: string, text: string): Promise<boolean>;
+  /** 저장 후 파일 mtime(ms) 반환 (구버전 메인 프로세스는 true) */
+  write(id: string, text: string): Promise<number | boolean>;
   delete(id: string): Promise<boolean>;
   writeAsset(name: string, base64: string): Promise<string>;
   readAsset(name: string): Promise<string | null>;

@@ -1,5 +1,6 @@
 // electron/google-auth-ipc.js: Google OAuth 2.0 Loopback (RFC 8252 PKCE) 핸들러
-const { ipcMain, shell, BrowserWindow } = require('electron');
+const { shell, BrowserWindow } = require('electron');
+const { secureHandle } = require('./ipc-guard');
 const http = require('http');
 const crypto = require('crypto');
 
@@ -8,7 +9,7 @@ function base64Url(buf) {
 }
 
 function registerGoogleAuthIpc(app) {
-  ipcMain.handle('googleAuth:startLogin', async (_event, options = {}) => {
+  secureHandle('googleAuth:startLogin', async (_event, options = {}) => {
     const clientId = (options.clientId || '').trim();
     const clientSecret = (options.clientSecret || '').trim();
 
@@ -288,7 +289,7 @@ function registerGoogleAuthIpc(app) {
     });
   });
 
-  ipcMain.handle('googleAuth:refreshToken', async (_event, options = {}) => {
+  secureHandle('googleAuth:refreshToken', async (_event, options = {}) => {
     const clientId = (options.clientId || '').trim();
     const clientSecret = (options.clientSecret || '').trim();
     const refreshToken = (options.refreshToken || '').trim();
