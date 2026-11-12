@@ -85,6 +85,8 @@ import { DatePickerModal } from './DatePickerModal';
 import { PrintPreviewModal } from './PrintPreviewModal';
 import { InlineHistoryDiffView } from './InlineHistoryDiffView';
 import { NoteTableOfContents } from './NoteTableOfContents';
+import { MobileNoteHeader, type NoteShareActions } from './MobileNoteHeader';
+import { KeyboardAccessoryBar } from './mobile/KeyboardAccessoryBar';
 import { EditorAiModal } from './EditorAiModal';
 import { formatDateIso } from '../model/dateUtils';
 import { getDueDateBadgeInfo, toIsoDateLocal } from '../model/PlannerService';
@@ -134,10 +136,16 @@ function BlockEditor({
   note,
   backlinks,
   onEditorInit,
+  compact = false,
+  onScrollContainerReady,
 }: {
   note: Note;
   backlinks: Note[];
   onEditorInit?: (editor: AnyEditor) => void;
+  /** 모바일: 서식 툴바는 편집 중에만 키보드 위에 표시, 플로팅 목차 숨김 */
+  compact?: boolean;
+  /** 본문 스크롤 컨테이너를 상위(헤더 숨김·목차 시트)에 전달 */
+  onScrollContainerReady?: (el: HTMLDivElement | null) => void;
 }) {
   const {
     updateContent,
@@ -158,7 +166,16 @@ function BlockEditor({
   const scheme = useComputedColorScheme('light');
   const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [datePickerInitialDate, setDatePickerInitialDate] = useState<Date | undefined>(undefined);
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null);
+  const attachScrollContainer = useCallback(
+    (el: HTMLDivElement | null) => {
+      scrollContainerRef.current = el;
+      setScrollEl(el);
+      onScrollContainerReady?.(el);
+    },
+    [onScrollContainerReady]
+  );
   const hiddenFileInputRef = useRef<HTMLInputElement>(null);
 
   const initialContent = useMemo(() => {
@@ -793,14 +810,26 @@ function BlockEditor({
         onChange={handleFilePickedFromInput}
       />
 
-      <div className="no-print">
-        <EditorToolbar
-          editor={editor}
-          onOpenDatePicker={() => handleOpenDatePicker()}
-          onInsertToday={handleInsertToday}
-          onTriggerAi={handleTriggerAi}
-        />
-      </div>
+      {compact ? (
+        <KeyboardAccessoryBar scope={scrollEl}>
+          <EditorToolbar
+            variant="accessory"
+            editor={editor}
+            onOpenDatePicker={() => handleOpenDatePicker()}
+            onInsertToday={handleInsertToday}
+            onTriggerAi={handleTriggerAi}
+          />
+        </KeyboardAccessoryBar>
+      ) : (
+        <div className="no-print">
+          <EditorToolbar
+            editor={editor}
+            onOpenDatePicker={() => handleOpenDatePicker()}
+            onInsertToday={handleInsertToday}
+            onTriggerAi={handleTriggerAi}
+          />
+        </div>
+      )}
 
       {/* 할일 항목인 경우 상단 원클릭 상태 전환 + 플래너 일정(Start Date / Working Days / Due Date 09:00 알림) 통합 바 */}
       {note.projectId === TODO_PROJECT_ID && !note.systemGroupType && (
@@ -1062,10 +1091,10 @@ function BlockEditor({
         }}
       >
         {/* 우측 상단 고정 목차 (TOC) */}
-        <NoteTableOfContents editor={editor} scrollContainerRef={scrollContainerRef} />
+        {!compact && <NoteTableOfContents editor={editor} scrollContainerRef={scrollContainerRef} />}
 
         <div
-          ref={scrollContainerRef}
+          ref={attachScrollContainer}
           style={{
             flex: 1,
             minHeight: 0,
@@ -1328,6 +1357,7 @@ export function NoteEditorView({
   } | null>(null);
   const [printPreviewOpen, setPrintPreviewOpen] = useState(false);
   const [currentEditor, setCurrentEditor] = useState<AnyEditor | null>(null);
+  const [editorScrollEl, setEditorScrollEl] = useState<HTMLDivElement | null>(null);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
 
   const [recoveryPw, setRecoveryPw] = useState('');
@@ -1463,13 +1493,31 @@ export function NoteEditorView({
   const colorCfg = getPastelConfig(selected.color);
   const isNoteLocked = false;
 
+  // 모바일 상단바: 바로 위 상위 노트(없으면 프로젝트) 이름만 표시
+  const parentNode = pathNodes.length > 1 ? pathNodes[pathNodes.length - 2] : null;
+  const mobileLocationLabel = parentNode
+    ? parentNode.title || '제목 없음'
+    : currentProject
+      ? `${currentProject.icon ?? ''} ${currentProject.name}`.trim()
+      : '노트';
+  const mobileShareActions: NoteShareActions = {
+    printPreview: () => setPrintPreviewOpen(true),
+    copyMarkdown: () => void handleCopyMarkdown(),
+    copyHtml: () => void handleCopyHtml(),
+    copyPlainText: () => void handleCopyPlainText(),
+    exportPdf: () => void handleExportPdf(),
+    downloadMarkdown: handleDownloadMarkdown,
+    downloadHtml: handleDownloadHtml,
+    nativeShare: canNativeShare() ? () => void handleNativeShare() : undefined,
+  };
+
   // ready 이후에만 렌더되므로 content는 블록 JSON이 보장됨 (손상 시 문단 폴백)
   const editorKey = `${selected.id}`;
 
   return (
     <Stack
-      gap="xs"
-      p={isCompact ? 'xs' : 'md'}
+      gap={isCompact ? 0 : 'xs'}
+      p={isCompact ? 0 : 'md'}
       h="100%"
       className="note-editor-stack"
       style={{
@@ -1490,8 +1538,29 @@ export function NoteEditorView({
         </div>
       </div>
 
-      {/* 화면용 브레드크럼 및 알람/색상 뱃지 */}
-      <div className="no-print">
+      {isCompact && (
+        <MobileNoteHeader
+          note={selected}
+          locationLabel={mobileLocationLabel}
+          onBack={onBackToList}
+          editor={currentEditor}
+          scrollEl={editorScrollEl}
+          locked={isNoteLocked}
+          feedback={copyFeedback}
+          share={mobileShareActions}
+          onOpenHistory={() => setHistoryOpen(true)}
+          onTitleChange={(title) => updateTitle(selected.id, title)}
+          onColorChange={(colorId) => updateColor(selected.id, colorId)}
+          onTogglePin={() => togglePin(selected.id)}
+          onToggleFavorite={() => toggleFavorite(selected.id)}
+          onTagClick={setActiveTag}
+        />
+      )}
+
+      {/* 화면용 브레드크럼 및 알람/색상 뱃지 (데스크톱·태블릿) */}
+      <div className="no-print" style={isCompact ? { padding: '0 8px' } : undefined}>
+        {!isCompact && (
+          <>
         <Group justify="space-between" align="center" wrap="nowrap" mb={6}>
           <Group gap={4} wrap="nowrap" style={{ overflow: 'hidden', minWidth: 0, flex: 1 }}>
             {onBackToList && (
@@ -1840,6 +1909,8 @@ export function NoteEditorView({
             {`${noteBodyText(selected.content).length}자`}
           </Text>
         </Group>
+          </>
+        )}
         {storageError && (
           <Badge
             size="md"
@@ -1966,6 +2037,8 @@ export function NoteEditorView({
               note={selected}
               backlinks={backlinks}
               onEditorInit={setCurrentEditor}
+              compact={isCompact}
+              onScrollContainerReady={setEditorScrollEl}
             />
           </ErrorBoundary>
         </div>

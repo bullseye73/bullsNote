@@ -33,7 +33,7 @@ import {
   IconSparkles,
 } from '@tabler/icons-react';
 import type { BlockNoteEditor } from '@blocknote/core';
-import { useState } from 'react';
+import { createContext, useContext, useState } from 'react';
 import { AI_ACTIONS_META, AiActionType } from '../model/GeminiService';
 import { SHORTCUTS } from '../model/shortcutUtils';
 
@@ -41,6 +41,10 @@ type AnyEditor = BlockNoteEditor<any, any, any>;
 
 // 클릭 시 에디터 선택(커서)이 풀리지 않도록
 const keepSelection = (e: React.MouseEvent) => e.preventDefault();
+
+// 툴바 변형별 버튼 크기 (모바일 키보드 보조 막대는 터치 영역을 크게)
+type ToolbarVariant = 'default' | 'accessory';
+const ToolSizeContext = createContext<'sm' | 'lg'>('sm');
 
 const TEXT_COLORS = [
   { name: '기본', value: 'default', css: 'var(--mantine-color-text)' },
@@ -65,12 +69,13 @@ const BG_COLORS = [
 ];
 
 function Tool({ label, onClick, children }: { label: string; onClick(): void; children: React.ReactNode }) {
+  const size = useContext(ToolSizeContext);
   return (
-    <Tooltip label={label}>
+    <Tooltip label={label} disabled={size === 'lg'}>
       <ActionIcon
         variant="subtle"
         color="gray"
-        size="sm"
+        size={size}
         onMouseDown={keepSelection}
         onClick={onClick}
         aria-label={label}
@@ -90,14 +95,15 @@ function DropdownTool({
   icon: React.ReactNode;
   children: React.ReactNode;
 }) {
+  const size = useContext(ToolSizeContext);
   return (
     <Menu position="bottom-start" withArrow shadow="md" withinPortal>
       <Menu.Target>
-        <Tooltip label={label}>
+        <Tooltip label={label} disabled={size === 'lg'}>
           <ActionIcon
             variant="subtle"
             color="gray"
-            size="sm"
+            size={size}
             onMouseDown={keepSelection}
             aria-label={label}
             style={{ width: 'auto', padding: '0 5px' }}
@@ -121,12 +127,16 @@ export function EditorToolbar({
   onOpenDatePicker,
   onInsertToday,
   onTriggerAi,
+  variant = 'default',
 }: {
   editor: AnyEditor;
   onOpenDatePicker?: () => void;
   onInsertToday?: () => void;
   onTriggerAi?: (action: AiActionType) => void;
+  /** accessory: 모바일 키보드 위 한 줄 가로 스크롤 막대 (접기 없음, 큰 터치 영역) */
+  variant?: ToolbarVariant;
 }) {
+  const isAccessory = variant === 'accessory';
   const [copied, setCopied] = useState(false);
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     try {
@@ -230,7 +240,7 @@ export function EditorToolbar({
     </Menu>
   );
 
-  if (collapsed) {
+  if (collapsed && !isAccessory) {
     return (
       <Group
         justify="space-between"
@@ -266,22 +276,35 @@ export function EditorToolbar({
   }
 
   return (
+    <ToolSizeContext.Provider value={isAccessory ? 'lg' : 'sm'}>
     <Group
       justify="space-between"
-      wrap="wrap"
+      wrap={isAccessory ? 'nowrap' : 'wrap'}
       gap={4}
       py={4}
       px={6}
-      style={{
-        overflow: 'visible',
-        alignItems: 'center',
-        backgroundColor: 'var(--bn-card-hover)',
-        borderRadius: 8,
-        border: '1px solid var(--bn-border-subtle)',
-      }}
+      className={isAccessory ? 'bn-toolbar-accessory' : undefined}
+      style={
+        isAccessory
+          ? {
+              // 모바일: 한 줄 가로 스크롤 (스크롤바 숨김)
+              overflowX: 'auto',
+              overflowY: 'hidden',
+              alignItems: 'center',
+              WebkitOverflowScrolling: 'touch',
+              scrollbarWidth: 'none',
+            }
+          : {
+              overflow: 'visible',
+              alignItems: 'center',
+              backgroundColor: 'var(--bn-card-hover)',
+              borderRadius: 8,
+              border: '1px solid var(--bn-border-subtle)',
+            }
+      }
       onMouseDown={keepSelection}
     >
-      <Group gap={2} wrap="wrap" style={{ alignItems: 'center' }}>
+      <Group gap={2} wrap={isAccessory ? 'nowrap' : 'wrap'} style={{ alignItems: 'center', flexShrink: 0 }}>
         {/* 실행 취소 / 다시 실행 */}
         <Tool label={`실행 취소 (${SHORTCUTS.undo})`} onClick={() => editor.undo()}>
           <IconArrowBackUp size={15} />
@@ -500,21 +523,24 @@ export function EditorToolbar({
         </Tool>
       </Group>
 
-      <Group gap={4} wrap="nowrap">
+      <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
         {aiMenu}
-        <Tooltip label="상단 서식 툴바 접기 (텍스트 선택 시 플로팅 툴바 사용 가능)">
-          <ActionIcon
-            variant="subtle"
-            color="gray"
-            size="sm"
-            onMouseDown={keepSelection}
-            onClick={toggleCollapsed}
-            aria-label="서식 툴바 접기"
-          >
-            <IconChevronUp size={14} />
-          </ActionIcon>
-        </Tooltip>
+        {!isAccessory && (
+          <Tooltip label="상단 서식 툴바 접기 (텍스트 선택 시 플로팅 툴바 사용 가능)">
+            <ActionIcon
+              variant="subtle"
+              color="gray"
+              size="sm"
+              onMouseDown={keepSelection}
+              onClick={toggleCollapsed}
+              aria-label="서식 툴바 접기"
+            >
+              <IconChevronUp size={14} />
+            </ActionIcon>
+          </Tooltip>
+        )}
       </Group>
     </Group>
+    </ToolSizeContext.Provider>
   );
 }

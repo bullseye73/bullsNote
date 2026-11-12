@@ -47,7 +47,17 @@ const REPEAT_OPTIONS = [
   { value: 'monthly', label: '매월 같은 날짜/시간' },
 ];
 
-export function ReminderPopover({ note, disabled }: { note: Note; disabled?: boolean }) {
+export function ReminderPopover({
+  note,
+  disabled,
+  appearance = 'default',
+}: {
+  note: Note;
+  disabled?: boolean;
+  /** bar: 모바일 상단바용 (테두리 없는 큰 터치 아이콘) */
+  appearance?: 'default' | 'bar';
+}) {
+  const isBar = appearance === 'bar';
   const { setReminder, googleConnected, openGoogleSyncModal } = useNotes();
   const [opened, setOpened] = useState(false);
   const cfg = getPastelConfig(note.color);
@@ -139,7 +149,7 @@ export function ReminderPopover({ note, disabled }: { note: Note; disabled?: boo
       position="bottom-end"
       withArrow
       shadow="md"
-      width={350}
+      width={isBar ? 'min(350px, calc(100vw - 16px))' : 350}
       withinPortal
     >
       <Popover.Target>
@@ -155,8 +165,8 @@ export function ReminderPopover({ note, disabled }: { note: Note; disabled?: boo
           }
         >
           <ActionIcon
-            size="lg"
-            variant={hasActiveReminder ? 'filled' : 'light'}
+            size={isBar ? 40 : 'lg'}
+            variant={hasActiveReminder ? 'filled' : isBar ? 'subtle' : 'light'}
             color={hasActiveReminder ? 'blue' : 'gray'}
             disabled={isLocked}
             onClick={() => {
@@ -169,7 +179,11 @@ export function ReminderPopover({ note, disabled }: { note: Note; disabled?: boo
               color: hasActiveReminder ? '#ffffff' : undefined,
             }}
           >
-            {hasActiveReminder ? <IconBellRinging size={17} /> : <IconBell size={17} />}
+            {hasActiveReminder ? (
+              <IconBellRinging size={isBar ? 21 : 17} />
+            ) : (
+              <IconBell size={isBar ? 21 : 17} />
+            )}
           </ActionIcon>
         </Tooltip>
       </Popover.Target>

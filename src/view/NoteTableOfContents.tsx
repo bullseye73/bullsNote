@@ -60,6 +60,65 @@ interface NoteTableOfContentsProps {
   scrollContainerRef: React.RefObject<HTMLDivElement | null>;
 }
 
+/** 에디터 헤딩 목록·현재 위치 헤딩·이동 함수를 제공하는 재사용 훅 (플로팅 목차·모바일 목차 시트 공용) */
+export function useNoteHeadings(
+  editor: AnyEditor | null,
+  scrollContainerRef: React.RefObject<HTMLElement | null>
+) {
+  const [headings, setHeadings] = useState<HeadingItem[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+
+  // 헤딩 목록 업데이트
+  const updateHeadings = useCallback(() => {
+    setHeadings(editor ? extractHeadings(editor) : []);
+  }, [editor]);
+
+  // 에디터 변경 감지
+  useEffect(() => {
+    updateHeadings();
+    if (!editor) return;
+    const unsubscribe = editor.onChange(() => {
+      updateHeadings();
+    });
+    return () => {
+      if (typeof unsubscribe === 'function') unsubscribe();
+    };
+  }, [editor, updateHeadings]);
+
+  // 스크롤 시 현재 뷰포트에 있는 헤딩 하이라이트 감지
+  const container = scrollContainerRef.current;
+  useEffect(() => {
+    if (!container || headings.length === 0) return;
+
+    const handleScroll = () => {
+      const containerRect = container.getBoundingClientRect();
+      let currentActive = headings[0]?.id || null;
+      for (const h of headings) {
+        const el = document.querySelector(`[data-id="${h.id}"]`);
+        if (el) {
+          if (el.getBoundingClientRect().top <= containerRect.top + 100) {
+            currentActive = h.id;
+          } else {
+            break;
+          }
+        }
+      }
+      setActiveId(currentActive);
+    };
+
+    container.addEventListener('scroll', handleScroll, { passive: true });
+    handleScroll(); // 초기 위치 반영
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, [headings, container]);
+
+  const scrollToHeading = useCallback((id: string) => {
+    setActiveId(id);
+    document.querySelector(`[data-id="${id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, []);
+
+  return { headings, activeId, scrollToHeading };
+}
+
 export function NoteTableOfContents({ editor, scrollContainerRef }: NoteTableOfContentsProps) {
   const scheme = useComputedColorScheme('light');
   const isDark = scheme === 'dark';
@@ -74,62 +133,7 @@ export function NoteTableOfContents({ editor, scrollContainerRef }: NoteTableOfC
     }
   });
 
-  const [headings, setHeadings] = useState<HeadingItem[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
-
-  // 헤딩 목록 업데이트
-  const updateHeadings = useCallback(() => {
-    if (!editor) {
-      setHeadings([]);
-      return;
-    }
-    const extracted = extractHeadings(editor);
-    setHeadings(extracted);
-  }, [editor]);
-
-  // 에디터 변경 감지
-  useEffect(() => {
-    updateHeadings();
-    if (!editor) return;
-
-    // BlockNote 변경 이벤트 구독
-    const unsubscribe = editor.onChange(() => {
-      updateHeadings();
-    });
-    return () => {
-      if (typeof unsubscribe === 'function') unsubscribe();
-    };
-  }, [editor, updateHeadings]);
-
-  // 스크롤 시 현재 뷰포트에 있는 헤딩 하이라이트 감지
-  useEffect(() => {
-    const container = scrollContainerRef.current;
-    if (!container || headings.length === 0) return;
-
-    const handleScroll = () => {
-      const containerRect = container.getBoundingClientRect();
-      let currentActive = headings[0]?.id || null;
-
-      for (const h of headings) {
-        const el = document.querySelector(`[data-id="${h.id}"]`);
-        if (el) {
-          const rect = el.getBoundingClientRect();
-          // 컨테이너 상단 기준 약간의 오프셋 이내에 있는 헤딩 선택
-          if (rect.top <= containerRect.top + 100) {
-            currentActive = h.id;
-          } else {
-            break;
-          }
-        }
-      }
-      setActiveId(currentActive);
-    };
-
-    container.addEventListener('scroll', handleScroll, { passive: true });
-    handleScroll(); // 초기 위치 반영
-
-    return () => container.removeEventListener('scroll', handleScroll);
-  }, [headings, scrollContainerRef]);
+  const { headings, activeId, scrollToHeading } = useNoteHeadings(editor, scrollContainerRef);
 
   const toggleExpanded = () => {
     setExpanded((prev) => {
@@ -143,13 +147,7 @@ export function NoteTableOfContents({ editor, scrollContainerRef }: NoteTableOfC
     });
   };
 
-  const handleHeadingClick = (id: string) => {
-    setActiveId(id);
-    const el = document.querySelector(`[data-id="${id}"]`);
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-  };
+  const handleHeadingClick = scrollToHeading;
 
   // 헤딩이 없는 경우 표시하지 않음
   if (headings.length === 0) {
@@ -272,5 +270,55 @@ export function NoteTableOfContents({ editor, scrollContainerRef }: NoteTableOfC
         </Collapse>
       </Paper>
     </div>
+  );
+}
+
+/** 모바일 목차 시트용 헤딩 목록 (큰 터치 영역, 현재 위치 강조) */
+export function TocTouchList({
+  headings,
+  activeId,
+  onSelect,
+}: {
+  headings: HeadingItem[];
+  activeId: string | null;
+  onSelect: (id: string) => void;
+}) {
+  if (headings.length === 0) {
+    return (
+      <Text size="sm" c="dimmed" py="md" ta="center">
+        본문에 제목(H1~H3)을 추가하면 목차가 표시됩니다
+      </Text>
+    );
+  }
+  return (
+    <ScrollArea.Autosize mah="60dvh" type="auto">
+      <div style={{ display: 'flex', flexDirection: 'column' }}>
+        {headings.map((h) => {
+          const isActive = activeId === h.id;
+          return (
+            <UnstyledButton
+              key={h.id}
+              onClick={() => onSelect(h.id)}
+              style={{
+                minHeight: 44,
+                padding: `0 12px 0 ${12 + Math.max(0, (h.level - 1) * 16)}px`,
+                borderRadius: 8,
+                display: 'flex',
+                alignItems: 'center',
+                fontSize: h.level === 1 ? 15 : 14,
+                fontWeight: isActive || h.level === 1 ? 600 : 400,
+                color: isActive ? 'var(--mantine-color-blue-6)' : 'var(--mantine-color-text)',
+                backgroundColor: isActive ? 'var(--mantine-color-blue-light)' : 'transparent',
+                overflow: 'hidden',
+                whiteSpace: 'nowrap',
+                textOverflow: 'ellipsis',
+              }}
+            >
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{h.text}</span>
+            </UnstyledButton>
+          );
+        })}
+      </div>
+    </ScrollArea.Autosize>
   );
 }

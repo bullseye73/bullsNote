@@ -1049,3 +1049,8 @@ span.shiki,
   }
 }
 
+
+/* 모바일 키보드 보조 도구 막대: 가로 스크롤바 숨김 */
+.bn-toolbar-accessory::-webkit-scrollbar {
+  display: none;
+}

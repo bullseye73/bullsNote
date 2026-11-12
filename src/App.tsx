@@ -326,6 +326,7 @@ function Shell() {
   if (isPhone) {
     const regularProjects = projects.filter((p) => p.id !== TODO_PROJECT_ID);
     const defaultRegularId = regularProjects[0]?.id || DEFAULT_PROJECT_ID;
+    const isEditorPane = mobilePane === 'editor';
 
     return (
       <Box
@@ -339,7 +340,8 @@ function Shell() {
           backgroundColor: 'var(--bn-surface-editor)',
         }}
       >
-        {/* 모바일 상단 헤더 (Safe Area 대응) */}
+        {/* 모바일 상단 헤더 (Safe Area 대응) — 노트 상세에서는 노트 자체 상단바를 쓰므로 숨김 */}
+        {!isEditorPane && (
         <Box
           style={{
             paddingTop: 'env(safe-area-inset-top, 0px)',
@@ -414,9 +416,19 @@ function Shell() {
             </Group>
           </Group>
         </Box>
+        )}
 
         {/* 모바일 중앙 1단 컨텐츠 영역 */}
-        <Box style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+        <Box
+          style={{
+            flex: 1,
+            minHeight: 0,
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column',
+            paddingTop: isEditorPane ? 'env(safe-area-inset-top, 0px)' : undefined,
+          }}
+        >
           <ErrorBoundary title="화면을 표시하지 못했습니다">
             {mobilePane === 'folders' && (
               <Box style={{ flex: 1, minHeight: 0, overflow: 'auto', backgroundColor: 'var(--bn-surface-sidebar)' }}>
@@ -436,7 +448,8 @@ function Shell() {
           </ErrorBoundary>
         </Box>
 
-        {/* 모바일 하단 네비게이션 탭 바 (Safe Area 대응) */}
+        {/* 모바일 하단 네비게이션 탭 바 (Safe Area 대응) — 노트 상세에서는 본문 공간 확보를 위해 숨김 */}
+        {!isEditorPane && (
         <Box
           className="no-print"
           style={{
@@ -576,16 +589,17 @@ function Shell() {
                 justifyContent: 'center',
                 gap: 2,
                 height: '100%',
-                color: mobilePane === 'editor' ? 'var(--mantine-color-blue-6)' : 'var(--bn-text-muted)',
+                color: 'var(--mantine-color-blue-6)',
               }}
             >
               <IconPlus size={19} />
-              <Text size="10px" fw={mobilePane === 'editor' ? 700 : 500}>
+              <Text size="10px" fw={600}>
                 {isTodoBoard ? '새 할일' : '새 노트'}
               </Text>
             </UnstyledButton>
           </Group>
         </Box>
+        )}
 
         <GoogleSyncModal opened={googleSyncModalOpened} onClose={closeGoogleSyncModal} />
         <QuickSearchModal opened={quickSearchModalOpened} onClose={closeQuickSearchModal} />

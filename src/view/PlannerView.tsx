@@ -1957,6 +1957,7 @@ export function PlannerView() {
       },
     }}
   >
+    {!isMobile && (
     <Group
       justify="space-between"
       px="md"
@@ -1983,7 +1984,15 @@ export function PlannerView() {
         닫기 (간트 차트로 돌아가기)
       </Button>
     </Group>
-    <Box style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+    )}
+    <Box
+      style={{
+        flex: 1,
+        minHeight: 0,
+        overflow: 'hidden',
+        paddingTop: isMobile ? 'env(safe-area-inset-top, 0px)' : undefined,
+      }}
+    >
       <NoteEditorView onBackToList={() => setEditorDrawerOpened(false)} isCompact={isMobile} />
     </Box>
   </Drawer>
