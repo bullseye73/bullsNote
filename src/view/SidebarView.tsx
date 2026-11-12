@@ -57,7 +57,7 @@ import {
   flattenProjectTree,
   getProjectDescendantIds,
 } from '../model/Note';
-import { TODO_PROJECT_ID } from '../model/TodoService';
+import { TODO_PROJECT_ID, getEffectiveTodoStatus } from '../model/TodoService';
 import { SHORTCUTS } from '../model/shortcutUtils';
 import { SortMenu } from './SortMenu';
 import { MiniCalendar } from './MiniCalendar';
@@ -160,6 +160,17 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
   const [tagFilterText, setTagFilterText] = useState('');
   const [calendarPopoverOpened, setCalendarPopoverOpened] = useState(false);
   const [tagPopoverOpened, setTagPopoverOpened] = useState(false);
+
+  // 할일관리 뱃지: 해야 할 일(To Do)과 진행 중(Doing)만 집계 (Done·Drop 제외)
+  const activeTodoCount = useMemo(
+    () =>
+      notes.filter((n) => {
+        if (n.projectId !== TODO_PROJECT_ID || n.systemGroupType) return false;
+        const status = getEffectiveTodoStatus(n, notes);
+        return status === 'todo' || status === 'doing';
+      }).length,
+    [notes],
+  );
 
   const sortedFilteredTags = useMemo(() => {
     let list = [...tagCounts];
@@ -524,7 +535,7 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
                   : 'gray'
               }
             >
-              {notes.filter((n) => n.projectId === TODO_PROJECT_ID && !n.systemGroupType).length}
+              {activeTodoCount}
             </Badge>
           }
           styles={{
