@@ -6,6 +6,7 @@ import {
   Badge,
   Button,
   Card,
+  Checkbox,
   Collapse,
   Divider,
   Group,
@@ -32,6 +33,7 @@ import {
   IconDeviceMobile,
   IconExternalLink,
   IconInfoCircle,
+  IconListCheck,
   IconLogout,
   IconRefresh,
   IconSettings,
@@ -39,6 +41,7 @@ import {
 import React, { useEffect, useState } from 'react';
 import { useNotes } from '../controller/NotesController';
 import { GoogleDriveConfig, GoogleDriveService } from '../model/GoogleDriveService';
+import { GoogleTaskList, GoogleTasksService } from '../model/GoogleTasksService';
 import { SecretInput } from './SecretInput';
 
 interface GoogleSyncModalProps {
@@ -68,7 +71,51 @@ export function GoogleSyncModal({ opened, onClose }: GoogleSyncModalProps) {
     importMobileSyncCode,
     logoutGoogle,
     saveGoogleConfig,
+    syncGoogleTasks,
+    isTasksSyncing,
+    tasksSyncError,
   } = useNotes();
+
+  const [taskLists, setTaskLists] = useState<GoogleTaskList[]>([]);
+  const [taskListsLoading, setTaskListsLoading] = useState(false);
+  const [taskListsError, setTaskListsError] = useState<string | null>(null);
+  const [tasksResultText, setTasksResultText] = useState<string | null>(null);
+
+  const tasksEnabled = Boolean(googleConfig?.tasksEnabled);
+  const selectedTaskListIds = googleConfig?.tasksListIds || [];
+
+  const loadTaskLists = async () => {
+    setTaskListsLoading(true);
+    setTaskListsError(null);
+    const res = await GoogleTasksService.listTaskLists();
+    setTaskLists(res.lists);
+    setTaskListsError(res.error || null);
+    setTaskListsLoading(false);
+  };
+
+  // 모달을 열었을 때 Tasks 연동이 켜져 있으면 목록을 불러옴
+  useEffect(() => {
+    if (opened && googleConnected && tasksEnabled) {
+      void loadTaskLists();
+    }
+    if (!opened) setTasksResultText(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opened, googleConnected, tasksEnabled]);
+
+  const toggleTaskList = (listId: string, checked: boolean) => {
+    const next = checked
+      ? Array.from(new Set([...selectedTaskListIds, listId]))
+      : selectedTaskListIds.filter((id) => id !== listId);
+    saveGoogleConfig({ tasksListIds: next });
+  };
+
+  const handleTasksSyncNow = async () => {
+    setTasksResultText(null);
+    const res = await syncGoogleTasks(false);
+    if (res && !res.error) {
+      setTasksResultText(`가져온 할일 ${res.imported}건 · Google에 반영 ${res.pushed}건`);
+    }
+  };
 
   const [autoSync, setAutoSync] = useState(true);
   const [pollingInterval, setPollingInterval] = useState('30000');
@@ -475,6 +522,105 @@ export function GoogleSyncModal({ opened, onClose }: GoogleSyncModalProps) {
             />
           </Stack>
         </Card>
+
+        {/* Google Tasks(할 일 목록) 연동 */}
+        {googleConnected && (
+          <Card withBorder p="sm" radius="md">
+            <Stack gap="sm">
+              <Group justify="space-between" align="center" wrap="nowrap">
+                <Group gap="xs" wrap="nowrap">
+                  <IconListCheck size={18} color="#1a73e8" />
+                  <div>
+                    <Text size="sm" fw={600}>
+                      Google Tasks 연동
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      선택한 Google 할 일 목록을 할일관리로 가져오고, 완료·제목·기한·삭제를 양쪽에 반영합니다.
+                    </Text>
+                  </div>
+                </Group>
+                <Switch
+                  checked={tasksEnabled}
+                  onChange={(e) => saveGoogleConfig({ tasksEnabled: e.currentTarget.checked })}
+                  color="blue"
+                />
+              </Group>
+
+              {tasksEnabled && (
+                <>
+                  <Divider />
+                  <Group justify="space-between" align="center">
+                    <Text size="xs" fw={700} c="dimmed">
+                      가져올 목록
+                    </Text>
+                    <Button
+                      variant="subtle"
+                      size="compact-xs"
+                      leftSection={<IconRefresh size={12} />}
+                      loading={taskListsLoading}
+                      onClick={() => void loadTaskLists()}
+                    >
+                      목록 새로고침
+                    </Button>
+                  </Group>
+
+                  {taskListsLoading && taskLists.length === 0 ? (
+                    <Group gap="xs">
+                      <Loader size="xs" />
+                      <Text size="xs" c="dimmed">
+                        목록을 불러오는 중...
+                      </Text>
+                    </Group>
+                  ) : (
+                    <Stack gap={6}>
+                      {taskLists.map((list) => (
+                        <Checkbox
+                          key={list.id}
+                          size="sm"
+                          label={list.title}
+                          checked={selectedTaskListIds.includes(list.id)}
+                          onChange={(e) => toggleTaskList(list.id, e.currentTarget.checked)}
+                        />
+                      ))}
+                      {!taskListsError && taskLists.length === 0 && (
+                        <Text size="xs" c="dimmed">
+                          Google Tasks에 목록이 없습니다.
+                        </Text>
+                      )}
+                    </Stack>
+                  )}
+
+                  {(taskListsError || tasksSyncError) && (
+                    <Alert color="red" variant="light" p="xs" icon={<IconAlertCircle size={16} />}>
+                      <Text size="xs" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                        {taskListsError || tasksSyncError}
+                      </Text>
+                    </Alert>
+                  )}
+
+                  <Group justify="space-between" align="center">
+                    <Text size="xs" c={tasksResultText ? 'teal' : 'dimmed'}>
+                      {tasksResultText ||
+                        (selectedTaskListIds.length === 0
+                          ? '가져올 목록을 하나 이상 선택하세요.'
+                          : '완료된 할일은 가져오지 않습니다.')}
+                    </Text>
+                    <Button
+                      size="xs"
+                      variant="light"
+                      leftSection={<IconRefresh size={14} />}
+                      loading={isTasksSyncing}
+                      disabled={selectedTaskListIds.length === 0}
+                      onClick={() => void handleTasksSyncNow()}
+                    >
+                      지금 가져오기
+                    </Button>
+                  </Group>
+                </>
+              )}
+            </Stack>
+          </Card>
+        )}
 
         {/* 고급: 커스텀 Google OAuth 클라이언트 ID 설정 */}
         <Card withBorder p="sm" radius="md">

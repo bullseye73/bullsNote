@@ -24,6 +24,10 @@ export interface GoogleDriveConfig {
   user: GoogleUserInfo | null;
   customClientId?: string;
   customClientSecret?: string;
+  /** Google Tasks(할 일 목록) 연동 사용 여부 */
+  tasksEnabled?: boolean;
+  /** 할일관리로 가져올 Google Tasks 목록 ID */
+  tasksListIds?: string[];
 }
 
 export const DEFAULT_GOOGLE_DRIVE_CONFIG: GoogleDriveConfig = {
@@ -515,6 +519,7 @@ class GoogleDriveServiceImpl {
             scope: [
               'https://www.googleapis.com/auth/drive.file',
               'https://www.googleapis.com/auth/calendar.events',
+              'https://www.googleapis.com/auth/tasks',
               'https://www.googleapis.com/auth/userinfo.profile',
               'https://www.googleapis.com/auth/userinfo.email',
             ].join(' '),

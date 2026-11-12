@@ -324,6 +324,20 @@ export interface TodoMeta {
   useWorkingDays?: boolean;
   /** 작업 진행률 (0 ~ 100) */
   progress?: number | null;
+  /** Google Tasks 연동 정보 (Google에서 가져온 할일일 때만 존재) */
+  gtask?: GoogleTaskLink | null;
+}
+
+/** Google Tasks 할일과의 연결 및 마지막 동기화 시점의 값(3-way 병합 기준) */
+export interface GoogleTaskLink {
+  taskId: string;
+  listId: string;
+  /** 마지막 동기화 시점의 제목 */
+  title: string;
+  /** 마지막 동기화 시점의 기한 (YYYY-MM-DD, 없으면 null) */
+  due: string | null;
+  /** 마지막 동기화 시점의 완료 여부 */
+  completed: boolean;
 }
 
 export interface Note {

@@ -53,6 +53,7 @@ import {
 import type { VaultApi } from '../electron';
 import { GoogleDriveConfig, GoogleDriveService, GoogleUserInfo } from '../model/GoogleDriveService';
 import { GoogleCalendarService } from '../model/GoogleCalendarService';
+import { GoogleTasksService, applyTaskSyncResult, hasLocalTaskChanges } from '../model/GoogleTasksService';
 import { hasAnyEncryptedNotes, hasLegacyEncryptedText, recoverEncryptedNotes } from '../model/LegacyDecryptor';
 import { parseSearchQuery, searchNotes } from '../model/SearchService';
 import { formatDateIso } from '../model/dateUtils';
@@ -211,6 +212,10 @@ export interface NotesActions {
   moveNoteToProject(noteId: string, targetProjectId: string): void;
   saveGoogleConfig(config: Partial<GoogleDriveConfig>): void;
   syncWithGoogleDrive(isSilent?: boolean): Promise<void>;
+  /** Google Tasks 양방향 동기화 (isSilent=false: 수동 실행, 결과 요약 반환) */
+  syncGoogleTasks(isSilent?: boolean): Promise<{ imported: number; pushed: number; error?: string } | null>;
+  isTasksSyncing: boolean;
+  tasksSyncError: string | null;
   loginGoogle(): Promise<{ success: boolean; error?: string; user?: GoogleUserInfo }>;
   importMobileSyncCode(code: string): Promise<{ success: boolean; error?: string; user?: GoogleUserInfo }>;
   logoutGoogle(): void;
@@ -1509,6 +1514,18 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
             }
           }
         }
+        // 삭제되는 할일에 연결된 Google Tasks 할일도 함께 삭제 (실패 시 대기열에 남겨 다음 동기화 때 재시도)
+        if (GoogleTasksService.isEnabled()) {
+          let queued = false;
+          for (const n of prev) {
+            const link = n.todoMeta?.gtask;
+            if (doomed.has(n.id) && link?.taskId) {
+              GoogleTasksService.queueDelete(link.listId, link.taskId);
+              queued = true;
+            }
+          }
+          if (queued) void GoogleTasksService.flushPendingDeletes();
+        }
         const next = prev.filter((n) => !doomed.has(n.id));
         // 끊어진 자식 참조 방지: 삭제된 노트를 부모로 가진 노트는 루트(또는 할일 기본 그룹)로 복구
         const fixed = next.map((n) =>
@@ -2161,6 +2178,86 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   syncWithGoogleDriveRef.current = syncWithGoogleDrive;
 
+  // --- Google Tasks 양방향 동기화 ---
+  const [isTasksSyncing, setIsTasksSyncing] = useState(false);
+  const [tasksSyncError, setTasksSyncError] = useState<string | null>(null);
+  const lastTasksSyncAtRef = useRef(0);
+
+  const syncGoogleTasks = useCallback(async (isSilent = true) => {
+    if (!GoogleTasksService.isEnabled()) return null;
+    if (isSilent && GoogleDriveService.isOffline()) return null;
+
+    if (!isSilent) setIsTasksSyncing(true);
+    lastTasksSyncAtRef.current = Date.now();
+    try {
+      const res = await GoogleTasksService.sync(() => notesRef.current, customHolidaysRef.current);
+      if (!res) return null;
+      setTasksSyncError(res.success ? null : res.error || 'Google Tasks 동기화 중 오류가 발생했습니다.');
+
+      if (res.newNotes.length > 0 || res.locals.length > 0) {
+        const holidays = customHolidaysRef.current;
+        const now = Date.now();
+        setNotes((prev) => {
+          const applied = applyTaskSyncResult(prev, res.newNotes, res.locals, now, holidays);
+          return applied.changed ? applied.notes : prev;
+        });
+        // 변경된 할일 노트를 Google Drive에도 반영
+        if (GoogleDriveService.isConnected() && GoogleDriveService.getConfig().autoSync) {
+          if (noteSyncTimerRef.current) clearTimeout(noteSyncTimerRef.current);
+          noteSyncTimerRef.current = setTimeout(() => {
+            void syncWithGoogleDriveRef.current(true);
+          }, 2000);
+        }
+      }
+      return { imported: res.newNotes.length, pushed: res.pushedCount, error: res.error };
+    } finally {
+      if (!isSilent) setIsTasksSyncing(false);
+    }
+  }, []);
+
+  // 앱에서 연결된 할일의 제목·기한·완료 상태가 바뀌면 2초 뒤 Google Tasks에 반영
+  useEffect(() => {
+    if (!ready || !googleConnected || !googleConfig.tasksEnabled) return;
+    const listIds = googleConfig.tasksListIds || [];
+    if (listIds.length === 0 || !hasLocalTaskChanges(notes, listIds)) return;
+    const timer = setTimeout(() => void syncGoogleTasks(true), 2000);
+    return () => clearTimeout(timer);
+  }, [notes, ready, googleConnected, googleConfig.tasksEnabled, googleConfig.tasksListIds, syncGoogleTasks]);
+
+  // Google 쪽 변경 가져오기: 시작 시 1회 + 창 포커스 복귀 + 온라인 복귀 + 폴링 주기 (최소 30초 간격)
+  useEffect(() => {
+    if (!ready || !googleConnected || !googleConfig.tasksEnabled) return;
+    if ((googleConfig.tasksListIds || []).length === 0) return;
+
+    const pull = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (Date.now() - lastTasksSyncAtRef.current < 30_000) return;
+      void syncGoogleTasks(true);
+    };
+    pull();
+
+    window.addEventListener('focus', pull);
+    document.addEventListener('visibilitychange', pull);
+    window.addEventListener('online', pull);
+    const intervalMs = googleConfig.autoSync ? googleConfig.pollingIntervalMs : 0;
+    const interval = intervalMs && intervalMs > 0 ? setInterval(pull, Math.max(intervalMs, 30_000)) : null;
+
+    return () => {
+      if (interval) clearInterval(interval);
+      window.removeEventListener('focus', pull);
+      document.removeEventListener('visibilitychange', pull);
+      window.removeEventListener('online', pull);
+    };
+  }, [
+    ready,
+    googleConnected,
+    googleConfig.tasksEnabled,
+    googleConfig.tasksListIds,
+    googleConfig.autoSync,
+    googleConfig.pollingIntervalMs,
+    syncGoogleTasks,
+  ]);
+
   const saveGoogleConfig = useCallback((patch: Partial<GoogleDriveConfig>) => {
     const updated = GoogleDriveService.saveConfig(patch);
     setGoogleConfigState(updated);
@@ -2189,6 +2286,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   const logoutGoogle = useCallback(() => {
     GoogleDriveService.logout();
+    GoogleTasksService.reset();
+    setTasksSyncError(null);
     setGoogleConfigState(GoogleDriveService.getConfig());
     setGuestMode(false);
     setSyncError(null);
@@ -2767,6 +2866,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       moveNoteToProject,
       saveGoogleConfig,
       syncWithGoogleDrive,
+      syncGoogleTasks,
+      isTasksSyncing,
+      tasksSyncError,
       loginGoogle,
       importMobileSyncCode,
       logoutGoogle,
@@ -2860,6 +2962,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       moveNoteToProject,
       saveGoogleConfig,
       syncWithGoogleDrive,
+      syncGoogleTasks,
+      isTasksSyncing,
+      tasksSyncError,
       loginGoogle,
       importMobileSyncCode,
       logoutGoogle,
