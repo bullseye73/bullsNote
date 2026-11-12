@@ -29,6 +29,7 @@ import {
   IconBellRinging,
   IconCalendar,
   IconCalendarEvent,
+  IconBeach,
   IconCalendarStats,
   IconCheck,
   IconChevronDown,
@@ -76,9 +77,14 @@ import {
   isSystemGroupNote,
 } from '../model/TodoService';
 import { NoteEditorView } from './NoteEditorView';
+import { usePressToDrag } from './mobile/usePressToDrag';
 
 const HEADER_HEIGHT = 58;
 const ROW_HEIGHT = 46;
+/** 이 너비보다 좁은 바는 작업명을 바 바깥 오른쪽에 표시 */
+const BAR_INSIDE_LABEL_MIN_WIDTH = 96;
+/** 모바일 좌측 작업명 열 너비 */
+const MOBILE_NAME_COLUMN_WIDTH = 136;
 const PLANNER_PREFS_STORAGE_KEY = 'bullsnote.planner.viewPrefs.v1';
 
 export type PlannerSortField = 'title' | 'startDate' | 'duration' | 'dueDate';
@@ -91,6 +97,8 @@ interface PlannerViewPrefs {
   sortField: PlannerSortField;
   sortOrder: PlannerSortOrder;
   tableCollapsed: boolean;
+  /** 모바일 전용 목록 접기 상태 (데스크톱 설정과 분리) */
+  tableCollapsedMobile?: boolean;
   collapsedIds: string[];
 }
 
@@ -165,6 +173,12 @@ export function PlannerView() {
   const [tableCollapsed, setTableCollapsed] = useState<boolean>(() =>
     Boolean(initialPrefs.tableCollapsed)
   );
+  const [tableCollapsedMobile, setTableCollapsedMobile] = useState<boolean>(() =>
+    Boolean(initialPrefs.tableCollapsedMobile)
+  );
+  const isTableCollapsed = isMobile ? tableCollapsedMobile : tableCollapsed;
+  const toggleTableCollapsed = () =>
+    (isMobile ? setTableCollapsedMobile : setTableCollapsed)((v) => !v);
   // 트리 행 접기 상태
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(
     () => new Set(Array.isArray(initialPrefs.collapsedIds) ? initialPrefs.collapsedIds : [])
@@ -181,13 +195,14 @@ export function PlannerView() {
         sortField,
         sortOrder,
         tableCollapsed,
+        tableCollapsedMobile,
         collapsedIds: [...collapsedIds],
       };
       localStorage.setItem(PLANNER_PREFS_STORAGE_KEY, JSON.stringify(prefs));
     } catch {
       // ignore storage quota errors
     }
-  }, [scale, statusFilter, sortField, sortOrder, tableCollapsed, collapsedIds]);
+  }, [scale, statusFilter, sortField, sortOrder, tableCollapsed, tableCollapsedMobile, collapsedIds]);
 
   const handleHeaderSortClick = useCallback(
     (field: PlannerSortField) => {
@@ -230,7 +245,11 @@ export function PlannerView() {
     origDuration: number;
     useWorkingDays: boolean;
     deltaDays: number;
+    pointerType?: string;
   } | null>(null);
+  // 드래그로 일정을 옮긴 직후 발생하는 click 이 상세 열기로 이어지지 않도록 차단
+  const suppressBarClickRef = useRef(false);
+  const bindPressToDrag = usePressToDrag();
 
   const leftBodyRef = useRef<HTMLDivElement>(null);
   const rightScrollRef = useRef<HTMLDivElement>(null);
@@ -528,13 +547,19 @@ export function PlannerView() {
   useEffect(() => {
     if (!dragState) return;
 
-    const handleMouseMove = (e: MouseEvent) => {
+    const handleMouseMove = (e: PointerEvent) => {
       const dx = e.clientX - dragState.initialX;
       const deltaDays = Math.round(dx / dayWidth);
       setDragState((prev) => (prev && prev.deltaDays !== deltaDays ? { ...prev, deltaDays } : prev));
     };
 
     const handleMouseUp = () => {
+      if (dragState.deltaDays !== 0 || dragState.pointerType !== 'mouse') {
+        suppressBarClickRef.current = true;
+        setTimeout(() => {
+          suppressBarClickRef.current = false;
+        }, 350);
+      }
       if (dragState.deltaDays !== 0) {
         if (dragState.mode === 'move') {
           const rawNewStart = addCalendarDays(dragState.origStartDate, dragState.deltaDays);
@@ -569,11 +594,19 @@ export function PlannerView() {
       setDragState(null);
     };
 
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
+    // 터치 드래그 중에는 화면 스크롤을 막아 바만 움직이게 한다
+    const blockTouchScroll = (e: TouchEvent) => e.preventDefault();
+    const handleCancel = () => setDragState(null);
+
+    window.addEventListener('pointermove', handleMouseMove);
+    window.addEventListener('pointerup', handleMouseUp);
+    window.addEventListener('pointercancel', handleCancel);
+    window.addEventListener('touchmove', blockTouchScroll, { passive: false });
     return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('pointermove', handleMouseMove);
+      window.removeEventListener('pointerup', handleMouseUp);
+      window.removeEventListener('pointercancel', handleCancel);
+      window.removeEventListener('touchmove', blockTouchScroll);
     };
   }, [dragState, dayWidth, customHolidays, updateTaskSchedule]);
 
@@ -648,56 +681,101 @@ export function PlannerView() {
     return map;
   }, [flattenedRows, timelineStartStr]);
 
-  return (
-    <Box
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        height: '100%',
-        width: '100%',
-        overflow: 'hidden',
-        backgroundColor: 'var(--bn-surface-editor)',
-      }}
-    >
-      {/* 1. 상단 플래너 컨트롤 & 요약 툴바 */}
-      <Group
-        justify="space-between"
-        px="md"
-        py={8}
-        wrap="wrap"
-        gap="xs"
-        style={{
-          borderBottom: '1px solid var(--bn-border-subtle)',
-          backgroundColor: 'var(--bn-surface-list)',
-          flexShrink: 0,
-        }}
-      >
-        <Group gap="xs" wrap="wrap">
-          <Tooltip label={tableCollapsed ? '좌측 작업 목록 펼치기' : '좌측 작업 목록 접기 (타임라인 전체 보기)'}>
-            <ActionIcon
-              variant="subtle"
-              color="gray"
-              size="md"
-              onClick={() => setTableCollapsed((v) => !v)}
-              aria-label="작업 테이블 토글"
+  // 근무일/휴일 설정 팝오버 내용 (데스크톱 버튼·모바일 아이콘 공용)
+  const holidaySettingsContent = (
+              <Stack gap="xs">
+      <Group justify="space-between" align="center">
+        <Text size="xs" fw={700}>
+          🗓️ Working Day (주말·공휴일 제외) 설정
+        </Text>
+        <Badge size="xs" color="teal" variant="light">
+          한국 공휴일 내장
+        </Badge>
+      </Group>
+      <Text size="11px" c="dimmed" style={{ lineHeight: 1.45 }}>
+        • 각 작업의 <strong>Working Day(평일)</strong> 옵션이 켜져 있으면 토/일요일과 대한민국 법정공휴일(설날·추석·대체공휴일 등)을 자동으로 건너뛰어 <strong>Due Date</strong>를 산출합니다.
+        <br />• <strong>Due Date</strong>가 지정·변경되면 해당 날짜 <strong>오전 09:00</strong>으로 알림 및 Google 캘린더 일정이 자동 등록됩니다.
+      </Text>
+
+      <Paper p="xs" withBorder radius="sm" style={{ backgroundColor: 'var(--bn-card-hover)' }}>
+        <Text size="xs" fw={600} mb={6}>
+          + 사용자 지정 휴무일(연차·창립기념일 등) 추가
+        </Text>
+        <Group gap={6} align="flex-end" wrap="nowrap">
+          <input
+            type="date"
+            value={holidayDateInput}
+            onChange={(e) => setHolidayDateInput(e.currentTarget.value)}
+            style={{
+              fontSize: 11.5,
+              padding: '4px 6px',
+              borderRadius: 6,
+              border: '1px solid var(--bn-border-subtle)',
+              backgroundColor: 'var(--mantine-color-body)',
+              color: 'var(--mantine-color-text)',
+            }}
+          />
+          <TextInput
+            size="xs"
+            placeholder="휴일명 (예: 하계휴가)"
+            value={holidayNameInput}
+            onChange={(e) => setHolidayNameInput(e.currentTarget.value)}
+            style={{ flex: 1 }}
+          />
+          <Button
+            size="compact-xs"
+            color="teal"
+            onClick={() => {
+              if (!holidayDateInput) return;
+              addCustomHoliday(holidayDateInput, holidayNameInput || '휴무일');
+              setHolidayNameInput('');
+            }}
+          >
+            추가
+          </Button>
+        </Group>
+      </Paper>
+
+      {customHolidays.length > 0 && (
+        <Stack gap={4} mah={150} style={{ overflowY: 'auto' }}>
+          <Text size="11px" fw={600} c="dimmed">
+            등록된 사용자 휴무일 ({customHolidays.length}일)
+          </Text>
+          {customHolidays.map((h) => (
+            <Group
+              key={h.date}
+              justify="space-between"
+              px={8}
+              py={3}
+              style={{
+                borderRadius: 6,
+                backgroundColor: 'var(--bn-card-hover)',
+              }}
             >
-              {tableCollapsed ? (
-                <IconLayoutSidebarLeftExpand size={17} />
-              ) : (
-                <IconLayoutSidebarLeftCollapse size={17} />
-              )}
-            </ActionIcon>
-          </Tooltip>
+              <Group gap={6}>
+                <Badge size="xs" color="red" variant="light">
+                  {h.date}
+                </Badge>
+                <Text size="xs">{h.name}</Text>
+              </Group>
+              <ActionIcon
+                size="xs"
+                variant="subtle"
+                color="red"
+                onClick={() => removeCustomHoliday(h.date)}
+              >
+                <IconTrash size={12} />
+              </ActionIcon>
+            </Group>
+          ))}
+        </Stack>
+      )}
+    </Stack>
+  );
 
-          <Group gap={6} wrap="nowrap">
-            <IconCalendarStats size={18} color="var(--mantine-color-orange-6)" />
-            <Text fw={800} size="sm" style={{ letterSpacing: '-0.3px' }}>
-              플래너 (Gantt Schedule)
-            </Text>
-          </Group>
-
-          {/* 상태별 퀵 필터 뱃지 */}
-          <Group gap={4} ml={4}>
+  // 상태별 퀵 필터 뱃지 (데스크톱·모바일 공용)
+  const statusFilterBadges = (
+    <>
             <Badge
               size="sm"
               variant={statusFilter === 'all' ? 'filled' : 'light'}
@@ -724,7 +802,7 @@ export function PlannerView() {
                 style={{ cursor: 'pointer' }}
                 onClick={() => setStatusFilter('urgent')}
               >
-                🔥 마감임박·지연 {stats.urgent}
+                {isMobile ? `🔥 임박 ${stats.urgent}` : `🔥 마감임박·지연 ${stats.urgent}`}
               </Badge>
             )}
             <Badge
@@ -736,21 +814,153 @@ export function PlannerView() {
             >
               완료 {stats.done}
             </Badge>
+    </>
+  );
+
+  const scaleControl = (
+    <SegmentedControl
+      size="xs"
+      fullWidth={isMobile}
+      value={scale}
+      onChange={(val) => setScale(val as PlannerViewScale)}
+      data={
+        isMobile
+          ? [
+              { label: '일', value: 'day' },
+              { label: '주', value: 'week' },
+              { label: '월', value: 'month' },
+            ]
+          : [
+              { label: '일별 (Day)', value: 'day' },
+              { label: '주별 (Week)', value: 'week' },
+              { label: '월별 (Month)', value: 'month' },
+            ]
+      }
+    />
+  );
+
+  return (
+    <Box
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        width: '100%',
+        overflow: 'hidden',
+        position: 'relative',
+        backgroundColor: 'var(--bn-surface-editor)',
+      }}
+    >
+      {/* 1-M. 모바일 툴바: [목록 토글][일/주/월][오늘][휴일 설정] + 가로 스크롤 상태 필터 */}
+      {isMobile && (
+        <Stack
+          gap={6}
+          px="xs"
+          py={6}
+          style={{
+            borderBottom: '1px solid var(--bn-border-subtle)',
+            backgroundColor: 'var(--bn-surface-list)',
+            flexShrink: 0,
+          }}
+        >
+          <Group gap={6} wrap="nowrap">
+            <ActionIcon
+              size={34}
+              variant={isTableCollapsed ? 'light' : 'subtle'}
+              color="gray"
+              onClick={toggleTableCollapsed}
+              aria-label={isTableCollapsed ? '작업 목록 펼치기' : '작업 목록 접기'}
+            >
+              {isTableCollapsed ? (
+                <IconLayoutSidebarLeftExpand size={19} />
+              ) : (
+                <IconLayoutSidebarLeftCollapse size={19} />
+              )}
+            </ActionIcon>
+            <Box style={{ flex: 1, minWidth: 0 }}>{scaleControl}</Box>
+            <Button size="compact-sm" h={34} variant="light" color="gray" onClick={scrollToToday}>
+              오늘
+            </Button>
+            <Popover
+              opened={holidayPopoverOpened}
+              onChange={setHolidayPopoverOpened}
+              position="bottom-end"
+              withArrow
+              shadow="md"
+              width="min(340px, calc(100vw - 16px))"
+            >
+              <Popover.Target>
+                <ActionIcon
+                  size={34}
+                  variant="light"
+                  color="teal"
+                  onClick={() => setHolidayPopoverOpened((v) => !v)}
+                  aria-label="근무일/휴일 설정"
+                >
+                  <IconBeach size={18} />
+                </ActionIcon>
+              </Popover.Target>
+              <Popover.Dropdown p="sm">{holidaySettingsContent}</Popover.Dropdown>
+            </Popover>
+          </Group>
+          <Group
+            gap={4}
+            wrap="nowrap"
+            className="bn-toolbar-accessory"
+            style={{ overflowX: 'auto', scrollbarWidth: 'none' }}
+          >
+            {statusFilterBadges}
+          </Group>
+        </Stack>
+      )}
+
+      {/* 1. 상단 플래너 컨트롤 & 요약 툴바 (데스크톱·태블릿) */}
+      {!isMobile && (
+      <Group
+        justify="space-between"
+        px="md"
+        py={8}
+        wrap="wrap"
+        gap="xs"
+        style={{
+          borderBottom: '1px solid var(--bn-border-subtle)',
+          backgroundColor: 'var(--bn-surface-list)',
+          flexShrink: 0,
+        }}
+      >
+        <Group gap="xs" wrap="wrap">
+          <Tooltip label={isTableCollapsed ? '좌측 작업 목록 펼치기' : '좌측 작업 목록 접기 (타임라인 전체 보기)'}>
+            <ActionIcon
+              variant="subtle"
+              color="gray"
+              size="md"
+              onClick={toggleTableCollapsed}
+              aria-label="작업 테이블 토글"
+            >
+              {isTableCollapsed ? (
+                <IconLayoutSidebarLeftExpand size={17} />
+              ) : (
+                <IconLayoutSidebarLeftCollapse size={17} />
+              )}
+            </ActionIcon>
+          </Tooltip>
+
+          <Group gap={6} wrap="nowrap">
+            <IconCalendarStats size={18} color="var(--mantine-color-orange-6)" />
+            <Text fw={800} size="sm" style={{ letterSpacing: '-0.3px' }}>
+              플래너 (Gantt Schedule)
+            </Text>
+          </Group>
+
+          {/* 상태별 퀵 필터 뱃지 */}
+          <Group gap={4} ml={4}>
+            {statusFilterBadges}
           </Group>
         </Group>
 
         {/* 우측: 일별/주별/월별 스케일 전환 + 오늘 이동 + 근무일/공휴일 설정 + 새 일정 추가 */}
         <Group gap={8} wrap="wrap">
-          <SegmentedControl
-            size="xs"
-            value={scale}
-            onChange={(val) => setScale(val as PlannerViewScale)}
-            data={[
-              { label: '일별 (Day)', value: 'day' },
-              { label: '주별 (Week)', value: 'week' },
-              { label: '월별 (Month)', value: 'month' },
-            ]}
-          />
+          {scaleControl}
 
           <Tooltip label="오늘 날짜 위치로 타임라인 스크롤 이동">
             <Button
@@ -788,94 +998,7 @@ export function PlannerView() {
               </Tooltip>
             </Popover.Target>
             <Popover.Dropdown p="sm">
-              <Stack gap="xs">
-                <Group justify="space-between" align="center">
-                  <Text size="xs" fw={700}>
-                    🗓️ Working Day (주말·공휴일 제외) 설정
-                  </Text>
-                  <Badge size="xs" color="teal" variant="light">
-                    한국 공휴일 내장
-                  </Badge>
-                </Group>
-                <Text size="11px" c="dimmed" style={{ lineHeight: 1.45 }}>
-                  • 각 작업의 <strong>Working Day(평일)</strong> 옵션이 켜져 있으면 토/일요일과 대한민국 법정공휴일(설날·추석·대체공휴일 등)을 자동으로 건너뛰어 <strong>Due Date</strong>를 산출합니다.
-                  <br />• <strong>Due Date</strong>가 지정·변경되면 해당 날짜 <strong>오전 09:00</strong>으로 알림 및 Google 캘린더 일정이 자동 등록됩니다.
-                </Text>
-
-                <Paper p="xs" withBorder radius="sm" style={{ backgroundColor: 'var(--bn-card-hover)' }}>
-                  <Text size="xs" fw={600} mb={6}>
-                    + 사용자 지정 휴무일(연차·창립기념일 등) 추가
-                  </Text>
-                  <Group gap={6} align="flex-end" wrap="nowrap">
-                    <input
-                      type="date"
-                      value={holidayDateInput}
-                      onChange={(e) => setHolidayDateInput(e.currentTarget.value)}
-                      style={{
-                        fontSize: 11.5,
-                        padding: '4px 6px',
-                        borderRadius: 6,
-                        border: '1px solid var(--bn-border-subtle)',
-                        backgroundColor: 'var(--mantine-color-body)',
-                        color: 'var(--mantine-color-text)',
-                      }}
-                    />
-                    <TextInput
-                      size="xs"
-                      placeholder="휴일명 (예: 하계휴가)"
-                      value={holidayNameInput}
-                      onChange={(e) => setHolidayNameInput(e.currentTarget.value)}
-                      style={{ flex: 1 }}
-                    />
-                    <Button
-                      size="compact-xs"
-                      color="teal"
-                      onClick={() => {
-                        if (!holidayDateInput) return;
-                        addCustomHoliday(holidayDateInput, holidayNameInput || '휴무일');
-                        setHolidayNameInput('');
-                      }}
-                    >
-                      추가
-                    </Button>
-                  </Group>
-                </Paper>
-
-                {customHolidays.length > 0 && (
-                  <Stack gap={4} mah={150} style={{ overflowY: 'auto' }}>
-                    <Text size="11px" fw={600} c="dimmed">
-                      등록된 사용자 휴무일 ({customHolidays.length}일)
-                    </Text>
-                    {customHolidays.map((h) => (
-                      <Group
-                        key={h.date}
-                        justify="space-between"
-                        px={8}
-                        py={3}
-                        style={{
-                          borderRadius: 6,
-                          backgroundColor: 'var(--bn-card-hover)',
-                        }}
-                      >
-                        <Group gap={6}>
-                          <Badge size="xs" color="red" variant="light">
-                            {h.date}
-                          </Badge>
-                          <Text size="xs">{h.name}</Text>
-                        </Group>
-                        <ActionIcon
-                          size="xs"
-                          variant="subtle"
-                          color="red"
-                          onClick={() => removeCustomHoliday(h.date)}
-                        >
-                          <IconTrash size={12} />
-                        </ActionIcon>
-                      </Group>
-                    ))}
-                  </Stack>
-                )}
-              </Stack>
+              {holidaySettingsContent}
             </Popover.Dropdown>
           </Popover>
 
@@ -890,6 +1013,7 @@ export function PlannerView() {
           </Button>
         </Group>
       </Group>
+      )}
 
       {/* 2. 메인 간트 차트 영역: [좌측 작업 테이블] + [우측 간트 타임라인] */}
       <Box
@@ -902,10 +1026,10 @@ export function PlannerView() {
         }}
       >
         {/* 좌측: 계층형 Task Name / Start Date / Duration (Working Days) / Due Date (09:00 알림) 테이블 */}
-        {!tableCollapsed && (
+        {!isTableCollapsed && (
           <Box
             style={{
-              width: isMobile ? 260 : 590,
+              width: isMobile ? MOBILE_NAME_COLUMN_WIDTH : 590,
               flexShrink: 0,
               display: 'flex',
               flexDirection: 'column',
@@ -921,7 +1045,7 @@ export function PlannerView() {
                 flexShrink: 0,
                 display: 'grid',
                 gridTemplateColumns: isMobile
-                  ? '1fr 86px'
+                  ? '1fr'
                 : 'minmax(200px, 1fr) 118px 82px 164px',
                 alignItems: 'center',
             padding: '0 10px',
@@ -943,7 +1067,7 @@ export function PlannerView() {
                   color: sortField === 'title' ? 'var(--mantine-color-blue-6)' : undefined,
                 }}
               >
-                <span>Task Name (작업명)</span>
+                <span>{isMobile ? '작업명' : 'Task Name (작업명)'}</span>
                 {sortField === 'title' ? (
                   sortOrder === 'asc' ? (
                     <IconArrowUp size={13} />
@@ -1008,6 +1132,7 @@ export function PlannerView() {
               </Tooltip>
             )}
 
+            {!isMobile && (
             <Tooltip label="클릭/터치하여 마감일(Due Date) 기준 오름차순·내림차순 정렬" openDelay={300}>
               <Group
                 gap={3}
@@ -1031,6 +1156,7 @@ export function PlannerView() {
                 )}
               </Group>
             </Tooltip>
+            )}
           </Box>
 
             {/* 좌측 테이블 본문 행 목록 */}
@@ -1046,9 +1172,10 @@ export function PlannerView() {
         >
           {flattenedRows.length === 0 ? (
             <Stack align="center" justify="center" h={260} gap="xs" p="md">
-              <Text size="sm" c="dimmed">
-                표시할 일정 작업이 없습니다.
+              <Text size={isMobile ? 'xs' : 'sm'} c="dimmed" ta="center">
+                {isMobile ? '일정이 없습니다' : '표시할 일정 작업이 없습니다.'}
               </Text>
+              {!isMobile && (
               <Button
                 size="xs"
                 variant="light"
@@ -1058,6 +1185,7 @@ export function PlannerView() {
               >
                 첫 일정 작업 만들기
               </Button>
+              )}
             </Stack>
           ) : (
             flattenedRows.map((row) => {
@@ -1075,7 +1203,7 @@ export function PlannerView() {
                     height: ROW_HEIGHT,
                     display: 'grid',
                     gridTemplateColumns: isMobile
-                      ? '1fr 86px'
+                      ? '1fr'
                       : 'minmax(200px, 1fr) 118px 82px 164px',
                     alignItems: 'center',
           padding: '0 8px',
@@ -1097,7 +1225,7 @@ export function PlannerView() {
             gap={4}
             wrap="nowrap"
             style={{
-              paddingLeft: depth * 16,
+              paddingLeft: depth * (isMobile ? 10 : 16),
               minWidth: 0,
               overflow: 'hidden',
               paddingRight: 4,
@@ -1118,9 +1246,10 @@ export function PlannerView() {
                 )}
               </ActionIcon>
             ) : (
-              <span style={{ width: 18, flexShrink: 0 }} />
+              <span style={{ width: isMobile ? 10 : 18, flexShrink: 0 }} />
             )}
 
+            {!isMobile && (
             <Checkbox
               size="xs"
               color="teal"
@@ -1130,6 +1259,7 @@ export function PlannerView() {
               }
               styles={{ input: { cursor: 'pointer' } }}
             />
+            )}
 
             {/* 색상 도트 */}
             <span
@@ -1195,6 +1325,7 @@ export function PlannerView() {
 
             {/* 행 빠른 액션: 하위 일정 추가 & 컨텍스트 메뉴 */}
             <Group gap={1} wrap="nowrap" style={{ flexShrink: 0 }}>
+              {!isMobile && (
               <Tooltip label="하위 일정(Sub-task) 추가">
                 <ActionIcon
                   size="xs"
@@ -1205,6 +1336,7 @@ export function PlannerView() {
                   <IconPlus size={12} />
                 </ActionIcon>
               </Tooltip>
+              )}
 
               <Menu position="bottom-end" withArrow shadow="md" withinPortal>
                 <Menu.Target>
@@ -1363,7 +1495,8 @@ export function PlannerView() {
             </Group>
           )}
 
-              {/* 컬럼 4: Due Date (마감일 직접 선택 + D-Day + 오전 09:00 자동 알림 표시) */}
+              {/* 컬럼 4: Due Date (마감일 직접 선택 + D-Day + 오전 09:00 자동 알림 표시) — 모바일은 상세에서 편집 */}
+              {!isMobile && (
               <Group gap={4} justify="center" wrap="nowrap">
                 {!isMobile && (
                   <Tooltip label="마감일(Due Date) 선택 시 해당 날짜 오전 09:00 알림이 자동 등록됩니다">
@@ -1426,6 +1559,7 @@ export function PlannerView() {
                   </Tooltip>
                 )}
               </Group>
+              )}
             </Box>
           );
                 })
@@ -1741,6 +1875,8 @@ export function PlannerView() {
               );
               const isSelected = n.id === selectedId;
               const initialChar = (n.title || 'T').trim().charAt(0).toUpperCase();
+              // 바가 좁아 작업명이 들어가지 않으면 바 오른쪽 바깥에 작업명을 표시
+              const showOutsideLabel = widthPx < BAR_INSIDE_LABEL_MIN_WIDTH;
 
               return (
                 <Box
@@ -1768,26 +1904,30 @@ export function PlannerView() {
                     disabled={Boolean(dragState)}
                   >
                     <Box
-                      onMouseDown={(e) => {
-                        if (e.button !== 0) return;
-                        e.stopPropagation();
+                      onPointerDown={bindPressToDrag((clientX, pointerType) =>
                         setDragState({
                           noteId: n.id,
                           mode: 'move',
-                          initialX: e.clientX,
+                          initialX: clientX,
                           origStartDate: schedule.startDate,
                           origDueDate: schedule.dueDate,
                           origDuration: schedule.durationDays,
                           useWorkingDays: schedule.useWorkingDays,
                           deltaDays: 0,
-                        });
-                      }}
+                          pointerType,
+                        })
+                      )}
+                      onContextMenu={(e) => e.preventDefault()}
                       onClick={(e) => {
                         e.stopPropagation();
+                        if (suppressBarClickRef.current) return;
                         if (dragState && dragState.deltaDays !== 0) return;
                         openTaskDetail(n.id);
                       }}
                       style={{
+                        WebkitTouchCallout: 'none',
+                        WebkitUserSelect: 'none',
+                        userSelect: 'none',
                         position: 'absolute',
                         top: 8,
                         height: 30,
@@ -1855,18 +1995,20 @@ export function PlannerView() {
                         >
                           {schedule.status === 'done' ? '✓' : initialChar}
                         </Box>
-                        <Text
-                          size="xs"
-                          fw={700}
-                          truncate
-                          style={{
-                            color: colorCfg.textColor,
-                            fontSize: 11.5,
-                            letterSpacing: '-0.2px',
-                          }}
-                        >
-                          {n.title || '제목 없음'}
-                        </Text>
+                        {!showOutsideLabel && (
+                          <Text
+                            size="xs"
+                            fw={700}
+                            truncate
+                            style={{
+                              color: colorCfg.textColor,
+                              fontSize: 11.5,
+                              letterSpacing: '-0.2px',
+                            }}
+                          >
+                            {n.title || '제목 없음'}
+                          </Text>
+                        )}
                       </Group>
 
                       {/* 바 우측 실작업일수 뱃지 */}
@@ -1890,26 +2032,28 @@ export function PlannerView() {
                       {/* 우측 끝 기간(Due Date) 조절 드래그 핸들 (첨부 이미지의 우측 원형 핸들 스타일) */}
                       <Tooltip label="우측 끝을 드래그하여 마감일(Due Date) 및 작업일수 조절">
                         <Box
-                          onMouseDown={(e) => {
-                            e.stopPropagation();
+                          onPointerDown={bindPressToDrag((clientX, pointerType) =>
                             setDragState({
                               noteId: n.id,
                               mode: 'resize-end',
-                              initialX: e.clientX,
+                              initialX: clientX,
                               origStartDate: schedule.startDate,
                               origDueDate: schedule.dueDate,
                               origDuration: schedule.durationDays,
                               useWorkingDays: schedule.useWorkingDays,
                               deltaDays: 0,
-                            });
-                          }}
+                              pointerType,
+                            })
+                          )}
+                          onClick={(e) => e.stopPropagation()}
                           style={{
                             position: 'absolute',
-                            right: -11,
+                            // 모바일은 손가락으로 잡기 쉽도록 핸들을 키운다
+                            right: isMobile ? -15 : -11,
                             top: '50%',
                             transform: 'translateY(-50%)',
-                            width: 14,
-                            height: 14,
+                            width: isMobile ? 22 : 14,
+                            height: isMobile ? 22 : 14,
                             borderRadius: '50%',
                             backgroundColor: 'var(--mantine-color-body)',
                             border: `2px solid ${colorCfg.border}`,
@@ -1932,6 +2076,29 @@ export function PlannerView() {
                       </Tooltip>
                     </Box>
                   </Tooltip>
+                  {showOutsideLabel && (
+                    <Text
+                      size="xs"
+                      fw={600}
+                      style={{
+                        position: 'absolute',
+                        top: 0,
+                        height: ROW_HEIGHT,
+                        left: leftPx + widthPx + (isMobile ? 20 : 14),
+                        display: 'flex',
+                        alignItems: 'center',
+                        whiteSpace: 'nowrap',
+                        fontSize: 11.5,
+                        color: 'var(--mantine-color-text)',
+                        opacity: schedule.status === 'done' ? 0.55 : 0.85,
+                        textDecoration: schedule.status === 'done' ? 'line-through' : undefined,
+                        pointerEvents: 'none',
+                        zIndex: 3,
+                      }}
+                    >
+                      {n.title || '제목 없음'}
+                    </Text>
+                  )}
                 </Box>
               );
             })}
@@ -1939,6 +2106,27 @@ export function PlannerView() {
         </Box>
       </Box>
     </Box>
+
+      {/* 모바일: 엄지가 닿는 우측 하단 새 일정 추가 버튼 */}
+      {isMobile && (
+        <ActionIcon
+          size={52}
+          radius="xl"
+          variant="filled"
+          color="orange"
+          onClick={() => handleOpenCreateModal(null)}
+          aria-label="새 일정 추가"
+          style={{
+            position: 'absolute',
+            right: 16,
+            bottom: 16,
+            zIndex: 30,
+            boxShadow: '0 6px 16px rgba(0,0,0,0.25)',
+          }}
+        >
+          <IconPlus size={24} />
+        </ActionIcon>
+      )}
 
       {/* 3. 우측 슬라이드 노트 상세 에디터 드로어 (작업 클릭 시 본문 편집) */ }
   <Drawer
