@@ -1,168 +1,314 @@
-# BullsNote — 크로스플랫폼 지식관리 & 할일 메모장 (Desktop & Mobile PWA)
+# BullsNote
 
-Windows / macOS / Linux 데스크톱 앱 및 **iOS / iPadOS / Android 모바일·태블릿 PWA(Progressive Web App)** 멀티 플랫폼 지원. MVC 패턴 + 로컬 파일 볼트 + Google Drive 증분 동기화 + Google Calendar 모바일 푸시 알림 연동 지원.
+**노트와 할일을 한곳에.** 생각은 노트로 적고, 해야 할 일은 할일로 꺼내고, 하루는 "오늘" 화면에서 한눈에 봅니다.
 
----
+Windows · macOS · Linux 데스크톱 앱과 iPhone · iPad · Android에서 설치해 쓰는 웹 앱(PWA)을 지원합니다.
 
-## 🛠️ 기술 스택
-- **Electron 32 + Vite 5 + React 18 + TypeScript**: Win/Linux/Mac 데스크톱 네이티브 패키징 (`electron-builder`) 및 웹 표준 **PWA(`manifest.webmanifest` + Service Worker)** 동시 지원.
-- **Mantine 7 (MIT, 무료)**: 3단계 적응형(Desktop 3단 · Pad 2단 · Phone 1단+하단탭) 반응형 UI 컴포넌트, 다크/라이트 모드 테마.
-- **BlockNote 0.55 + ariakit 스킨**: 노션식 블록 에디터, `/` 슬래시 메뉴(표·코드·이미지·파일), 드래그 앤 드롭 정렬.
-- **Shiki 4 (MIT)**: 19개 언어 코드 블록 문법 강조 (라이트/다크 테마 동시 지원).
-- **Google Drive Cloud Sync**: Google 계정 OAuth 로그인 및 **PC ↔ 모바일 원클릭 연동 코드(`BNM1:...`)**, Google Drive를 개인 DB 및 파일 스토리지로 무료(15GB) 활용, 노트 단위 증분 동기화(`index.json` + `notes/note_<id>.json` + `attachments/`).
-- **Google Calendar Mobile Alarm Sync**: 노트 및 할일 알람 설정 시 Google Calendar 일정(10분 전 + 정각 모바일 팝업 알림, 반복 `RRULE`) 자동 연동.
-- **Gemini AI**: 개인 Gemini API Key 기반 맞춤형 AI 어시스턴트 (클립보드 요약, 작성 보조 등).
-- **Tabler Icons (MIT)**: 직관적인 아이콘 세트.
+![오늘 화면](docs/images/today.jpg)
+
+- **버전:** 2.0.0
+- **플랫폼:** Windows · macOS · Linux · PWA
+- **스택:** Electron, React 18, TypeScript, Vite
 
 ---
 
-## 📁 MVC 아키텍처 매핑
-```
-src/model/      → M: Note.ts, TodoService.ts, GoogleDriveService.ts, GoogleCalendarService.ts (도메인+영속성+동기화)
-src/view/       → V: SidebarView, NoteListView, NoteEditorView, GoogleSyncModal, ReminderPopover (표현 계층)
-src/controller/ → C: NotesController.tsx (useNotes 컨텍스트, 상태 관리 및 액션)
-electron/       → 데스크톱 셸 (main.js, preload.js, vault-ipc.js, google-auth-ipc.js, tray.js)
-public/         → PWA 매니페스트(manifest.webmanifest), 오프라인 앱 쉘 서비스 워커(sw.js), 앱 아이콘
-```
+## 목차
+
+- [소개](#소개)
+- [주요 기능](#주요-기능)
+- [단축키](#단축키)
+- [데이터는 어디에 저장되나요](#데이터는-어디에-저장되나요)
+- [빌드 가이드](#빌드-가이드)
+- [모바일에서 쓰기 (PWA)](#모바일에서-쓰기-pwa)
+- [AI 연결 (Gemini · MCP)](#ai-연결-gemini--mcp)
+- [프로젝트 구조](#프로젝트-구조)
+- [문제 해결](#문제-해결)
+- [라이선스](#라이선스)
 
 ---
 
-## ✨ 주요 기능
-- **노트 & 프로젝트 관리**: 프로젝트별 폴더링, 트리 계층 구조(들여쓰기/내어쓰기), 핀/즐겨찾기, 7가지 파스텔 컬러 라벨.
-- **블록 에디터 & 서식**:
-  - `/` 명령어로 표, 코드, 이미지, 날짜 삽입
-  - `@오늘`, `@내일` 동적 날짜 멘션 및 캘린더 피커
-  - 마우스 우클릭 컨텍스트 메뉴(잘라내기/복사/붙여넣기/서식 없이 붙여넣기) 전면 지원
-- **해시태그 자동 추출**: 제목과 본문에서 `#태그`를 실시간 수집 및 사이드바 필터링.
-- **스냅샷 히스토리**: 편집 이력 자동 스냅샷(최대 30개) 보관 및 원클릭 복원.
-- **인쇄 및 다양한 공유/내보내기**:
-  - **문서 인쇄 (`Ctrl+P` / `Cmd+P`)**: A4 규격에 맞춘 전용 헤더 및 서식 최적화 인쇄 지원 (UI 숨김 처리).
-  - **원클릭 PDF 내보내기**: Electron 네이티브 다이얼로그 연동으로 고품질 `.pdf` 파일 즉시 저장.
-  - **클립보드 복사**: 마크다운(`.md`), 서식 유지 HTML(이메일/노션/워드용), 일반 텍스트 복사.
-  - **파일 내보내기 및 OS 공유**: 마크다운 파일(`.md`), HTML 웹페이지(`.html`) 다운로드 및 시스템 공유 창 지원.
-- **알람 & 리마인더 (모바일 푸시 알림 연동)**: 특정 날짜/시간 알림, 반복 알람(매일/평일/매주/매월), OS 시스템 알림창 연동 및 **Google Calendar 자동 동기화(모바일 기기에서 10분 전 + 정각 2회 푸시 알림)**.
-- **할일 관리(Todo Board) & 체크리스트 양방향 연동**: 노트 내 체크리스트(`[]`)에서 하위 계층 구조 및 세부 내용을 포함한 할일 추출, `Done` 완료 시 원본 노트 체크박스(`[x]`) 자동 완료 처리 및 연결된 Google Calendar 알림 자동 해제.
-- **클라우드 및 로컬 이중 저장소 지원**:
-  1. **로컬 파일 볼트(Local File Vault)**: `내 문서/BullsNote` 폴더에 `.md` 마크다운 + frontmatter 형태로 파일 저장.
-  2. **Google Drive 클라우드 동기화**: Google 계정 OAuth 연동으로 본인의 Google Drive를 무료 DB 및 첨부파일 스토리지로 활용. 동기화 폴링 주기를 설정에서 변경 가능.
+## 소개
+
+BullsNote는 **노트와 할일, 두 기둥**으로 이루어진 개인 지식관리 앱입니다.
+
+| 원칙 | 의미 |
+|---|---|
+| 노트와 할일이 이어져 있다 | 노트 속 체크리스트를 바로 할일로 만들고, 할일을 완료하면 원래 노트의 체크박스도 함께 체크됩니다. |
+| 일정은 할일을 보여주는 방법이다 | 따로 일정을 관리하지 않습니다. 할일의 마감일과 기간이 목록·보드·타임라인에서 서로 다른 모양으로 보입니다. |
+| 로그인 없이 바로 시작한다 | 설치하고 "바로 시작하기"를 누르면 끝입니다. 다른 기기와 쓰고 싶을 때만 Google 계정을 연결합니다. |
+| 데이터는 내 것이다 | 노트는 내 기기와 내 Google Drive에만 저장됩니다. 별도 서버가 없습니다. |
+
+![첫 화면](docs/images/welcome.jpg)
 
 ---
 
-## 📱 모바일(Phone) & 태블릿(Pad) PWA 사용 가이드
+## 주요 기능
 
-BullsNote는 별도의 네이티브 앱 빌드 도구(Xcode / Android Studio) 없이도 **웹 표준 PWA(Progressive Web App)**를 통해 스마트폰(iPhone, Galaxy)과 태블릿(iPad, Galaxy Tab)에서 앱처럼 설치해 사용할 수 있습니다.
+### 오늘 — 하루를 한 화면에
 
-### 1. 기기별 3단계 적응형(Adaptive) UX
-- **스마트폰 (`< 768px`)**:
-  - **1단 전체화면 뷰 + 하단 5탭 네비게이션 바**(`📁 폴더/메뉴` · `📝 노트목록` · `📋 할일관리` · `📅 오늘노트` · `➕ 새 노트`)로 한 손 조작에 최적화되어 있습니다.
-  - 목록에서 노트를 탭하면 전체화면 에디터로 전환되며, 좌측 상단 **`[← 목록]`** 버튼이나 기기 뒤로가기 제스처로 목록으로 복귀합니다.
-- **태블릿 / 패드 (`768px ~ 1080px`)**:
-  - **2단 분할 화면(좌측 노트 목록 + 우측 에디터)**으로 동작하며, 좌측 상단 아이콘을 탭하면 **폴더 사이드바가 슬라이드 드로어(Drawer)**로 열립니다.
-- **터치 친화적 제어 (`⋯` 퀵 액션 메뉴)**:
-  - 마우스 호버나 드래그 앤 드랍 없이도 각 노트/할일 우측의 **`+`(하위 추가)** 및 **`⋯`(관리 메뉴)** 버튼을 탭하여 **할일 상태 변경(`To Do` / `Doing` / `Done` / `Drop`)**, **계층 이동(`들여쓰기` / `내어쓰기`)**, **폴더 이동**, **핀/즐겨찾기**, **삭제**를 모두 수행할 수 있습니다.
+앱을 열면 가장 먼저 보이는 화면입니다.
 
-### 2. 모바일/패드에 PWA 앱 설치 및 실행 방법
+- **오늘 할 일:** 마감이 지난 할일, 오늘 마감인 할일, 진행 중인 할일을 모아 보여줍니다. 그날 완료한 일은 아래 "완료" 묶음에 남습니다.
+- **오늘 일정:** 알림 시각이 있는 할일을 시간 순서로 보여주고, 지금 시각을 선으로 표시합니다.
+- **진행 중인 기간 작업:** 여러 날에 걸친 작업이 얼마나 지났는지 막대로 보여줍니다.
+- **날짜 이동:** ‹ › 버튼과 달력으로 어제나 내일, 원하는 날짜로 옮겨 볼 수 있습니다.
+- **오늘 브리핑 (AI):** 버튼을 누르면 할 일·일정·오늘 노트를 3~4줄로 요약합니다. 요약은 그날 노트에 저장됩니다.
 
-#### 방법 A: GitHub Pages 정식 HTTPS 배포본으로 어디서나 접속 & 홈 화면 설치 (권장)
-1. **GitHub Pages 활성화 (최초 1회)**:
-   - GitHub 저장소의 **`Settings > Pages > Build and deployment > Source`**를 **`GitHub Actions`**로 설정합니다.
-   - `main` 브랜치에 코드를 푸시하면 `.github/workflows/deploy-pwa.yml`이 자동 실행되어 `https://<GitHub계정>.github.io/bullsNote/` 주소로 배포됩니다.
-2. **홈 화면에 앱 설치**:
-   - **iOS / iPadOS (Safari)**: 배포 주소 접속 → **[공유(네모 위 화살표)]** 버튼 → **[홈 화면에 추가]** 탭
-   - **Android (Chrome)**: 배포 주소 접속 → 우측 상단 메뉴(`⋮`) → **[앱 설치(홈 화면에 추가)]** 탭
-   - 설치 후 바탕화면의 **BullsNote 아이콘**으로 실행하면 브라우저 주소창이 없는 **독립 실행형(Standalone) 전체화면 앱**으로 실행됩니다.
+### 오늘 노트 (Daily Note) — 하루 계획표
 
-#### 방법 B: 로컬 Wi-Fi 개발 서버에서 즉시 확인 및 디버깅
-1. 터미널에서 PWA 개발 서버를 실행합니다:
-   ```bash
-   npm run dev:pwa
-   ```
-2. PC와 동일한 Wi-Fi에 연결된 스마트폰/패드 브라우저에서 `http://<PC의_내부_IP>:5190` (예: `http://192.168.x.x:5190`)으로 접속합니다.
-3. PC Chrome 브라우저에서는 `http://localhost:5190` 접속 후 **개발자 도구(`F12`) > 기기 툴바 토글(`Cmd+Shift+M` / `Ctrl+Shift+M`)**을 켜면 iPhone / iPad 해상도로 즉시 디버깅할 수 있습니다.
+![오늘 노트](docs/images/daily-note.jpg)
 
-### 3. PC ↔ 모바일 원클릭 Google Drive 연동 (`BNM1:...` 연동 코드)
-모바일에서 복잡한 Google Cloud 설정이나 긴 클라이언트 ID 입력 없이 **1초 만에 PC와 동일한 Google Drive 데이터를 연동**할 수 있습니다.
-1. **PC 데스크톱 앱**: 좌측 하단(또는 상단) **`[Google Drive 동기화 설정]`** 모달을 열고 **`[모바일 연동 코드 복사]`** 버튼을 클릭합니다.
-2. **모바일 / 패드 PWA**: 복사한 `BNM1:...` 코드를 모바일 로그인 화면의 **`[모바일/웹 원클릭 연동]`** 입력창에 붙여넣고 **`[원클릭 연동]`** 버튼을 탭합니다.
-3. 즉시 Google Drive의 모든 폴더·노트·할일·첨부파일이 동기화되며, 이후 모바일에서도 토큰이 자동으로 갱신됩니다.
+- 날짜별로 노트가 하나씩 만들어집니다. 오늘 화면에서 바로 편집할 수 있습니다.
+- 템플릿은 "오늘 순서 · 주의할 점 · 메모" 세 칸입니다. "오늘 순서"에는 그날 할 일이 미리 채워집니다.
+- 빠른 입력에서 "오늘 노트"를 고르면 메모 칸에 `HH:MM 내용` 한 줄이 붙습니다.
+
+### 빠른 입력 — 한 줄로 할일 만들기 (`⌘N` / `Ctrl+N`)
+
+![빠른 입력](docs/images/quick-capture.jpg)
+
+`내일 3시 견적서 회신 #업무`처럼 쓰면 날짜·시각·태그를 알아서 읽습니다.
+
+| 이렇게 쓰면 | 이렇게 읽어요 |
+|---|---|
+| 오늘 · 내일 · 모레 · 글피 | 마감일 |
+| 11/20 · 11월 20일 · 금요일 · 3일 후 | 마감일 |
+| 3시 · 오후 2시 반 · 14:30 | 알림 시각 (오전·오후 없이 1~7시는 오후로 봄) |
+| #업무 | 태그 |
+
+- 날짜가 있으면 할일로, 없으면 노트로 저장됩니다. `Tab`으로 할일 · 노트 · 오늘 노트를 바꿀 수 있습니다.
+- **AI로 해석 (✨):** "다음 주 화요일 오전까지"처럼 규칙으로 읽기 어려운 문장은 Gemini가 다시 읽습니다. 결과가 이상하면 버리고 기존 해석을 그대로 씁니다.
+- **클립보드 가져오기 (`⌘J` / `Ctrl+J`):** 클립보드의 글을 가져와 노트로 저장합니다. 긴 글은 AI로 요약할 수 있습니다.
+
+### 할일 — 목록 · 보드 · 타임라인
+
+같은 할일을 세 가지 모양으로 봅니다. 상태(대기 · 진행 중 · 완료 · 중단), 기간, 폴더, 태그로 거를 수 있습니다.
+
+| 목록 | 보드 |
+|---|---|
+| ![할일 목록](docs/images/todos-list.jpg) | ![할일 보드](docs/images/todos-board.jpg) |
+
+![타임라인](docs/images/todos-timeline.jpg)
+
+- **목록:** 미완료 할일이 마감일이 빠른 순서로 보입니다. 맨 위 입력칸에서 바로 추가할 수 있습니다.
+- **보드:** 상태별 칸반입니다. 카드를 누르면 상세 창이 열리고, 거기서 상태와 날짜를 바꿉니다.
+- **타임라인:** 할일 기간을 막대로 보는 간트 차트입니다. 근무일(주말·공휴일 제외)로 기간을 계산할 수 있습니다.
+- **체크리스트 연결:** 노트의 체크리스트 항목 옆 "+ 할일로"를 누르면 할일이 만들어지고, 두 체크 상태가 서로 따라갑니다.
+
+### 노트 — 블록 에디터
+
+![노트 에디터](docs/images/note-editor.jpg)
+
+- **블록 에디터:** Notion처럼 `/`로 표·코드·이미지·파일을 넣고, 블록을 끌어서 순서를 바꿉니다.
+- **코드 블록:** 19개 언어의 문법을 강조합니다.
+- **날짜 넣기:** `@오늘`, `@내일`처럼 쓰면 날짜가 들어갑니다.
+- **목차:** 오른쪽 가장자리의 얇은 막대에 마우스를 올리면(모바일은 탭) 제목 목록이 펼쳐집니다. 본문을 가리지 않습니다.
+- **정리:** 폴더 · 하위 노트(트리) · 고정 · 즐겨찾기 · 7가지 색상 라벨로 정리합니다. 본문의 `#태그`는 자동으로 모입니다.
+- **편집 히스토리:** 최대 30개까지 자동으로 저장하고, 한 번에 되돌릴 수 있습니다.
+- **내보내기:** 인쇄, PDF 저장, 마크다운·HTML·일반 텍스트로 복사하거나 파일로 저장할 수 있습니다.
+
+### 알림 · Google Calendar
+
+![알림](docs/images/reminder.jpg)
+
+- **알림 시각:** 날짜·시각을 정하고 반복(매일 · 평일 · 매주 · 매월)을 고를 수 있습니다.
+- **마감일 알림:** 마감일만 정한 할일은 그날 09:00에 알려줍니다.
+- **Google Calendar 연동:** Google 계정을 연결하면 알림이 캘린더에도 등록됩니다. 그러면 휴대폰에서도 10분 전과 정각에 알림을 받습니다.
+
+### 동기화 — Google Drive
+
+- **저장 위치:** 사이드바 아래 "동기화"에서 "Google로 계속"을 누르면 내 Google Drive에 노트와 첨부파일이 저장됩니다.
+- **다른 기기 연결:** 다른 기기에서는 QR 코드나 연동 코드(`BNM1:…`)로 바로 이어서 쓸 수 있습니다.
+- **증분 동기화:** 바뀐 노트만 주고받습니다.
+
+### 모바일
+
+| 노트 목록 | 노트 편집 |
+|---|---|
+| <img src="docs/images/mobile-list.jpg" width="280" alt="모바일 노트 목록"> | <img src="docs/images/mobile-note.jpg" width="280" alt="모바일 노트 편집"> |
+
+- **휴대폰:** 한 화면에 하나씩 보여주고, 아래 탭(폴더 · 노트목록 · 할일관리 · 플래너 · 오늘노트 · 새 노트)으로 이동합니다.
+- **태블릿:** 목록과 에디터를 두 칸으로 보여줍니다.
+- **노트 편집:** 위쪽 막대 하나에 주요 버튼만 두고, 나머지는 `⋯` 메뉴로 옮겼습니다. 아래로 스크롤하면 제목 영역이 접힙니다.
 
 ---
 
-## 🚀 Git 기반 플랫폼별 릴리즈 (GitHub Actions 자동화)
+## 단축키
 
-GitHub Actions를 통해 태그를 푸시하면 **Windows(`.exe`), macOS(`.dmg`), Linux(`.AppImage`/`.deb`)** 설치 파일이 GitHub Release에 자동 빌드되어 게시됩니다.
+| 동작 | macOS | Windows · Linux |
+|---|---|---|
+| 빠른 입력 | `⌘N` | `Ctrl+N` |
+| 검색 | `⌘K` | `Ctrl+K` |
+| 클립보드로 빠른 입력 | `⌘J` | `Ctrl+J` |
+| 인쇄 | `⌘P` | `Ctrl+P` |
+| 빠른 입력에서 종류 바꾸기 | `Tab` | `Tab` |
+| 빠른 입력에서 메모 추가 | `⇧Enter` | `Shift+Enter` |
 
-### 1단계: 버전 업데이트 및 태그 생성 (권장)
-`npm version` 명령어를 사용하면 `package.json`의 버전 번호 수정과 `Git 태그` 생성이 한 번에 처리됩니다:
+---
+
+## 데이터는 어디에 저장되나요
+
+| 환경 | 저장 위치 |
+|---|---|
+| 데스크톱 앱 | `문서/BullsNote` 폴더에 노트 한 개당 `.md` 파일 한 개로 저장됩니다. 맨 위 frontmatter에 정보가 들어가고 본문은 Markdown입니다. 다른 편집기로 고친 내용도 앱이 감지해 다시 읽습니다. 저장 폴더는 사이드바에서 바꿀 수 있습니다. |
+| 웹 · PWA | 브라우저 저장소에 저장됩니다. |
+| Google Drive (선택) | 위 저장 위치와 별도로, 내 Drive에 노트와 첨부파일을 동기화합니다. |
+
+---
+
+## 빌드 가이드
+
+### 준비물
+
+| 항목 | 버전 |
+|---|---|
+| Node.js | 22 이상 (CI와 같은 버전) |
+| npm | Node.js에 포함된 버전 |
+| macOS용 빌드 | macOS 필요 |
+| Linux용 빌드 | Linux 또는 WSL2 권장 |
+
+### 설치
+
 ```bash
-# 패치 버전 증가 (0.1.0 -> 0.1.1 및 v0.1.1 태그 생성)
-npm version patch
-
-# 또는 마이너 버전 증가 (0.1.0 -> 0.2.0 및 v0.2.0 태그 생성)
-# npm version minor
-
-# 또는 특정 버전 직접 지정
-# npm version 0.1.2
+git clone https://github.com/bullseye73/bullsNote.git
 ```
 
-### 2단계: 메인 브랜치 및 태그 푸시
 ```bash
-# 코드와 태그를 원격 저장소로 함께 푸시
+cd bullsNote && npm install
+```
+
+### 개발 실행
+
+| 명령 | 하는 일 |
+|---|---|
+| `npm run dev` | Vite 개발 서버(5190 포트)와 Electron 데스크톱 앱을 함께 실행 |
+| `npm run dev:browser` | 브라우저용 개발 서버만 실행 (같은 Wi-Fi의 휴대폰에서 `http://<PC IP>:5190`으로 접속 가능) |
+| `npm test` | 단위 테스트(Vitest) 실행 |
+| `npm run build` | 타입 검사 후 웹 빌드 (`dist/`) |
+
+### 데스크톱 설치 파일 만들기
+
+```bash
+npm run dist
+```
+
+현재 OS용 설치 파일이 `release/` 폴더에 만들어집니다. 특정 OS용은 `npm run dist:win`, `npm run dist:mac`, `npm run dist:linux`로 만듭니다.
+
+| OS | 결과물 |
+|---|---|
+| Windows | NSIS 설치 파일, 포터블 실행 파일 |
+| macOS | `.dmg`, `.zip` |
+| Linux | `.AppImage`, `.deb` |
+
+### 환경 변수 (선택)
+
+"Google로 계속" 버튼으로 바로 로그인하려면 앱에 들어갈 Google OAuth 클라이언트가 필요합니다. 프로젝트 루트에 `.env.local` 파일을 만들고 아래 값을 넣으세요. 이 파일은 Git에 올리지 않습니다.
+
+```
+VITE_GOOGLE_CLIENT_ID=<Google Cloud OAuth 클라이언트 ID>
+VITE_GOOGLE_CLIENT_SECRET=<데스크톱 앱 클라이언트 보안 비밀>
+```
+
+값이 없어도 앱은 동작합니다. 이때는 동기화 창의 "고급" 메뉴에서 사용자가 직접 클라이언트 ID를 넣어야 합니다.
+
+### 릴리스 (GitHub Actions)
+
+`v`로 시작하는 태그를 올리면 `.github/workflows/release.yml`이 세 OS용 설치 파일을 만들어 GitHub Release에 올립니다.
+
+```bash
+npm version minor
+```
+
+```bash
 git push origin main --tags
 ```
 
-### 3단계: GitHub Release 확인
-1. GitHub 저장소의 **Actions** 탭으로 이동하면 `Release BullsNote` 워크플로가 실행됩니다.
-2. 약 3~5분 후 **Releases** 탭에 다음 배포 파일들이 자동으로 업로드됩니다:
-   - **Windows**: `BullsNote Setup 0.1.0.exe` (설치형), `BullsNote 0.1.0.exe` (포터블 무설치)
-   - **macOS**: `BullsNote-0.1.0.dmg`, `BullsNote-0.1.0-mac.zip`
-   - **Linux**: `BullsNote-0.1.0.AppImage`, `bullsnote_0.1.0_amd64.deb`
-
-> **참고**:
-> - GitHub 저장소 설정(`Settings -> Actions -> General -> Workflow permissions`)에서 **Read and write permissions**가 활성화되어 있어야 릴리즈 산출물이 정상 등록됩니다.
-> - **macOS 설치 시 주의사항**: 미공증 앱 특성상 Gatekeeper에 의해 `"손상되었기 때문에 열 수 없습니다"`라는 경고가 발생할 수 있습니다. 아래 [문제 해결](#-문제-해결-및-팁)의 격리 속성 제거 명령어로 해결할 수 있습니다.
+> 저장소의 **Settings → Actions → General → Workflow permissions**를 "Read and write"로 바꿔 두어야 Release에 파일이 올라갑니다.
 
 ---
 
-## 💻 로컬 실행 및 수동 빌드
+## 모바일에서 쓰기 (PWA)
 
-### 개발 서버 실행
-```powershell
-npm install
-npm run dev            # Vite 개발 서버 + Electron 데스크톱 앱 동시 실행
-npm run dev:pwa        # 웹/모바일 PWA 개발 서버 실행 (동일 Wi-Fi 모바일 기기 접속 지원: http://<IP>:5190)
-npm run electron:dev   # Electron 데스크톱 앱 개발 모드 실행
-```
+`main` 브랜치에 푸시하면 `.github/workflows/deploy-pwa.yml`이 GitHub Pages에 웹 앱을 배포합니다. 처음 한 번은 저장소의 **Settings → Pages → Source**를 "GitHub Actions"로 바꿔 주세요.
 
-### 로컬 패키징
-```powershell
-# 현재 OS용 자동 빌드
-npm run dist
+- **iPhone · iPad (Safari):** 배포 주소에 접속한 뒤 공유 → **홈 화면에 추가**를 누릅니다.
+- **Android (Chrome):** 배포 주소에 접속한 뒤 메뉴(`⋮`) → **앱 설치**를 누릅니다.
 
-# Windows 전용 (NSIS 인스톨러 + Portable 단일 실행파일)
-npm run dist:win
-
-# Linux 전용 (WSL2 또는 Linux 환경 권장)
-npm run dist:linux
-
-# macOS 전용 (macOS 환경 필요)
-npm run dist:mac
-```
-
-- 빌드 산출물은 프로젝트 루트의 `release/` 폴더에 생성됩니다.
+홈 화면 아이콘으로 열면 주소창 없이 앱처럼 실행됩니다. PC와 같은 데이터를 쓰려면 PC 앱의 동기화 창에 있는 QR 코드나 연동 코드로 연결하세요.
 
 ---
 
-## 🔧 문제 해결 및 팁
-- **macOS "앱이 손상되었기 때문에 열 수 없습니다" 오류 (Gatekeeper 차단)**:
-  Apple 개발자 인증서 미서명/미공증 앱을 인터넷(GitHub Release 등)에서 다운로드할 때 macOS 보안 정책(Gatekeeper)에 의해 격리(Quarantine) 플래그가 붙어 발생합니다. (파일이 실제로 손상된 것이 아닙니다)
-  1. `BullsNote.app`을 `/Applications` (응용 프로그램) 폴더로 이동합니다.
-  2. **터미널(Terminal)**을 실행하고 아래 명령어를 입력합니다:
-     ```bash
-     xattr -cr /Applications/BullsNote.app
-     ```
-  3. 이후 앱을 더블 클릭하여 실행하면 정상 실행됩니다.
-  *(또는 '시스템 설정 > 개인정보 보호 및 보안 > 보안' 섹션에서 '확인 없이 열기'를 클릭하여 허용할 수도 있습니다)*
-- **NSIS 캐시 오류**: Windows에서 NSIS 생성 시 오류가 발생하면 `%LOCALAPPDATA%\electron-builder\Cache\nsis` 폴더를 삭제 후 재시도하세요.
-- **Electron 바이너리 다운로드 실패**: `npm install --ignore-scripts` 후 `node node_modules/electron/install.js`를 별도로 실행하세요.
-- **Google Drive 및 Gemini CSP 정책**: Google Drive API 및 Gemini AI 통신은 `index.html`의 CSP 정책(`connect-src https: wss:`)에 허용되어 있습니다.
+## AI 연결 (Gemini · MCP)
+
+AI 기능은 모두 선택 사항이며, 켜지 않아도 앱의 모든 기본 기능을 쓸 수 있습니다.
+
+### Gemini (앱 안에서 쓰는 AI)
+
+사이드바 아래 **AI 연결**에서 개인 Gemini API 키를 넣으면 켜집니다. 키는 내 기기에만 저장됩니다.
+
+- **에디터:** `/` 메뉴와 "AI 보조"로 요약, 다듬기, 이어 쓰기를 합니다.
+- **오늘 브리핑:** 할 일·일정·오늘 노트를 3~4줄로 요약합니다.
+- **빠른 입력:** ✨ 버튼으로 날짜·시각을 AI가 다시 읽습니다.
+- **클립보드 정리:** 긴 글을 요약해서 노트로 저장합니다.
+
+AI는 버튼을 누를 때만 호출됩니다.
+
+### MCP (Claude Desktop · Gemini CLI에서 BullsNote 쓰기, 데스크톱 전용)
+
+사이드바 저장 폴더 옆의 🔌 버튼을 누르면 Claude Desktop이나 Gemini CLI에 BullsNote MCP 서버가 등록됩니다. 사용자 PC에 Node.js가 없어도 됩니다.
+
+| 도구 | 하는 일 |
+|---|---|
+| `save_note` | 대화 내용을 노트로 저장 (기본 위치: "AI 노트" 폴더) |
+| `list_projects` | 폴더 목록 확인 |
+| `add_todo` | 할일 추가 (마감일 · 알림 시각 · 메모) |
+| `list_today` | 오늘 할 일 · 오늘 완료한 일 · 오늘 일정 조회 |
+
+예: Claude에게 "내일 오후 3시에 보고서 회신 할일 추가해줘"라고 말하면 BullsNote 할일에 바로 들어갑니다.
+
+---
+
+## 프로젝트 구조
+
+MVC 구조입니다. 규칙(model)은 화면과 분리된 순수 함수로 두고, 단위 테스트로 검증합니다.
+
+```
+src/
+  model/        규칙과 저장 — 노트·할일·플래너 규칙, 빠른 입력 해석, Daily Note,
+                오늘 브리핑, Google Drive·Calendar 동기화, 파일 볼트 형식
+    __tests__/  Vitest 단위 테스트
+  controller/   NotesController.tsx — 앱 상태와 동작 (useNotes 컨텍스트)
+  view/         화면 — 오늘, 할일(목록·보드·타임라인), 노트 에디터, 사이드바, 모바일 화면
+electron/       데스크톱 셸 — 창, 트레이, 저장 폴더, Google 로그인, MCP 등록
+  mcp/          MCP 서버 (의존성 없는 stdio 서버)
+public/         PWA 매니페스트, 서비스 워커, 아이콘
+docs/           설계 문서와 README 이미지
+```
+
+| 영역 | 사용 기술 |
+|---|---|
+| 앱 | Electron 44, React 18, TypeScript, Vite 5 |
+| UI | Mantine 7, Tabler Icons |
+| 에디터 | BlockNote 0.55, Shiki (코드 강조) |
+| 테스트 | Vitest |
+
+---
+
+## 문제 해결
+
+- **macOS에서 "손상되었기 때문에 열 수 없습니다"가 뜰 때:** Apple 공증을 받지 않은 앱이라 생기는 경고이고, 파일이 손상된 것은 아닙니다. 앱을 `응용 프로그램` 폴더로 옮긴 뒤 아래 명령을 실행하세요.
+
+  ```bash
+  xattr -cr /Applications/BullsNote.app
+  ```
+
+- **Windows에서 NSIS 오류가 날 때:** `%LOCALAPPDATA%\electron-builder\Cache\nsis` 폴더를 지우고 다시 빌드하세요.
+- **Electron 다운로드가 실패할 때:** `npm install --ignore-scripts`로 설치한 뒤 `node node_modules/electron/install.js`를 따로 실행하세요.
+- **AI·Drive 통신이 막힐 때:** `index.html`의 CSP(`connect-src`)에 해당 주소가 허용되어 있는지 확인하세요.
+
+---
+
+## 라이선스
+
+이 프로젝트의 라이선스는 아직 정해지지 않았습니다.
+
+이 앱은 오픈소스 라이브러리를 사용합니다. 대부분 MIT · ISC · BSD · Apache-2.0 라이선스입니다. 블록 에디터인 [BlockNote](https://github.com/TypeCellOS/BlockNote)(`@blocknote/core`, `@blocknote/react`, `@blocknote/ariakit`)는 **MPL-2.0** 라이선스입니다.
