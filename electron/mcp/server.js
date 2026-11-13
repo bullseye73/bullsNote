@@ -9,9 +9,11 @@ const fs = require('fs/promises');
 const path = require('path');
 const os = require('os');
 const readline = require('readline');
+const todos = require('./todos');
+const { serializeNoteFile } = todos;
 
 const SERVER_NAME = 'bullsnote';
-const SERVER_VERSION = '1.0.0';
+const SERVER_VERSION = '1.1.0';
 const SUPPORTED_PROTOCOLS = ['2025-06-18', '2025-03-26', '2024-11-05'];
 
 /** 프로젝트를 지정하지 않았을 때 저장되는 전용 프로젝트 (앱에서 이름을 바꿔도 id로 찾는다) */
@@ -19,7 +21,7 @@ const AI_PROJECT_ID = 'proj-ai-notes';
 const AI_PROJECT_NAME = 'AI 노트';
 const AI_PROJECT_ICON = '🤖';
 /** 할일관리 프로젝트는 todoMeta 가 필요한 시스템 프로젝트라 저장 대상에서 제외 (src/model/TodoService.ts 와 동일) */
-const TODO_PROJECT_ID = 'todo-project';
+const TODO_PROJECT_ID = todos.TODO_PROJECT_ID;
 
 const MAX_TITLE_LEN = 200;
 const MAX_CONTENT_LEN = 1024 * 1024;
@@ -92,31 +94,6 @@ async function writeFileAtomic(file, data) {
 
 function createNoteId() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
-}
-
-function serializeNoteFile(note, body) {
-  const esc = (v) => JSON.stringify(v);
-  return [
-    '---',
-    `id: ${esc(note.id)}`,
-    `title: ${esc(note.title)}`,
-    `projectId: ${esc(note.projectId)}`,
-    `color: ${esc('blue')}`,
-    `reminder: ${esc(null)}`,
-    `parentId: ${esc(null)}`,
-    `pinned: ${esc(false)}`,
-    `favorite: ${esc(false)}`,
-    `tags: ${esc(note.tags)}`,
-    `attachments: ${esc([])}`,
-    `todoMeta: ${esc(null)}`,
-    `systemGroupType: ${esc(null)}`,
-    `createdAt: ${esc(note.createdAt)}`,
-    `updatedAt: ${esc(note.updatedAt)}`,
-    '---',
-    '',
-    body.replace(/\s+$/, ''),
-    '',
-  ].join('\n');
 }
 
 /** 앱의 해시태그 규칙(src/model/HashtagService.ts)에 맞게 정규화. 쓸 수 없는 태그는 빈 문자열 */
@@ -209,6 +186,18 @@ async function saveNote(args) {
   const body = missing.length > 0 ? `${content}\n\n${missing.map((t) => `#${t}`).join(' ')}` : content;
 
   const now = Date.now();
+  const { id, file } = await newNoteFile(root);
+  const tags = [...existingTags(`${title}\n${body}`)].sort();
+  await writeFileAtomic(
+    file,
+    serializeNoteFile({ id, title, projectId: project.id, color: 'blue', tags, createdAt: now, updatedAt: now }, body),
+  );
+  return `노트를 저장했습니다.\n- 제목: ${title}\n- 프로젝트: ${project.name}\n- 태그: ${tags.map((t) => `#${t}`).join(' ') || '(없음)'}\n- 파일: ${file}\nBullsNote 앱이 실행 중이면 몇 초 안에 목록에 나타나고, Google Drive 동기화는 앱이 처리합니다.`;
+}
+
+
+/** 겹치지 않는 새 노트 id 와 파일 경로 */
+async function newNoteFile(root) {
   let id = createNoteId();
   let file = path.join(root, `${id}.md`);
   for (let i = 0; i < 5; i++) {
@@ -220,12 +209,51 @@ async function saveNote(args) {
       break;
     }
   }
-  const tags = [...existingTags(`${title}\n${body}`)].sort();
-  await writeFileAtomic(
-    file,
-    serializeNoteFile({ id, title, projectId: project.id, tags, createdAt: now, updatedAt: now }, body),
+  return { id, file };
+}
+
+/** 저장 폴더의 모든 노트 frontmatter (본문 제외) */
+async function readAllNoteMeta(root) {
+  const names = (await fs.readdir(root)).filter((n) => n.endsWith('.md'));
+  const out = [];
+  for (const name of names) {
+    try {
+      const parsed = todos.parseNoteMeta(await fs.readFile(path.join(root, name), 'utf8'));
+      if (parsed && typeof parsed.meta.id === 'string') out.push(parsed.meta);
+    } catch {
+      /* 읽을 수 없는 파일은 건너뛴다 */
+    }
+  }
+  return out;
+}
+
+async function addTodo(args) {
+  const root = await resolveVault();
+  await readSidecar(root); // 초기화되지 않은 폴더면 안내 오류
+  const { id, file } = await newNoteFile(root);
+  const { note, body } = todos.buildTodoNote(
+    { title: args.title, dueDate: args.dueDate, time: args.time, memo: args.memo },
+    new Date(),
+    id,
   );
-  return `노트를 저장했습니다.\n- 제목: ${title}\n- 프로젝트: ${project.name}\n- 태그: ${tags.map((t) => `#${t}`).join(' ') || '(없음)'}\n- 파일: ${file}\nBullsNote 앱이 실행 중이면 몇 초 안에 목록에 나타나고, Google Drive 동기화는 앱이 처리합니다.`;
+  await writeFileAtomic(file, serializeNoteFile(note, body));
+  const due = note.todoMeta.dueDate;
+  const at = note.reminder ? new Date(note.reminder.targetAt) : null;
+  const pad = (n) => String(n).padStart(2, '0');
+  return [
+    '할일을 추가했습니다.',
+    `- 제목: ${note.title}`,
+    `- 마감일: ${due || '없음'}`,
+    `- 알림: ${at ? `${todos.toIsoDate(at)} ${pad(at.getHours())}:${pad(at.getMinutes())}` : '없음'}`,
+    'BullsNote 앱이 실행 중이면 몇 초 안에 할일 목록에 나타납니다.',
+  ].join('\n');
+}
+
+async function listToday() {
+  const root = await resolveVault();
+  await readSidecar(root);
+  const todayIso = todos.toIsoDate(new Date());
+  return todos.formatTodayBoard(todos.todayBoard(await readAllNoteMeta(root), todayIso), todayIso);
 }
 
 const TOOLS = [
@@ -267,11 +295,36 @@ const TOOLS = [
     description: 'BullsNote 의 프로젝트(폴더) 목록과 저장 폴더 경로를 조회한다. 사용자가 특정 프로젝트에 저장해 달라고 할 때 이름을 확인하는 용도.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
+  {
+    name: 'add_todo',
+    description:
+      'BullsNote 의 할일관리(To Do)에 새 할일을 추가한다. 사용자가 할 일·해야 할 것·리마인드를 남겨 달라고 할 때 사용한다. ' +
+      '날짜가 "다음 주 화요일"처럼 상대적이면 오늘 날짜(list_today 로 확인 가능)를 기준으로 YYYY-MM-DD 로 바꿔 보낸다.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: '할일 제목 (한 줄).' },
+        dueDate: { type: 'string', description: '마감일. YYYY-MM-DD 또는 "오늘"/"내일"/"모레". 없으면 일정 없는 할일.' },
+        time: { type: 'string', description: '알림 시각 HH:mm (24시간). dueDate 와 함께만 쓴다. 생략하면 마감일 09:00 알림.' },
+        memo: { type: 'string', description: '할일 본문 메모 (Markdown, 선택).' },
+      },
+      required: ['title'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'list_today',
+    description:
+      'BullsNote 의 오늘 날짜, 오늘 할 일(지연·오늘 마감·진행 중)과 오늘 알림 일정을 조회한다. 사용자가 오늘 할 일이나 일정을 물을 때 사용한다.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
 ];
 
 async function callTool(name, args) {
   if (name === 'save_note') return saveNote(args || {});
   if (name === 'list_projects') return listProjects();
+  if (name === 'add_todo') return addTodo(args || {});
+  if (name === 'list_today') return listToday();
   throw new Error(`알 수 없는 도구입니다: ${name}`);
 }
 
@@ -298,7 +351,8 @@ async function handle(msg) {
           capabilities: { tools: {} },
           serverInfo: { name: SERVER_NAME, version: SERVER_VERSION },
           instructions:
-            '사용자가 대화 내용을 노트로 저장해 달라고 하면 save_note 를 사용한다. 저장 후에는 제목과 저장된 프로젝트를 한 줄로 알려준다.',
+            '사용자가 대화 내용을 노트로 저장해 달라고 하면 save_note 를 사용한다. 저장 후에는 제목과 저장된 프로젝트를 한 줄로 알려준다. ' +
+            '할 일을 남겨 달라고 하면 add_todo, 오늘 할 일·일정을 물으면 list_today 를 사용한다.',
         },
       });
     } else if (method === 'ping') {
@@ -350,4 +404,4 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { saveNote, listProjects, resolveVault, normalizeTag, AI_PROJECT_ID };
+module.exports = { saveNote, listProjects, addTodo, listToday, resolveVault, normalizeTag, AI_PROJECT_ID };
