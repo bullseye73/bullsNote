@@ -148,12 +148,14 @@ export function TodosView() {
         )}
 
         {todoViewMode === 'board' && (
-          <ScrollArea h="100%" type="auto">
+          // ScrollArea는 내용을 줄어드는 표로 감싸 열이 화면 너비를 채우지 못하므로 일반 스크롤 상자 사용
+          <Box h="100%" style={{ overflow: 'auto' }}>
+            {/* 네 열이 화면 너비를 나눠 쓰고, 좁으면 열마다 최소 240px을 지키며 가로 스크롤 */}
             <Group align="flex-start" gap="md" p="lg" wrap="nowrap">
               {BOARD_COLUMNS.map((col) => {
                 const colItems = boardItems.filter((i) => i.status === col.status);
                 return (
-                  <Stack key={col.status} gap={8} w={280} style={{ flexShrink: 0 }}>
+                  <Stack key={col.status} gap={8} style={{ flex: '1 1 0', minWidth: 240 }}>
                     <Group gap={6}>
                       <Text fw={600} size="sm">
                         {col.title}
@@ -167,7 +169,7 @@ export function TodosView() {
                 );
               })}
             </Group>
-          </ScrollArea>
+          </Box>
         )}
       </Box>
 

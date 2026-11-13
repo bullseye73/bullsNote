@@ -146,6 +146,9 @@ describe('getBodyPreview', () => {
   it('길면 잘라서 말줄임표를 붙인다', () => {
     expect(getBodyPreview(blocks(para('가'.repeat(100))), 80)).toBe(`${'가'.repeat(80)}…`);
   });
+  it('카드 아래에 따로 보여주는 원본 노트 링크 줄은 건너뛴다', () => {
+    expect(getBodyPreview(blocks(para('📌 원본 노트: 회의록'), para('견적 금액 재확인')))).toBe('견적 금액 재확인');
+  });
   it('빈 본문은 빈 문자열', () => {
     expect(getBodyPreview('')).toBe('');
   });

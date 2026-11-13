@@ -47,7 +47,7 @@ export function TaskCard({ item, sourceTitle, onOpen, onToggleDone, onOpenSource
         backgroundColor: 'var(--bn-surface-editor)',
       }}
     >
-      <Group gap={10} wrap="nowrap" align="flex-start">
+      <Group gap={10} wrap="nowrap" align="flex-start" style={{ minWidth: 0 }}>
         <Tooltip label={isClosed ? '다시 열기' : '완료'} openDelay={400}>
           <ActionIcon
             variant="subtle"
@@ -81,7 +81,7 @@ export function TaskCard({ item, sourceTitle, onOpen, onToggleDone, onOpenSource
             )}
           </Group>
           {preview && (
-            <Text size="xs" c="dimmed" mt={4} lineClamp={2} style={{ lineHeight: 1.5 }}>
+            <Text size="xs" c="dimmed" mt={4} truncate style={{ lineHeight: 1.5 }}>
               {preview}
             </Text>
           )}
@@ -100,10 +100,11 @@ export function TaskCard({ item, sourceTitle, onOpen, onToggleDone, onOpenSource
           onClick={() => onOpenSource(item.sourceNoteId!)}
           mt={6}
           ml={34}
-          style={{ display: 'flex', alignItems: 'center', gap: 4 }}
+          // 카드 폭 안에서만 표시하고 넘치면 말줄임
+          style={{ display: 'flex', alignItems: 'center', gap: 4, maxWidth: 'calc(100% - 34px)', minWidth: 0 }}
         >
-          <IconFileText size={13} color="var(--mantine-color-dimmed)" />
-          <Text size="11px" c="dimmed" truncate>
+          <IconFileText size={13} color="var(--mantine-color-dimmed)" style={{ flexShrink: 0 }} />
+          <Text size="11px" c="dimmed" truncate style={{ minWidth: 0 }}>
             {sourceTitle || '출처 노트'}
           </Text>
         </UnstyledButton>

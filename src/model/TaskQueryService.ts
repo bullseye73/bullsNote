@@ -167,13 +167,19 @@ function walkBlocks(blocks: Block[], visit: (b: Block) => void): void {
   }
 }
 
+/** 체크리스트에서 만든 할일 본문 첫 줄 (TodoService.buildTodoNoteContent) */
+const SOURCE_LINK_PREFIX = '📌 원본 노트';
+
 /** 본문 첫 번째 비어있지 않은 줄 (카드 미리보기용) */
 export function getBodyPreview(content: string, maxLen = 80): string {
   let first = '';
   const blocks = parseBlocks(content);
   if (blocks) {
     walkBlocks(blocks, (b) => {
-      if (!first) first = inlineText(b.content).trim();
+      if (first) return;
+      const text = inlineText(b.content).trim();
+      // 할일 본문 첫 줄의 원본 노트 링크는 카드 아래 출처 표시와 겹치므로 건너뜀
+      if (!text.startsWith(SOURCE_LINK_PREFIX)) first = text;
     });
   } else {
     first = noteBodyText(content).split('\n').map((s) => s.trim()).find(Boolean) ?? '';
