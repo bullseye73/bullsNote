@@ -1,6 +1,6 @@
 // VIEW: 모바일 노트 상세 헤더
 // - 한 줄 상단바(뒤로 · 위치/제목 · 알림 · 즐겨찾기 · ⋯) + 스크롤 시 접히는 제목/메타 영역
-// - 자주 쓰지 않는 동작(공유·내보내기·색상·히스토리·고정·목차)은 ⋯ 하단 시트로 이동
+// - 자주 쓰지 않는 동작(공유·내보내기·색상·히스토리·고정)은 ⋯ 하단 시트로 이동
 import { ActionIcon, Badge, Box, Collapse, Group, Text, Textarea } from '@mantine/core';
 import {
   IconBell,
@@ -19,18 +19,14 @@ import {
   IconStar,
   IconStarFilled,
 } from '@tabler/icons-react';
-import type { BlockNoteEditor } from '@blocknote/core';
 import { useMemo, useState } from 'react';
 import { Note, PASTEL_COLORS, getPastelConfig } from '../model/Note';
 import { noteBodyText } from '../model/HashtagService';
 import { GoogleDriveService } from '../model/GoogleDriveService';
 import { ReminderPopover } from './ReminderPopover';
-import { TocTouchList, useNoteHeadings } from './NoteTableOfContents';
 import { MobileTopBar } from './mobile/MobileTopBar';
 import { MobileActionSheet, type ActionSheetSection } from './mobile/MobileActionSheet';
 import { useHideOnScroll } from './mobile/useHideOnScroll';
-
-type AnyEditor = BlockNoteEditor<any, any, any>;
 
 export interface NoteShareActions {
   printPreview: () => void;
@@ -49,7 +45,6 @@ interface MobileNoteHeaderProps {
   /** 상단바에 표시할 현재 위치(상위 노트 또는 프로젝트 이름) */
   locationLabel: string;
   onBack?: () => void;
-  editor: AnyEditor | null;
   scrollEl: HTMLDivElement | null;
   locked?: boolean;
   feedback?: string | null;
@@ -74,7 +69,6 @@ export function MobileNoteHeader({
   note,
   locationLabel,
   onBack,
-  editor,
   scrollEl,
   locked = false,
   feedback,
@@ -87,12 +81,9 @@ export function MobileNoteHeader({
   onTagClick,
 }: MobileNoteHeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
-  const [tocOpen, setTocOpen] = useState(false);
   const chromeHidden = useHideOnScroll(scrollEl);
   const colorCfg = getPastelConfig(note.color);
 
-  const scrollRef = useMemo(() => ({ current: scrollEl }), [scrollEl]);
-  const { headings, activeId, scrollToHeading } = useNoteHeadings(editor, scrollRef);
 
   const charCount = useMemo(() => noteBodyText(note.content).length, [note.content]);
   const unsynced = GoogleDriveService.isNoteUnsynced(note);
@@ -102,13 +93,6 @@ export function MobileNoteHeader({
     {
       key: 'note',
       items: [
-        {
-          key: 'toc',
-          icon: <IconListTree size={19} />,
-          label: '목차',
-          description: headings.length > 0 ? `제목 ${headings.length}개` : '본문에 제목이 없습니다',
-          onClick: () => setTocOpen(true),
-        },
         {
           key: 'pin',
           icon: <IconPin size={19} />,
@@ -270,16 +254,6 @@ export function MobileNoteHeader({
         </Group>
       </MobileActionSheet>
 
-      <MobileActionSheet opened={tocOpen} onClose={() => setTocOpen(false)} title="목차">
-        <TocTouchList
-          headings={headings}
-          activeId={activeId}
-          onSelect={(id) => {
-            setTocOpen(false);
-            scrollToHeading(id);
-          }}
-        />
-      </MobileActionSheet>
     </Box>
   );
 }

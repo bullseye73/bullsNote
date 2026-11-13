@@ -1,5 +1,6 @@
 // VIEW: 노트 본문 헤딩(H1/H2/H3) 기반 우측 상단 고정 목차(TOC) 컴포넌트
-import { Paper, ScrollArea, Text, UnstyledButton } from '@mantine/core';
+import { Paper, ScrollArea, UnstyledButton } from '@mantine/core';
+import { useClickOutside } from '@mantine/hooks';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { BlockNoteEditor } from '@blocknote/core';
 
@@ -112,13 +113,15 @@ export function useNoteHeadings(
 const RAIL_WIDTH_BY_LEVEL: Record<number, number> = { 1: 16, 2: 12, 3: 8 };
 
 /**
- * 데스크톱 목차: 평소에는 오른쪽 가장자리의 얇은 선 막대(본문을 가리지 않음),
- * 마우스를 올리면 제목 목록이 펼쳐지고 누르면 그 위치로 이동
+ * 목차: 평소에는 오른쪽 가장자리의 얇은 선 막대(본문을 가리지 않음).
+ * 데스크톱은 마우스를 올리면, 모바일(터치)은 막대를 탭하면 제목 목록이 펼쳐지고 누르면 그 위치로 이동.
+ * 터치에서는 바깥을 탭하면 닫힌다.
  */
 export function NoteTableOfContents({ editor, scrollContainerRef }: NoteTableOfContentsProps) {
   const { headings, activeId, scrollToHeading } = useNoteHeadings(editor, scrollContainerRef);
   const [open, setOpen] = useState(false);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const rootRef = useClickOutside(() => setOpen(false));
 
   useEffect(() => () => {
     if (closeTimer.current) clearTimeout(closeTimer.current);
@@ -138,7 +141,8 @@ export function NoteTableOfContents({ editor, scrollContainerRef }: NoteTableOfC
 
   return (
     <div
-      className="no-print"
+      ref={rootRef}
+      className="no-print bn-toc"
       onMouseEnter={show}
       onMouseLeave={hide}
       style={{ position: 'absolute', top: 16, right: 6, zIndex: 10, display: 'flex', alignItems: 'flex-start' }}
@@ -162,7 +166,10 @@ export function NoteTableOfContents({ editor, scrollContainerRef }: NoteTableOfC
                 return (
                   <UnstyledButton
                     key={h.id}
-                    onClick={() => scrollToHeading(h.id)}
+                    onClick={() => {
+                      scrollToHeading(h.id);
+                      setOpen(false);
+                    }}
                     className="bn-toc-row"
                     data-active={isActive || undefined}
                     style={{
@@ -193,8 +200,16 @@ export function NoteTableOfContents({ editor, scrollContainerRef }: NoteTableOfC
         role="button"
         tabIndex={0}
         aria-label={`목차 (${headings.length})`}
-        onFocus={show}
-        onBlur={hide}
+        aria-expanded={open}
+        className="bn-toc-rail"
+        // 터치에서는 탭 직전에 mouseenter가 먼저 와서 열리므로, 탭은 토글이 아니라 '열기'로 둔다
+        onClick={show}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            setOpen((v) => !v);
+          }
+        }}
         style={{
           display: 'flex',
           flexDirection: 'column',
@@ -222,55 +237,5 @@ export function NoteTableOfContents({ editor, scrollContainerRef }: NoteTableOfC
         ))}
       </div>
     </div>
-  );
-}
-
-/** 모바일 목차 시트용 헤딩 목록 (큰 터치 영역, 현재 위치 강조) */
-export function TocTouchList({
-  headings,
-  activeId,
-  onSelect,
-}: {
-  headings: HeadingItem[];
-  activeId: string | null;
-  onSelect: (id: string) => void;
-}) {
-  if (headings.length === 0) {
-    return (
-      <Text size="sm" c="dimmed" py="md" ta="center">
-        본문에 제목(H1~H3)을 추가하면 목차가 표시됩니다
-      </Text>
-    );
-  }
-  return (
-    <ScrollArea.Autosize mah="60dvh" type="auto">
-      <div style={{ display: 'flex', flexDirection: 'column' }}>
-        {headings.map((h) => {
-          const isActive = activeId === h.id;
-          return (
-            <UnstyledButton
-              key={h.id}
-              onClick={() => onSelect(h.id)}
-              style={{
-                minHeight: 44,
-                padding: `0 12px 0 ${12 + Math.max(0, (h.level - 1) * 16)}px`,
-                borderRadius: 8,
-                display: 'flex',
-                alignItems: 'center',
-                fontSize: h.level === 1 ? 15 : 14,
-                fontWeight: isActive || h.level === 1 ? 600 : 400,
-                color: isActive ? 'var(--mantine-color-blue-6)' : 'var(--mantine-color-text)',
-                backgroundColor: isActive ? 'var(--mantine-color-blue-light)' : 'transparent',
-                overflow: 'hidden',
-                whiteSpace: 'nowrap',
-                textOverflow: 'ellipsis',
-              }}
-            >
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{h.text}</span>
-            </UnstyledButton>
-          );
-        })}
-      </div>
-    </ScrollArea.Autosize>
   );
 }

@@ -1100,6 +1100,7 @@ function BlockEditor({
         </Paper>
       )}
       <div
+        className="bn-editor-area"
         style={{
           flex: 1,
           minHeight: 0,
@@ -1109,8 +1110,8 @@ function BlockEditor({
           backgroundColor: 'var(--bn-surface-editor)',
         }}
       >
-        {/* 우측 상단 고정 목차 (TOC) */}
-        {!compact && !embedded && <NoteTableOfContents editor={editor} scrollContainerRef={scrollContainerRef} />}
+        {/* 우측 상단 목차: 얇은 선 막대 + 펼쳐지는 제목 목록 */}
+        {!embedded && <NoteTableOfContents editor={editor} scrollContainerRef={scrollContainerRef} />}
 
         <div
           ref={attachScrollContainer}
@@ -1585,7 +1586,6 @@ export function NoteEditorView({
           note={selected}
           locationLabel={mobileLocationLabel}
           onBack={onBackToList}
-          editor={currentEditor}
           scrollEl={editorScrollEl}
           locked={isNoteLocked}
           feedback={copyFeedback}

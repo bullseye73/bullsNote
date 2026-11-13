@@ -1074,3 +1074,22 @@ span.shiki,
 .bn-toc-row:hover {
   background-color: var(--bn-card-hover);
 }
+
+/* 모바일: 목차 막대가 있는 노트는 오른쪽 여백을 넓혀 본문이 막대 밑에 깔리지 않게 */
+@media (max-width: 767px) {
+  .bn-editor-area:has(.bn-toc-rail) .bn-editor {
+    padding-right: 34px !important;
+  }
+}
+
+/* 터치 기기: 목차 목록 행을 손가락으로 누르기 쉽게 */
+@media (pointer: coarse) {
+  .bn-toc-row {
+    min-height: 40px;
+  }
+  .bn-toc-rail {
+    min-width: 32px;
+    min-height: 32px;
+    justify-content: center;
+  }
+}
