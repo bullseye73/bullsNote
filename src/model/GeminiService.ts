@@ -92,6 +92,11 @@ export class GeminiService {
     return DEFAULT_CONFIG;
   }
 
+  /** AI 기능을 켰는지 (API 키 입력 여부) — 키가 없으면 화면에서 'AI 켜기' 안내 */
+  static isConfigured(): boolean {
+    return Boolean(this.getConfig().apiKey?.trim());
+  }
+
   static saveConfig(newConfig: Partial<GeminiConfig>): GeminiConfig {
     const current = this.getConfig();
     const updated: GeminiConfig = {

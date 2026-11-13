@@ -1059,3 +1059,13 @@ span.shiki,
 .bn-sync-status-row:hover {
   background-color: var(--bn-card-hover);
 }
+
+/* 노트 체크리스트의 "+ 할일로" 버튼: 평소엔 흐리게, 가리키면 또렷하게 */
+.bn-checklist-link-btn {
+  opacity: 0.45;
+  transition: opacity 0.15s ease;
+}
+.bn-checklist-link-btn:hover,
+.bn-checklist-link-btn:focus-visible {
+  opacity: 1;
+}

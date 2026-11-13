@@ -176,3 +176,18 @@ describe('sortTasksForList', () => {
     expect(ids(sortTasksForList(itemsOf(notes)))).toEqual(['soon', 'late', 'no-date', 'done-early']);
   });
 });
+
+import { getLinkedTodosByBlock } from '../TaskQueryService';
+
+describe('getLinkedTodosByBlock', () => {
+  it('출처 노트의 체크리스트 블록 ID별로 연결된 할일을 찾는다', () => {
+    const a = todo('todo-a', { sourceNoteId: 'meeting', due: TODAY });
+    a.todoMeta!.sourceBlockId = 'block-1';
+    const b = todo('todo-b', { sourceNoteId: 'other' });
+    b.todoMeta!.sourceBlockId = 'block-2';
+    const noBlock = todo('todo-c', { sourceNoteId: 'meeting' });
+    const map = getLinkedTodosByBlock('meeting', itemsOf([a, b, noBlock]));
+    expect([...map.keys()]).toEqual(['block-1']);
+    expect(map.get('block-1')?.note.id).toBe('todo-a');
+  });
+});

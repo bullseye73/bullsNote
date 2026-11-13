@@ -54,6 +54,7 @@ import { GoogleSyncModal } from './view/GoogleSyncModal';
 import { WelcomeView } from './view/WelcomeView';
 import { TodosView } from './view/todos/TodosView';
 import { TodayView } from './view/TodayView';
+import { QuickCaptureModal } from './view/QuickCaptureModal';
 import { QuickSearchModal } from './view/QuickSearchModal';
 import { GeminiAiModal } from './view/GeminiAiModal';
 import { SortMenu } from './view/SortMenu';
@@ -212,6 +213,7 @@ function Shell() {
     closeGeminiModal,
     plannerViewActive,
     workspaceView,
+    openQuickCapture,
     openPlannerView,
     closePlannerView,
   } = useNotes();
@@ -267,9 +269,15 @@ function Shell() {
   });
 
   useHotkeys([
-    ['mod+N', (e) => { e.preventDefault(); create(null); }],
+    ['mod+N', (e) => { e.preventDefault(); openQuickCapture(); }],
     ['mod+K', (e) => { e.preventDefault(); openQuickSearchModal(); }],
-    ['mod+J', (e) => { e.preventDefault(); openGeminiModal('clipboard'); }],
+    // 클립보드 글을 빠른 입력으로 가져와 노트로 저장하거나 AI로 정리
+    ['mod+J', (e) => {
+      e.preventDefault();
+      navigator.clipboard?.readText?.()
+        .then((t) => openQuickCapture(t))
+        .catch(() => openQuickCapture());
+    }],
   ]);
 
   useEffect(() => {
@@ -611,6 +619,7 @@ function Shell() {
         <GoogleSyncModal opened={googleSyncModalOpened} onClose={closeGoogleSyncModal} />
         <QuickSearchModal opened={quickSearchModalOpened} onClose={closeQuickSearchModal} />
         <GeminiAiModal opened={geminiModalOpened} onClose={closeGeminiModal} initialTab={geminiModalTab} />
+        <QuickCaptureModal />
       </Box>
     );
   }
@@ -767,26 +776,6 @@ function Shell() {
             </Button>
           </Tooltip>
 
-          {/* Gemini AI 어시스턴트 */}
-          <Tooltip label={`Gemini AI 어시스턴트 (${SHORTCUTS.geminiAi})`}>
-            <Button
-              size="compact-xs"
-              variant="light"
-              color="violet"
-              leftSection={<IconSparkles size={13} />}
-              onClick={() => openGeminiModal('clipboard')}
-              styles={{
-                root: {
-                  height: 26,
-                  paddingLeft: 8,
-                  paddingRight: 8,
-                  fontSize: 12,
-                },
-              }}
-            >
-              AI
-            </Button>
-          </Tooltip>
 
           {/* Google Drive 클라우드 동기화 및 계정 프로필 */}
           <Tooltip
@@ -925,6 +914,7 @@ function Shell() {
       <GoogleSyncModal opened={googleSyncModalOpened} onClose={closeGoogleSyncModal} />
       <QuickSearchModal opened={quickSearchModalOpened} onClose={closeQuickSearchModal} />
       <GeminiAiModal opened={geminiModalOpened} onClose={closeGeminiModal} initialTab={geminiModalTab} />
+      <QuickCaptureModal />
     </AppShell>
   );
 }

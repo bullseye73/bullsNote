@@ -34,7 +34,8 @@ import {
 } from '@tabler/icons-react';
 import type { BlockNoteEditor } from '@blocknote/core';
 import { createContext, useContext, useState } from 'react';
-import { AI_ACTIONS_META, AiActionType } from '../model/GeminiService';
+import { AI_ACTIONS_META, AiActionType, GeminiService } from '../model/GeminiService';
+import { useNotes } from '../controller/NotesController';
 import { SHORTCUTS } from '../model/shortcutUtils';
 
 type AnyEditor = BlockNoteEditor<any, any, any>;
@@ -138,6 +139,7 @@ export function EditorToolbar({
 }) {
   const isAccessory = variant === 'accessory';
   const [copied, setCopied] = useState(false);
+  const { openGeminiModal } = useNotes();
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     try {
       return localStorage.getItem(TOOLBAR_COLLAPSED_KEY) === 'true';
@@ -205,7 +207,22 @@ export function EditorToolbar({
     }
   };
 
-  const aiMenu = (
+  // AI는 사용자가 켜는 기능: API 키가 없으면 메뉴 대신 'AI 켜기' 안내
+  const aiMenu = !GeminiService.isConfigured() ? (
+    <Tooltip label="Gemini API 키를 연결하면 요약·정리·할 일 추출을 쓸 수 있어요">
+      <Button
+        variant="subtle"
+        color="violet"
+        size="compact-xs"
+        onMouseDown={keepSelection}
+        onClick={() => openGeminiModal('settings')}
+        leftSection={<IconSparkles size={13} />}
+        styles={{ root: { height: 24, fontSize: 11.5 } }}
+      >
+        AI 켜기
+      </Button>
+    </Tooltip>
+  ) : (
     <Menu position="bottom-end" withArrow shadow="md" withinPortal>
       <Menu.Target>
         <Tooltip label="Gemini AI 어시스턴트 (요약, 서식 정리, 교정, 할 일 추출)">

@@ -259,6 +259,8 @@ export interface NotesActions {
   openGeminiModal(tab?: 'clipboard' | 'prompt' | 'settings'): void;
   closeGeminiModal(): void;
   createNoteFromGemini(params: { title?: string; markdown: string; prompt?: string }): Promise<string>;
+  /** 빠른 입력 노트: 현재 폴더(할일 화면이면 첫 일반 폴더)에 제목·본문 마크다운으로 만든다 */
+  createQuickNote(params: { title: string; markdown: string }): Promise<string>;
   createNoteFromClipboard(): Promise<{ success: boolean; noteId?: string; error?: string }>;
   /** 할일 관리 액션 */
   createTodosFromChecklist(
@@ -2474,6 +2476,31 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     setGeminiModalOpened(false);
   }, []);
 
+  const createQuickNote = useCallback(
+    async (params: { title: string; markdown: string }): Promise<string> => {
+      const headless = await getHeadless();
+      const blocks = params.markdown.trim()
+        ? await headless.toBlocks(params.markdown)
+        : [{ type: 'paragraph', content: '' }];
+      const contentJson = JSON.stringify(blocks);
+      const projectId =
+        selectedProjectIdRef.current && selectedProjectIdRef.current !== TODO_PROJECT_ID
+          ? selectedProjectIdRef.current
+          : projects.find((p) => p.id !== TODO_PROJECT_ID)?.id ?? DEFAULT_PROJECT_ID;
+      const title = params.title.trim() || '새 노트';
+      const n = createEmptyNote({
+        title,
+        projectId,
+        content: contentJson,
+        tags: extractHashtags(title, contentJson),
+      });
+      setNotes((prev) => [n, ...prev]);
+      queueNoteSync(n);
+      return n.id;
+    },
+    [projects, queueNoteSync]
+  );
+
   const createNoteFromGemini = useCallback(
     async (params: { title?: string; markdown: string; prompt?: string }): Promise<string> => {
       const headless = await getHeadless();
@@ -3028,6 +3055,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       openGeminiModal,
       closeGeminiModal,
       createNoteFromGemini,
+      createQuickNote,
       createNoteFromClipboard,
       createTodosFromChecklist,
       changeTodoStatus,
@@ -3145,6 +3173,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       openGeminiModal,
       closeGeminiModal,
       createNoteFromGemini,
+      createQuickNote,
       createNoteFromClipboard,
       createTodosFromChecklist,
       changeTodoStatus,

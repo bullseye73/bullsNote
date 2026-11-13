@@ -87,6 +87,7 @@ import { InlineHistoryDiffView } from './InlineHistoryDiffView';
 import { NoteTableOfContents } from './NoteTableOfContents';
 import { MobileNoteHeader, type NoteShareActions } from './MobileNoteHeader';
 import { KeyboardAccessoryBar } from './mobile/KeyboardAccessoryBar';
+import { ChecklistTodoOverlay } from './ChecklistTodoOverlay';
 import { EditorAiModal } from './EditorAiModal';
 import { formatDateIso } from '../model/dateUtils';
 import { getDueDateBadgeInfo, toIsoDateLocal } from '../model/PlannerService';
@@ -162,6 +163,7 @@ function BlockEditor({
     createTodosFromChecklist,
     updateTaskSchedule,
     openPlannerView,
+    openNote,
   } = useNotes();
   const scheme = useComputedColorScheme('light');
   const [datePickerOpen, setDatePickerOpen] = useState(false);
@@ -175,6 +177,20 @@ function BlockEditor({
       onScrollContainerReady?.(el);
     },
     [onScrollContainerReady]
+  );
+  // 체크리스트 항목 하나를 할일로 등록 (최신 본문을 먼저 저장해 블록 ID 일치 보장)
+  const linkChecklistBlock = useCallback(
+    (blockId: string) => {
+      const blocks = editor.document;
+      const item = extractChecklistFromBlocks(blocks).find((it) => it.id === blockId);
+      if (!item) return;
+      const latestJson = JSON.stringify(blocks);
+      lastEmittedRef.current = latestJson;
+      updateContent(note.id, latestJson);
+      createTodosFromChecklist({ ...note, content: latestJson }, [item]);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [note, updateContent, createTodosFromChecklist]
   );
   const hiddenFileInputRef = useRef<HTMLInputElement>(null);
 
@@ -1096,6 +1112,7 @@ function BlockEditor({
         <div
           ref={attachScrollContainer}
           style={{
+            position: 'relative',
             flex: 1,
             minHeight: 0,
             overflow: 'auto',
@@ -1173,6 +1190,14 @@ function BlockEditor({
             }
           }}
         >
+          {/* 체크리스트 항목별 할일 연결 배지 / "+ 할일로" */}
+          <ChecklistTodoOverlay
+            editor={editor}
+            noteId={note.id}
+            container={scrollEl}
+            onLink={linkChecklistBlock}
+            onOpenTodo={openNote}
+          />
           <BlockNoteView
             editor={editor}
             theme={scheme === 'dark' ? 'dark' : 'light'}

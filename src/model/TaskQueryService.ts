@@ -134,6 +134,16 @@ export function sortTasksForList(items: TaskItem[]): TaskItem[] {
   );
 }
 
+/** 노트의 체크리스트 블록 ID → 그 블록에서 만든 할일 (노트 안 "할일 · M/D" 배지용) */
+export function getLinkedTodosByBlock(sourceNoteId: string, items: TaskItem[]): Map<string, TaskItem> {
+  const map = new Map<string, TaskItem>();
+  for (const item of items) {
+    const blockId = item.note.todoMeta?.sourceBlockId;
+    if (blockId && item.sourceNoteId === sourceNoteId) map.set(blockId, item);
+  }
+  return map;
+}
+
 type Block = Record<string, unknown>;
 
 function inlineText(content: unknown): string {
