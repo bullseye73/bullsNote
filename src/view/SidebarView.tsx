@@ -25,6 +25,8 @@ import {
   IconBrandGoogle,
   IconCalendar,
   IconCalendarEvent,
+  IconChecklist,
+  IconLayoutDashboard,
   IconChevronDown,
   IconChevronRight,
   IconCommand,
@@ -62,6 +64,7 @@ import { SHORTCUTS } from '../model/shortcutUtils';
 import { SortMenu } from './SortMenu';
 import { MiniCalendar } from './MiniCalendar';
 import { McpConnectModal } from './McpConnectModal';
+import { SyncStatusRow } from './SyncStatusRow';
 
 const POPULAR_ICONS = [
   '📁',
@@ -135,7 +138,11 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
     plannerViewActive,
     openPlannerView,
     closePlannerView,
-  } = useNotes();
+      workspaceView,
+    openToday,
+    openTodos,
+    openQuickCapture,
+} = useNotes();
 
   // 모든 검색/태그/날짜/퀵필터 조건을 일괄 초기화하여 대상 목록을 온전히 표시
   const resetAllFilters = useCallback(() => {
@@ -328,6 +335,24 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
         </Paper>
       )}
 
+      {/* 빠른 입력 (할일·노트 어디서든 ⌘N) */}
+      <Button
+        variant="default"
+        size="sm"
+        fullWidth
+        justify="space-between"
+        leftSection={<IconPlus size={15} />}
+        rightSection={
+          <Text size="10px" c="dimmed">
+            {SHORTCUTS.newNoteSymbol}
+          </Text>
+        }
+        onClick={() => openQuickCapture()}
+        styles={{ root: { fontWeight: 500 }, label: { flex: 1, textAlign: 'left' } }}
+      >
+        빠른 입력
+      </Button>
+
       {/* 상단 검색 입력 + 새 노트 버튼 */}
       <div>
         <Group gap={6} wrap="nowrap">
@@ -386,7 +411,8 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
           </Tooltip>
         </Group>
 
-        {/* 미니 퀵 필터 바 */}
+        {/* 미니 퀵 필터 바 (노트 화면에서만) */}
+        {workspaceView === 'notes' && (
         <Group gap={3} mt={6} wrap="wrap">
           <Tooltip
             label={
@@ -442,127 +468,68 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
             </Button>
           </Tooltip>
         </Group>
+        )}
       </div>
 
-      {/* 고정 퀵 내비게이션: Daily Notes · Gemini AI · 즐겨찾기 · 할일관리 · 플래너 */}
+      {/* 작업 공간: 오늘 / 할일 */}
       <Stack gap={2}>
         <NavLink
-          label="Daily Notes (오늘)"
-          leftSection={<IconCalendarEvent size={15} color="var(--mantine-color-teal-5)" />}
-          active={isDailyTodayActive && !plannerViewActive}
+          label="오늘"
+          leftSection={<IconLayoutDashboard size={16} color="var(--mantine-color-blue-5)" />}
+          active={workspaceView === 'today'}
           onClick={() => {
-            closePlannerView();
-            if (isDailyTodayActive) {
-              setSelectedDate(null);
-            } else {
-              setShowFavoriteOnly(false);
-              setSelectedDate(todayStr);
-            }
+            resetAllFilters();
+            openToday();
           }}
-          rightSection={
-            isDailyTodayActive && !plannerViewActive ? (
-              <Badge size="xs" variant="light" color="teal">
-                오늘
-              </Badge>
-            ) : undefined
-          }
           styles={{
-            root: { borderRadius: 8, padding: '5px 8px' },
-            label: { fontSize: 12.5, fontWeight: 500 },
+            root: { borderRadius: 8, padding: '6px 8px' },
+            label: { fontSize: 13, fontWeight: 600 },
           }}
         />
         <NavLink
-          label="Gemini AI"
-          leftSection={<IconSparkles size={15} color="var(--mantine-color-violet-5)" />}
-          onClick={() => openGeminiModal('clipboard')}
+          label="할일"
+          leftSection={<IconChecklist size={16} color="var(--mantine-color-teal-6)" />}
+          active={workspaceView === 'todos'}
+          onClick={() => {
+            resetAllFilters();
+            openTodos();
+          }}
           rightSection={
-            <Text size="10px" c="dimmed">
-              {SHORTCUTS.geminiAi}
-            </Text>
+            <Badge size="xs" variant={workspaceView === 'todos' ? 'filled' : 'subtle'} color={workspaceView === 'todos' ? 'blue' : 'gray'}>
+              {activeTodoCount}
+            </Badge>
           }
           styles={{
-            root: { borderRadius: 8, padding: '5px 8px' },
-            label: { fontSize: 12.5, fontWeight: 500 },
+            root: { borderRadius: 8, padding: '6px 8px' },
+            label: { fontSize: 13, fontWeight: 600 },
           }}
         />
+      </Stack>
+
+      <Divider color="var(--bn-border-subtle)" />
+
+      {/* 노트 영역 */}
+      <Stack gap={2}>
+        <Text size="11px" fw={600} c="dimmed" px={8}>
+          노트
+        </Text>
         <NavLink
           label="즐겨찾기"
           leftSection={<IconStar size={15} color="var(--mantine-color-yellow-5)" />}
-          active={showFavoriteOnly && !plannerViewActive}
+          active={workspaceView === 'notes' && showFavoriteOnly}
           onClick={() => {
             closePlannerView();
-            const next = !showFavoriteOnly;
-            setShowFavoriteOnly(next);
-            if (next) {
-              resetAllFilters();
-            }
+            setShowFavoriteOnly(true);
+            resetAllFilters();
           }}
           rightSection={
-            <Badge
-              size="xs"
-              variant={showFavoriteOnly && !plannerViewActive ? 'filled' : 'subtle'}
-              color={showFavoriteOnly && !plannerViewActive ? 'yellow' : 'gray'}
-            >
+            <Badge size="xs" variant="subtle" color="gray">
               {notes.filter((n) => n.favorite).length}
             </Badge>
           }
           styles={{
             root: { borderRadius: 8, padding: '5px 8px' },
             label: { fontSize: 12.5, fontWeight: 500 },
-          }}
-        />
-        <NavLink
-          label="할일관리"
-          leftSection={<span style={{ fontSize: 14, lineHeight: 1 }}>📋</span>}
-          active={selectedProjectId === TODO_PROJECT_ID && !showFavoriteOnly && !plannerViewActive}
-          onClick={() => {
-            closePlannerView();
-            setShowFavoriteOnly(false);
-            resetAllFilters();
-            selectProject(TODO_PROJECT_ID);
-          }}
-          rightSection={
-            <Badge
-              size="xs"
-              variant={
-                selectedProjectId === TODO_PROJECT_ID && !showFavoriteOnly && !plannerViewActive
-                  ? 'filled'
-                  : 'subtle'
-              }
-              color={
-                selectedProjectId === TODO_PROJECT_ID && !showFavoriteOnly && !plannerViewActive
-                  ? 'blue'
-                  : 'gray'
-              }
-            >
-              {activeTodoCount}
-            </Badge>
-          }
-          styles={{
-            root: { borderRadius: 8, padding: '5px 8px' },
-            label: { fontSize: 12.5, fontWeight: 500 },
-          }}
-        />
-        <NavLink
-          label="플래너 (Schedule)"
-          leftSection={<span style={{ fontSize: 14, lineHeight: 1 }}>📊</span>}
-          active={plannerViewActive}
-          onClick={() => {
-            resetAllFilters();
-            openPlannerView();
-          }}
-          rightSection={
-            <Badge
-              size="xs"
-              variant={plannerViewActive ? 'filled' : 'light'}
-              color={plannerViewActive ? 'orange' : 'gray'}
-            >
-              간트
-            </Badge>
-          }
-          styles={{
-            root: { borderRadius: 8, padding: '5px 8px' },
-            label: { fontSize: 12.5, fontWeight: plannerViewActive ? 700 : 500 },
           }}
         />
       </Stack>
@@ -639,7 +606,7 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
               const isCollapsed = collapsedProjects.has(proj.id);
               const count = notes.filter((n) => (n.projectId || 'default') === proj.id).length;
               const isSelected =
-                proj.id === selectedProjectId && !showFavoriteOnly && !plannerViewActive;
+                workspaceView === 'notes' && proj.id === selectedProjectId && !showFavoriteOnly;
 
               const descendantIds = getProjectDescendantIds(projects, proj.id);
               const subFolderCount = Math.max(0, descendantIds.size - 1);
@@ -934,32 +901,8 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
 
       <Divider color="var(--bn-border-subtle)" />
 
-      {/* 하단 미니멀 푸터: 달력 보기 팝오버 + 태그 필터 팝오버 */}
+      {/* 하단 푸터: 태그 필터 팝오버 + AI 연결 */}
       <Group gap={6} grow>
-        <Popover
-          opened={calendarPopoverOpened}
-          onChange={setCalendarPopoverOpened}
-          position="top-start"
-          width={268}
-          withArrow
-          shadow="lg"
-        >
-          <Popover.Target>
-            <Button
-              size="xs"
-              variant={selectedDate ? 'light' : 'subtle'}
-              color={selectedDate ? 'teal' : 'gray'}
-              leftSection={<IconCalendar size={14} />}
-              onClick={() => setCalendarPopoverOpened((o) => !o)}
-              styles={{ root: { fontWeight: 500 } }}
-            >
-              달력
-            </Button>
-          </Popover.Target>
-          <Popover.Dropdown p="xs">
-            <MiniCalendar />
-          </Popover.Dropdown>
-        </Popover>
 
         <Popover
           opened={tagPopoverOpened}
@@ -1100,7 +1043,20 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
             )}
           </Popover.Dropdown>
         </Popover>
+
+        <Button
+          size="xs"
+          variant="subtle"
+          color="gray"
+          leftSection={<IconSparkles size={14} />}
+          onClick={() => openGeminiModal('settings')}
+          styles={{ root: { fontWeight: 500 } }}
+        >
+          AI 연결
+        </Button>
       </Group>
+
+      <SyncStatusRow onOpen={_onOpenGoogleSyncModal || openGoogleSyncModal} />
 
       {/* 볼트 경로 표시 (활성 시) */}
       {vaultMode ? (

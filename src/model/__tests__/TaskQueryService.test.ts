@@ -162,3 +162,17 @@ describe('getChecklistProgress', () => {
     expect(getChecklistProgress(blocks(para('x')))).toBeNull();
   });
 });
+
+import { sortTasksForList } from '../TaskQueryService';
+
+describe('sortTasksForList', () => {
+  it('미완료가 먼저, 그 안에서 마감일 빠른 순, 날짜 없음은 뒤', () => {
+    const notes = [
+      todo('no-date'),
+      todo('done-early', { status: 'done', due: '2026-11-01' }),
+      todo('late', { due: '2026-11-20' }),
+      todo('soon', { due: '2026-11-13' }),
+    ];
+    expect(ids(sortTasksForList(itemsOf(notes)))).toEqual(['soon', 'late', 'no-date', 'done-early']);
+  });
+});

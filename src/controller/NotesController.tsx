@@ -74,6 +74,20 @@ import {
 
 /** 로그인 없이 로컬 저장으로 시작했는지 (다음 실행에도 환영 화면을 건너뜀) */
 const LOCAL_MODE_STORAGE_KEY = 'bullsnote.localMode';
+const TODO_VIEW_MODE_STORAGE_KEY = 'bullsnote.todoViewMode';
+
+export type WorkspaceView = 'today' | 'todos' | 'notes';
+export type TodoViewMode = 'list' | 'board' | 'timeline';
+
+function loadTodoViewMode(): TodoViewMode {
+  try {
+    const v = localStorage.getItem(TODO_VIEW_MODE_STORAGE_KEY);
+    if (v === 'list' || v === 'board' || v === 'timeline') return v;
+  } catch {
+    /* ignore */
+  }
+  return 'list';
+}
 
 function getVault(): VaultApi | null {
   return window.bullsNote?.vault ?? null;
@@ -172,6 +186,13 @@ export interface NotesState {
   geminiModalTab: 'clipboard' | 'prompt' | 'settings';
   /** 플래너(Schedule / 간트 차트) 화면 활성화 여부 */
   plannerViewActive: boolean;
+  /** 데스크톱 메인 작업 공간: 오늘 대시보드 / 할일 / 노트 */
+  workspaceView: WorkspaceView;
+  /** 할일 화면 보기 방식 */
+  todoViewMode: TodoViewMode;
+  /** 빠른 입력 창 열림 여부와 처음 채울 텍스트 */
+  quickCaptureOpened: boolean;
+  quickCaptureInitialText: string;
   /** 사용자 지정 공휴일/휴무일 목록 */
   customHolidays: CustomHoliday[];
 }
@@ -248,6 +269,13 @@ export interface NotesActions {
   /** 플래너(Schedule) 액션 */
   openPlannerView(): void;
   closePlannerView(): void;
+  openToday(): void;
+  openTodos(mode?: TodoViewMode): void;
+  setTodoViewMode(mode: TodoViewMode): void;
+  /** 노트 화면으로 전환하며 해당 노트를 연다 (검색 결과·출처 노트 링크 등) */
+  openNote(id: string): void;
+  openQuickCapture(initialText?: string): void;
+  closeQuickCapture(): void;
   updateTaskSchedule(
     noteId: string,
     patch: SchedulePatchInput,
@@ -267,6 +295,8 @@ export interface NotesActions {
     /** 본문 첫 문단 텍스트 (메모·#태그) */
     memo?: string;
     tags?: string[];
+    /** true면 시작일·마감일 없이 만든다 (날짜 없는 할일) */
+    withoutSchedule?: boolean;
   }): string;
   /** 로그인 없이 이 기기에 저장하며 시작 (다음 실행에도 유지, 할일이 없으면 예시 할일 생성) */
   startLocal(): void;
@@ -362,7 +392,13 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [showFavoriteOnly, setShowFavoriteOnly] = useState(false);
-  const [plannerViewActive, setPlannerViewActive] = useState(false);
+  // 앱을 열면 오늘 대시보드부터 (스펙 1장 성공 기준)
+  const [workspaceView, setWorkspaceView] = useState<WorkspaceView>('today');
+  const [todoViewMode, setTodoViewModeState] = useState<TodoViewMode>(loadTodoViewMode);
+  /** 기존 플래너 화면 = 할일 화면의 타임라인 보기 (모바일·기존 호출부 호환용 파생값) */
+  const plannerViewActive = workspaceView === 'todos' && todoViewMode === 'timeline';
+  const [quickCaptureOpened, setQuickCaptureOpened] = useState(false);
+  const [quickCaptureInitialText, setQuickCaptureInitialText] = useState('');
   const [customHolidays, setCustomHolidays] = useState<CustomHoliday[]>(() => loadCustomHolidays());
   const customHolidaysRef = useRef(customHolidays);
   customHolidaysRef.current = customHolidays;
@@ -1074,6 +1110,15 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  const openNote = useCallback(
+    (id: string) => {
+      setWorkspaceView('notes');
+      setShowFavoriteOnly(false);
+      select(id);
+    },
+    [select]
+  );
+
   const selectedProject = useMemo(
     () => projects.find((p) => p.id === selectedProjectId) ?? projects[0] ?? null,
     [projects, selectedProjectId],
@@ -1081,7 +1126,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   const selectProject = useCallback(
     (id: string) => {
-      setPlannerViewActive(false);
+      setWorkspaceView('notes');
       setSelectedProjectId(id);
       setActiveTag(null);
       setSelectedDate(null);
@@ -2585,15 +2630,54 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     setActiveTag(null);
     setSelectedDate(null);
     setSelectedProjectId(TODO_PROJECT_ID);
-    setPlannerViewActive(true);
+    setWorkspaceView('todos');
+    setTodoViewModeState('timeline');
+    try {
+      localStorage.setItem(TODO_VIEW_MODE_STORAGE_KEY, 'timeline');
+    } catch {
+      /* ignore */
+    }
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('bullsnote:mobile-open-list'));
     }
   }, []);
 
   const closePlannerView = useCallback(() => {
-    setPlannerViewActive(false);
+    setWorkspaceView('notes');
   }, []);
+
+  const setTodoViewMode = useCallback((mode: TodoViewMode) => {
+    setTodoViewModeState(mode);
+    try {
+      localStorage.setItem(TODO_VIEW_MODE_STORAGE_KEY, mode);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const openToday = useCallback(() => {
+    setShowFavoriteOnly(false);
+    setActiveTag(null);
+    setSelectedDate(null);
+    setWorkspaceView('today');
+  }, []);
+
+  const openTodos = useCallback(
+    (mode?: TodoViewMode) => {
+      setShowFavoriteOnly(false);
+      setActiveTag(null);
+      setSelectedDate(null);
+      setWorkspaceView('todos');
+      if (mode) setTodoViewMode(mode);
+    },
+    [setTodoViewMode]
+  );
+
+  const openQuickCapture = useCallback((initialText?: string) => {
+    setQuickCaptureInitialText(initialText ?? '');
+    setQuickCaptureOpened(true);
+  }, []);
+  const closeQuickCapture = useCallback(() => setQuickCaptureOpened(false), []);
 
   const addCustomHoliday = useCallback((date: string, name: string) => {
     if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
@@ -2708,6 +2792,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       reminderAt?: number | null;
       memo?: string;
       tags?: string[];
+      withoutSchedule?: boolean;
     }): string => {
       const status: TodoStatus = params.status || 'todo';
       const parentId =
@@ -2734,8 +2819,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         if (pNote?.color) taskColor = pNote.color;
       }
 
-      const reminder =
-        params.reminderAt != null
+      const reminder = params.withoutSchedule
+        ? null
+        : params.reminderAt != null
           ? { targetAt: params.reminderAt, repeat: 'none' as const, dismissed: false, syncToCalendar: true }
           : buildDueDateMorningReminder(resolved.dueDate, null, status);
 
@@ -2746,14 +2832,16 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         color: taskColor,
         tags: Array.from(new Set(['일정', status, ...(params.tags ?? [])])),
         reminder,
-        todoMeta: {
-          status,
-          startDate: resolved.startDate,
-          dueDate: resolved.dueDate,
-          durationDays: resolved.durationDays,
-          useWorkingDays: resolved.useWorkingDays,
-          progress: status === 'done' ? 100 : status === 'doing' ? 50 : 0,
-        },
+        todoMeta: params.withoutSchedule
+          ? { status, progress: 0 }
+          : {
+              status,
+              startDate: resolved.startDate,
+              dueDate: resolved.dueDate,
+              durationDays: resolved.durationDays,
+              useWorkingDays: resolved.useWorkingDays,
+              progress: status === 'done' ? 100 : status === 'doing' ? 50 : 0,
+            },
         content: JSON.stringify([
           {
             type: 'paragraph',
@@ -2944,6 +3032,16 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       createTodosFromChecklist,
       changeTodoStatus,
       plannerViewActive,
+      workspaceView,
+      todoViewMode,
+      quickCaptureOpened,
+      quickCaptureInitialText,
+      openToday,
+      openTodos,
+      setTodoViewMode,
+      openNote,
+      openQuickCapture,
+      closeQuickCapture,
       customHolidays,
       openPlannerView,
       closePlannerView,
@@ -3051,6 +3149,16 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       createTodosFromChecklist,
       changeTodoStatus,
       plannerViewActive,
+      workspaceView,
+      todoViewMode,
+      quickCaptureOpened,
+      quickCaptureInitialText,
+      openToday,
+      openTodos,
+      setTodoViewMode,
+      openNote,
+      openQuickCapture,
+      closeQuickCapture,
       customHolidays,
       openPlannerView,
       closePlannerView,

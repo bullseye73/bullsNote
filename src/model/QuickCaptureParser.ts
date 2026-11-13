@@ -94,3 +94,41 @@ export function parseQuickCapture(text: string, now: Date): QuickCaptureResult {
   const title = rest.replace(/\s+/g, ' ').trim() || original;
   return { title, dueDate, time, tags, kind: dueDate ? 'todo' : 'note' };
 }
+
+export interface QuickTaskParams {
+  title: string;
+  startDate?: string;
+  dueDate?: string;
+  useWorkingDays: boolean;
+  /** 시각이 있으면 그 시각 알림, 없으면 null(마감일 09:00 자동 알림) */
+  reminderAt: number | null;
+  tags: string[];
+  /** 본문 첫 줄 — #태그를 남겨 태그 자동 분류가 동작하게 함 */
+  memo: string;
+  /** 날짜가 없으면 일정 없는 할일로 만든다 */
+  withoutSchedule: boolean;
+}
+
+/** 빠른 입력 해석 결과 → 할일 생성 값 */
+export function toTaskParams(r: QuickCaptureResult): QuickTaskParams {
+  const memo = r.tags.map((t) => `#${t}`).join(' ');
+  if (!r.dueDate) {
+    return { title: r.title, useWorkingDays: false, reminderAt: null, tags: r.tags, memo, withoutSchedule: true };
+  }
+  let reminderAt: number | null = null;
+  if (r.time) {
+    const [y, m, d] = r.dueDate.split('-').map(Number);
+    const [hh, mm] = r.time.split(':').map(Number);
+    reminderAt = new Date(y, m - 1, d, hh, mm).getTime();
+  }
+  return {
+    title: r.title,
+    startDate: r.dueDate,
+    dueDate: r.dueDate,
+    useWorkingDays: false,
+    reminderAt,
+    tags: r.tags,
+    memo,
+    withoutSchedule: false,
+  };
+}

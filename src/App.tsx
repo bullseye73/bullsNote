@@ -52,6 +52,7 @@ import { SidebarView } from './view/SidebarView';
 import { AlarmModal } from './view/AlarmModal';
 import { GoogleSyncModal } from './view/GoogleSyncModal';
 import { WelcomeView } from './view/WelcomeView';
+import { TodosView } from './view/todos/TodosView';
 import { QuickSearchModal } from './view/QuickSearchModal';
 import { GeminiAiModal } from './view/GeminiAiModal';
 import { SortMenu } from './view/SortMenu';
@@ -209,6 +210,7 @@ function Shell() {
     openGeminiModal,
     closeGeminiModal,
     plannerViewActive,
+    workspaceView,
     openPlannerView,
     closePlannerView,
   } = useNotes();
@@ -863,9 +865,9 @@ function Shell() {
 
       <AppShell.Main h="calc(100vh - 40px)">
         <ErrorBoundary title="화면을 표시하지 못했습니다">
-          {plannerViewActive ? (
+          {workspaceView === 'todos' ? (
             <div style={{ display: 'flex', height: '100%', width: '100%', overflow: 'hidden' }}>
-              <PlannerView />
+              <TodosView />
             </div>
           ) : (
             <div style={{ display: 'flex', height: '100%' }}>

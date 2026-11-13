@@ -76,7 +76,7 @@ import {
   getEffectiveTodoStatus,
   isSystemGroupNote,
 } from '../model/TodoService';
-import { NoteEditorView } from './NoteEditorView';
+import { DetailDrawer } from './DetailDrawer';
 import { usePressToDrag } from './mobile/usePressToDrag';
 
 const HEADER_HEIGHT = 58;
@@ -125,7 +125,7 @@ interface FlattenedPlannerRow {
   parentEndColOffset?: number;
 }
 
-export function PlannerView() {
+export function PlannerView({ embedded = false }: { embedded?: boolean } = {}) {
   const {
     notes,
     selectedId,
@@ -823,19 +823,11 @@ export function PlannerView() {
       fullWidth={isMobile}
       value={scale}
       onChange={(val) => setScale(val as PlannerViewScale)}
-      data={
-        isMobile
-          ? [
-              { label: '일', value: 'day' },
-              { label: '주', value: 'week' },
-              { label: '월', value: 'month' },
-            ]
-          : [
-              { label: '일별 (Day)', value: 'day' },
-              { label: '주별 (Week)', value: 'week' },
-              { label: '월별 (Month)', value: 'month' },
-            ]
-      }
+      data={[
+        { label: '일', value: 'day' },
+        { label: '주', value: 'week' },
+        { label: '월', value: 'month' },
+      ]}
     />
   );
 
@@ -945,12 +937,15 @@ export function PlannerView() {
             </ActionIcon>
           </Tooltip>
 
-          <Group gap={6} wrap="nowrap">
-            <IconCalendarStats size={18} color="var(--mantine-color-orange-6)" />
-            <Text fw={800} size="sm" style={{ letterSpacing: '-0.3px' }}>
-              플래너 (Gantt Schedule)
-            </Text>
-          </Group>
+          {/* 할일 화면의 타임라인 탭으로 들어가 있을 때는 상위 화면이 제목을 보여준다 */}
+          {!embedded && (
+            <Group gap={6} wrap="nowrap">
+              <IconCalendarStats size={18} color="var(--mantine-color-orange-6)" />
+              <Text fw={800} size="sm" style={{ letterSpacing: '-0.3px' }}>
+                타임라인
+              </Text>
+            </Group>
+          )}
 
           {/* 상태별 퀵 필터 뱃지 */}
           <Group gap={4} ml={4}>
@@ -970,7 +965,7 @@ export function PlannerView() {
               leftSection={<IconCalendarEvent size={13} />}
               onClick={scrollToToday}
             >
-              오늘(Today)
+              오늘
             </Button>
           </Tooltip>
 
@@ -1067,7 +1062,7 @@ export function PlannerView() {
                   color: sortField === 'title' ? 'var(--mantine-color-blue-6)' : undefined,
                 }}
               >
-                <span>{isMobile ? '작업명' : 'Task Name (작업명)'}</span>
+                <span>작업명</span>
                 {sortField === 'title' ? (
                   sortOrder === 'asc' ? (
                     <IconArrowUp size={13} />
@@ -1092,7 +1087,7 @@ export function PlannerView() {
                     color: sortField === 'startDate' ? 'var(--mantine-color-blue-6)' : undefined,
                   }}
                 >
-                  <span>Start Date</span>
+                  <span>시작일</span>
                   {sortField === 'startDate' ? (
                     sortOrder === 'asc' ? (
                       <IconArrowUp size={13} />
@@ -1118,7 +1113,7 @@ export function PlannerView() {
                     color: sortField === 'duration' ? 'var(--mantine-color-blue-6)' : undefined,
                   }}
                 >
-                  <span>Duration</span>
+                  <span>소요일</span>
                   {sortField === 'duration' ? (
                     sortOrder === 'asc' ? (
                       <IconArrowUp size={13} />
@@ -1144,7 +1139,7 @@ export function PlannerView() {
                   color: sortField === 'dueDate' ? 'var(--mantine-color-blue-6)' : undefined,
                 }}
               >
-                <span>{isMobile ? 'Due Date' : 'Due Date · 09시'}</span>
+                <span>마감일</span>
                 {sortField === 'dueDate' ? (
                   sortOrder === 'asc' ? (
                     <IconArrowUp size={13} />
@@ -2128,62 +2123,8 @@ export function PlannerView() {
         </ActionIcon>
       )}
 
-      {/* 3. 우측 슬라이드 노트 상세 에디터 드로어 (작업 클릭 시 본문 편집) */ }
-  <Drawer
-    opened={editorDrawerOpened}
-    onClose={() => setEditorDrawerOpened(false)}
-    position="right"
-    size={isMobile ? '100%' : '54%'}
-    padding={0}
-    withCloseButton={false}
-    styles={{
-      body: {
-        height: '100%',
-        display: 'flex',
-        flexDirection: 'column',
-        backgroundColor: 'var(--bn-surface-editor)',
-      },
-    }}
-  >
-    {!isMobile && (
-    <Group
-      justify="space-between"
-      px="md"
-      py={8}
-      style={{
-        borderBottom: '1px solid var(--bn-border-subtle)',
-        backgroundColor: 'var(--bn-surface-titlebar)',
-      }}
-    >
-      <Group gap={6}>
-        <Badge size="xs" color="orange" variant="light">
-          플래너 작업 상세 노트
-        </Badge>
-        <Text size="xs" c="dimmed">
-          본문 내용, 체크리스트, 첨부파일 및 세부 알림을 편집할 수 있습니다
-        </Text>
-      </Group>
-      <Button
-        size="compact-xs"
-        variant="light"
-        color="gray"
-        onClick={() => setEditorDrawerOpened(false)}
-      >
-        닫기 (간트 차트로 돌아가기)
-      </Button>
-    </Group>
-    )}
-    <Box
-      style={{
-        flex: 1,
-        minHeight: 0,
-        overflow: 'hidden',
-        paddingTop: isMobile ? 'env(safe-area-inset-top, 0px)' : undefined,
-      }}
-    >
-      <NoteEditorView onBackToList={() => setEditorDrawerOpened(false)} isCompact={isMobile} />
-    </Box>
-  </Drawer>
+      {/* 3. 오른쪽 상세 패널 (작업 클릭 시 본문 편집) — 오늘·할일 화면과 같은 공용 패널 */}
+      <DetailDrawer opened={editorDrawerOpened} onClose={() => setEditorDrawerOpened(false)} />
 
   {/* 4. 새 일정 작업 생성 모달 */ }
   <Modal

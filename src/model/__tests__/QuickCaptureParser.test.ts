@@ -54,3 +54,27 @@ describe('parseQuickCapture', () => {
     expect(parseQuickCapture('# 제목', NOW)).toMatchObject({ title: '# 제목', tags: [] });
   });
 });
+
+import { toTaskParams } from '../QuickCaptureParser';
+
+describe('toTaskParams', () => {
+  it('마감일·시각·태그를 할일 생성 값으로 바꾼다', () => {
+    const r = toTaskParams({ title: '견적서 회신', dueDate: '2026-11-13', time: '15:00', tags: ['업무'], kind: 'todo' });
+    expect(r).toEqual({
+      title: '견적서 회신',
+      startDate: '2026-11-13',
+      dueDate: '2026-11-13',
+      useWorkingDays: false,
+      reminderAt: new Date(2026, 10, 13, 15, 0).getTime(),
+      tags: ['업무'],
+      memo: '#업무',
+      withoutSchedule: false,
+    });
+  });
+
+  it('날짜가 없으면 일정 없는 할일', () => {
+    const r = toTaskParams({ title: '아이디어', dueDate: null, time: null, tags: [], kind: 'note' });
+    expect(r).toMatchObject({ title: '아이디어', withoutSchedule: true, reminderAt: null, memo: '' });
+    expect(r.dueDate).toBeUndefined();
+  });
+});

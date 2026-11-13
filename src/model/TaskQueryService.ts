@@ -125,6 +125,16 @@ export function filterTasks(items: TaskItem[], f: TaskFilter, todayIso: string):
   });
 }
 
+/** 목록 보기 순서: 미완료 → 완료·중단, 그 안에서 마감일 빠른 순(날짜 없음은 뒤), 같으면 최근 수정순 */
+export function sortTasksForList(items: TaskItem[]): TaskItem[] {
+  return [...items].sort(
+    (a, b) =>
+      Number(!isActive(a)) - Number(!isActive(b)) ||
+      (a.dueDate ?? '9999-99-99').localeCompare(b.dueDate ?? '9999-99-99') ||
+      b.note.updatedAt - a.note.updatedAt
+  );
+}
+
 type Block = Record<string, unknown>;
 
 function inlineText(content: unknown): string {

@@ -46,6 +46,7 @@ export function QuickSearchModal({ opened, onClose }: QuickSearchModalProps) {
   const isDark = scheme === 'dark';
 
   const {
+    openNote,
     notes,
     projects,
     selectedProjectId,
@@ -118,7 +119,7 @@ export function QuickSearchModal({ opened, onClose }: QuickSearchModalProps) {
   }, [selectedIndex]);
 
   const handleSelectNote = (id: string) => {
-    select(id);
+    openNote(id);
     onClose();
   };
 
