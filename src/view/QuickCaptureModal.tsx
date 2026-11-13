@@ -5,6 +5,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNotes } from '../controller/NotesController';
 import { GeminiService } from '../model/GeminiService';
 import { parseQuickCapture, toTaskParams } from '../model/QuickCaptureParser';
+import { formatDailyCaptureLine } from '../model/DailyNoteService';
+
+type CaptureKind = 'todo' | 'note' | 'daily';
+const NEXT_KIND: Record<CaptureKind, CaptureKind> = { todo: 'note', note: 'daily', daily: 'todo' };
 
 /** 이 길이 이상 붙여넣으면 "AI로 정리"를 보여준다 */
 const AI_TIDY_MIN_LENGTH = 200;
@@ -21,12 +25,13 @@ export function QuickCaptureModal() {
     closeQuickCapture,
     createPlannerTask,
     createQuickNote,
+    appendToDailyNote,
     openGeminiModal,
   } = useNotes();
   const [text, setText] = useState('');
   const [memo, setMemo] = useState('');
   const [showMemo, setShowMemo] = useState(false);
-  const [kindOverride, setKindOverride] = useState<'todo' | 'note' | null>(null);
+  const [kindOverride, setKindOverride] = useState<CaptureKind | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -45,7 +50,7 @@ export function QuickCaptureModal() {
   }, [quickCaptureOpened, quickCaptureInitialText]);
 
   const parsed = useMemo(() => parseQuickCapture(text, new Date()), [text]);
-  const kind = kindOverride ?? parsed.kind;
+  const kind: CaptureKind = kindOverride ?? parsed.kind;
   const longText = `${text}\n${memo}`.trim();
   const canTidyWithAi = longText.length >= AI_TIDY_MIN_LENGTH;
 
@@ -59,7 +64,12 @@ export function QuickCaptureModal() {
   const save = async () => {
     if (!text.trim() && !memo.trim()) return;
     setError(null);
-    if (kind === 'todo') {
+    if (kind === 'daily') {
+      // 오늘 노트 메모 칸에 "HH:MM 내용", 메모 줄은 그 아래 항목으로 (날짜·시각은 해석하지 않음)
+      const first = text.trim() || memo.trim().split('\n')[0];
+      const rest = text.trim() ? memo.split('\n') : memo.split('\n').slice(1);
+      appendToDailyNote([formatDailyCaptureLine(first, new Date()), ...rest.map((l) => l.trim()).filter(Boolean)]);
+    } else if (kind === 'todo') {
       const params = toTaskParams(parsed);
       createPlannerTask({ ...params, memo: [memo.trim(), params.memo].filter(Boolean).join(' '), select: false });
     } else {
@@ -106,19 +116,20 @@ export function QuickCaptureModal() {
         // Tab: 할일 ↔ 노트 전환 (한 줄 입력에서만)
         if (e.key === 'Tab' && !e.shiftKey && document.activeElement === inputRef.current) {
           e.preventDefault();
-          setKindOverride(kind === 'todo' ? 'note' : 'todo');
+          setKindOverride(NEXT_KIND[kind]);
         }
       }}
     >
       <Stack gap="sm">
         <SegmentedControl
           size="xs"
-          w={160}
+          w={240}
           value={kind}
-          onChange={(v) => setKindOverride(v as 'todo' | 'note')}
+          onChange={(v) => setKindOverride(v as CaptureKind)}
           data={[
             { label: '할일', value: 'todo' },
             { label: '노트', value: 'note' },
+            { label: '오늘 노트', value: 'daily' },
           ]}
         />
         <TextInput
@@ -126,7 +137,13 @@ export function QuickCaptureModal() {
           data-autofocus
           size="md"
           variant="unstyled"
-          placeholder={kind === 'todo' ? '내일 3시 견적서 회신 #업무' : '떠오른 생각을 적어 보세요'}
+          placeholder={
+            kind === 'todo'
+              ? '내일 3시 견적서 회신 #업무'
+              : kind === 'daily'
+                ? '오늘 노트 메모에 한 줄 추가'
+                : '떠오른 생각을 적어 보세요'
+          }
           value={text}
           onChange={(e) => setText(e.currentTarget.value)}
           onKeyDown={(e) => {
@@ -138,7 +155,7 @@ export function QuickCaptureModal() {
           styles={{ input: { fontSize: 18 } }}
           aria-label="빠른 입력"
         />
-        {(parsed.dueDate || parsed.time || parsed.tags.length > 0) && (
+        {kind !== 'daily' && (parsed.dueDate || parsed.time || parsed.tags.length > 0) && (
           <Group gap={6}>
             {parsed.dueDate && (
               <Badge variant="light" leftSection={<IconCalendar size={12} />}>
@@ -180,7 +197,7 @@ export function QuickCaptureModal() {
         )}
         <Group justify="space-between" pt={4} style={{ borderTop: '1px solid var(--bn-border-subtle)' }}>
           <Text size="xs" c="dimmed">
-            Enter 저장 · ⇧Enter 메모 · Tab 할일↔노트
+            Enter 저장 · ⇧Enter 메모 · Tab 종류 바꾸기
           </Text>
           <Group gap={6}>
             {canTidyWithAi && (
