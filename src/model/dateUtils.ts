@@ -235,3 +235,13 @@ export function parseDynamicDate(query: string): Date | null {
 
   return null;
 }
+
+/** 지난 시각을 "방금", "3분 전", "2시간 전", "1일 전" 형식으로 */
+export function formatRelativeTime(ts: number, now: number): string {
+  const min = Math.floor((now - ts) / 60_000);
+  if (min < 1) return '방금';
+  if (min < 60) return `${min}분 전`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h}시간 전`;
+  return `${Math.floor(h / 24)}일 전`;
+}

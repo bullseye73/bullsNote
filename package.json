@@ -34,6 +34,7 @@
     "@mantine/core": "^7.13.0",
     "@mantine/hooks": "^7.13.0",
     "@tabler/icons-react": "^3.19.0",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.3",
@@ -102,5 +103,8 @@
       ],
       "icon": "electron/assets/icon.icns"
     }
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4"
   }
 }

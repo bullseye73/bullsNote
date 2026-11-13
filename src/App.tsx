@@ -51,7 +51,7 @@ import { PlannerView } from './view/PlannerView';
 import { SidebarView } from './view/SidebarView';
 import { AlarmModal } from './view/AlarmModal';
 import { GoogleSyncModal } from './view/GoogleSyncModal';
-import { LoginView } from './view/LoginView';
+import { WelcomeView } from './view/WelcomeView';
 import { QuickSearchModal } from './view/QuickSearchModal';
 import { GeminiAiModal } from './view/GeminiAiModal';
 import { SortMenu } from './view/SortMenu';
@@ -319,7 +319,7 @@ function Shell() {
   const user = googleConfig?.user;
 
   if (!googleConnected && !guestMode) {
-    return <LoginView />;
+    return <WelcomeView />;
   }
 
   // 1. 스마트폰 (Phone < 768px): 1단 전체화면 뷰 + 하단 탭 네비게이션

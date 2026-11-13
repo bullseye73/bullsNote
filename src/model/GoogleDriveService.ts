@@ -1,5 +1,6 @@
 // MODEL: Google Drive 클라우드 동기화 및 스토리지 서비스 (대안 2: index.json + notes/ 개별 노트 증분 동기화 + attachments/ 분리)
 import { createNoteId, Note, NoteAttachment, Project } from './Note';
+import { BUILTIN_OAUTH_ENV, resolveOAuthClient } from './oauthClient';
 
 const CONFIG_STORAGE_KEY = 'bullsnote.googledrive.config.v1';
 const TOKENS_STORAGE_KEY = 'bullsnote.googledrive.tokens.v1';
@@ -340,10 +341,11 @@ class GoogleDriveServiceImpl {
       try {
         if (tokens.refreshToken) {
           const cfg = this.getConfig();
+          const oauth = resolveOAuthClient(cfg, BUILTIN_OAUTH_ENV);
           if (window.bullsNote?.googleAuth) {
             const res = await window.bullsNote.googleAuth.refreshToken({
-              clientId: cfg.customClientId,
-              clientSecret: cfg.customClientSecret,
+              clientId: oauth.clientId,
+              clientSecret: oauth.clientSecret,
               refreshToken: tokens.refreshToken,
             });
             if (res.success && res.accessToken) {
@@ -355,15 +357,15 @@ class GoogleDriveServiceImpl {
               this.saveTokens(updatedTokens);
               return res.accessToken;
             }
-          } else if (cfg.customClientId) {
+          } else if (oauth.clientId) {
             try {
               const bodyParams: Record<string, string> = {
-                client_id: cfg.customClientId,
+                client_id: oauth.clientId,
                 refresh_token: tokens.refreshToken,
                 grant_type: 'refresh_token',
               };
-              if (cfg.customClientSecret) {
-                bodyParams.client_secret = cfg.customClientSecret;
+              if (oauth.clientSecret) {
+                bodyParams.client_secret = oauth.clientSecret;
               }
               const tokenRes = await fetchWithTimeout(
                 'https://oauth2.googleapis.com/token',
@@ -446,8 +448,9 @@ class GoogleDriveServiceImpl {
   /** Google 계정 OAuth 로그인 실행 */
   async login(): Promise<{ success: boolean; error?: string; user?: GoogleUserInfo }> {
     const cfg = this.getConfig();
+    const oauth = resolveOAuthClient(cfg, BUILTIN_OAUTH_ENV);
 
-    if (!cfg.customClientId) {
+    if (!oauth.clientId) {
       return {
         success: false,
         error:
@@ -459,8 +462,8 @@ class GoogleDriveServiceImpl {
     if (window.bullsNote?.googleAuth) {
       try {
         const res = await window.bullsNote.googleAuth.startLogin({
-          clientId: cfg.customClientId,
-          clientSecret: cfg.customClientSecret,
+          clientId: oauth.clientId,
+          clientSecret: oauth.clientSecret,
         });
 
         if (!res.success || !res.accessToken) {
@@ -515,7 +518,7 @@ class GoogleDriveServiceImpl {
       return new Promise((resolve) => {
         try {
           const client = googleAccounts.initTokenClient({
-            client_id: cfg.customClientId!,
+            client_id: oauth.clientId,
             scope: [
               'https://www.googleapis.com/auth/drive.file',
               'https://www.googleapis.com/auth/calendar.events',
@@ -609,8 +612,9 @@ class GoogleDriveServiceImpl {
    */
   exportMobileSyncCode(): string | null {
     const cfg = this.getConfig();
+    const oauth = resolveOAuthClient(cfg, BUILTIN_OAUTH_ENV);
     const tokens = this.getTokens();
-    if (!cfg.customClientId || (!tokens?.refreshToken && !tokens?.accessToken)) {
+    if (!oauth.clientId || (!tokens?.refreshToken && !tokens?.accessToken)) {
       return null;
     }
     // 메신저/SMS 전송 시 길이 제한으로 잘리는 문제를 방지하기 위해
@@ -621,8 +625,8 @@ class GoogleDriveServiceImpl {
       : null;
     const payload = {
       v: 1,
-      cId: cfg.customClientId,
-      cSec: cfg.customClientSecret || '',
+      cId: oauth.clientId,
+      cSec: oauth.clientSecret || '',
       aTok: hasRefresh ? '' : tokens.accessToken || '',
       rTok: tokens.refreshToken || '',
       exp: hasRefresh ? 0 : tokens.expiresAt || 0,

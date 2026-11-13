@@ -62,6 +62,8 @@ import {
   CustomHoliday,
   SchedulePatchInput,
   buildDueDateMorningReminder,
+  buildNewTaskSchedule,
+  addCalendarDays,
   getTodayIsoStr,
   loadCustomHolidays,
   resolveTaskSchedulePatch,
@@ -69,6 +71,9 @@ import {
   snapToWorkingDay,
   toIsoDateLocal,
 } from '../model/PlannerService';
+
+/** 로그인 없이 로컬 저장으로 시작했는지 (다음 실행에도 환영 화면을 건너뜀) */
+const LOCAL_MODE_STORAGE_KEY = 'bullsnote.localMode';
 
 function getVault(): VaultApi | null {
   return window.bullsNote?.vault ?? null;
@@ -257,7 +262,14 @@ export interface NotesActions {
     dueDate?: string;
     useWorkingDays?: boolean;
     color?: string;
+    /** 지정 시 마감일 09:00 자동 알림 대신 이 시각(ms)에 알림 */
+    reminderAt?: number | null;
+    /** 본문 첫 문단 텍스트 (메모·#태그) */
+    memo?: string;
+    tags?: string[];
   }): string;
+  /** 로그인 없이 이 기기에 저장하며 시작 (다음 실행에도 유지, 할일이 없으면 예시 할일 생성) */
+  startLocal(): void;
   addCustomHoliday(date: string, name: string): void;
   removeCustomHoliday(date: string): void;
 }
@@ -369,8 +381,13 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const isSyncingRef = useRef(false);
   const syncWithGoogleDriveRef = useRef<(isSilent?: boolean) => Promise<void>>(() => Promise.resolve());
   const [syncError, setSyncError] = useState<string | null>(null);
-  const [guestMode, setGuestMode] = useState(false);
-  const enterGuestMode = useCallback(() => setGuestMode(true), []);
+  const [guestMode, setGuestMode] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(LOCAL_MODE_STORAGE_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
   const googleConnected = GoogleDriveService.isConnected();
 
   // 프로젝트 및 노트 정렬 상태 (localStorage 영구 보존)
@@ -2289,7 +2306,13 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     GoogleTasksService.reset();
     setTasksSyncError(null);
     setGoogleConfigState(GoogleDriveService.getConfig());
-    setGuestMode(false);
+    // 동기화를 꺼도 이 기기의 데이터로 계속 사용 (환영 화면으로 돌아가지 않음)
+    try {
+      localStorage.setItem(LOCAL_MODE_STORAGE_KEY, '1');
+    } catch {
+      /* ignore */
+    }
+    setGuestMode(true);
     setSyncError(null);
   }, []);
 
@@ -2682,6 +2705,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       dueDate?: string;
       useWorkingDays?: boolean;
       color?: string;
+      reminderAt?: number | null;
+      memo?: string;
+      tags?: string[];
     }): string => {
       const status: TodoStatus = params.status || 'todo';
       const parentId =
@@ -2696,14 +2722,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         customHolidaysRef.current,
         1
       );
-      const resolved = resolveTaskSchedulePatch(
-        { status, useWorkingDays },
-        {
-          startDate: defaultStart,
-          durationDays: params.durationDays ?? 1,
-          dueDate: params.dueDate,
-          useWorkingDays,
-        },
+      const resolved = buildNewTaskSchedule(
+        { startDate: defaultStart, dueDate: params.dueDate, durationDays: params.durationDays, useWorkingDays },
         defaultStart,
         customHolidaysRef.current
       );
@@ -2714,14 +2734,17 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         if (pNote?.color) taskColor = pNote.color;
       }
 
-      const reminder = buildDueDateMorningReminder(resolved.dueDate, null, status);
+      const reminder =
+        params.reminderAt != null
+          ? { targetAt: params.reminderAt, repeat: 'none' as const, dismissed: false, syncToCalendar: true }
+          : buildDueDateMorningReminder(resolved.dueDate, null, status);
 
       const newNote = createEmptyNote({
         title: params.title.trim() || '새 일정 작업',
         projectId: TODO_PROJECT_ID,
         parentId,
         color: taskColor,
-        tags: ['일정', status],
+        tags: Array.from(new Set(['일정', status, ...(params.tags ?? [])])),
         reminder,
         todoMeta: {
           status,
@@ -2734,7 +2757,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         content: JSON.stringify([
           {
             type: 'paragraph',
-            content: '',
+            content: params.memo ?? '',
           },
         ]),
       });
@@ -2747,6 +2770,40 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     },
     [queueNoteSync, syncNoteReminderWithCalendar]
   );
+
+  const startLocal = useCallback(() => {
+    try {
+      localStorage.setItem(LOCAL_MODE_STORAGE_KEY, '1');
+    } catch {
+      /* 저장 불가 환경에서도 이번 실행은 로컬 모드로 진행 */
+    }
+    setGuestMode(true);
+    const hasTodos = notesRef.current.some((n) => n.projectId === TODO_PROJECT_ID && !isSystemGroupNote(n));
+    if (hasTodos) return;
+    const today = getTodayIsoStr();
+    createPlannerTask({
+      title: '빠른 입력(⌘N)으로 할일 하나 추가해 보기',
+      startDate: today,
+      dueDate: today,
+      useWorkingDays: false,
+      memo: '"내일 3시 보고서 #업무"처럼 쓰면 날짜·시각·태그를 알아서 읽어요.',
+    });
+    createPlannerTask({
+      title: '할일 화면에서 목록·보드·타임라인 바꿔 보기',
+      startDate: addCalendarDays(today, 1),
+      dueDate: addCalendarDays(today, 1),
+      useWorkingDays: false,
+      memo: '사이드바의 "할일"을 누르고 오른쪽 위에서 보기를 바꿔요.',
+    });
+    createPlannerTask({
+      title: '노트 체크리스트를 할일로 연결해 보기',
+      startDate: today,
+      dueDate: addCalendarDays(today, 5),
+      useWorkingDays: false,
+      memo: '노트의 체크박스 옆 "+ 할일로"를 누르면 할일과 연결돼요.',
+    });
+  }, [createPlannerTask]);
+  const enterGuestMode = startLocal;
 
   const hasEncryptedNotes = useMemo(() => hasAnyEncryptedNotes(notes), [notes]);
 
@@ -2821,6 +2878,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       googleConfig,
       guestMode,
       enterGuestMode,
+      startLocal,
       isSyncing,
       syncError,
       lastSyncedAt: googleConfig.lastSyncedAt,
@@ -2929,6 +2987,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       googleConfig,
       guestMode,
       enterGuestMode,
+      startLocal,
       isSyncing,
       syncError,
       select,

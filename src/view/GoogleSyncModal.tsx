@@ -43,6 +43,8 @@ import { useNotes } from '../controller/NotesController';
 import { GoogleDriveConfig, GoogleDriveService } from '../model/GoogleDriveService';
 import { GoogleTaskList, GoogleTasksService } from '../model/GoogleTasksService';
 import { SecretInput } from './SecretInput';
+import QRCode from 'qrcode';
+import { BUILTIN_OAUTH_ENV, resolveOAuthClient } from '../model/oauthClient';
 
 interface GoogleSyncModalProps {
   opened: boolean;
@@ -127,6 +129,22 @@ export function GoogleSyncModal({ opened, onClose }: GoogleSyncModalProps) {
   const [mobileCodeCopied, setMobileCodeCopied] = useState(false);
   const [exportedMobileCode, setExportedMobileCode] = useState<string | null>(null);
   const [mobileCodeInput, setMobileCodeInput] = useState('');
+  const [mobileQr, setMobileQr] = useState<string | null>(null);
+
+  // 휴대폰 연결 코드를 카메라로 찍을 수 있게 QR 이미지로 변환
+  useEffect(() => {
+    if (!exportedMobileCode) {
+      setMobileQr(null);
+      return;
+    }
+    let cancelled = false;
+    QRCode.toDataURL(exportedMobileCode, { margin: 1, width: 180, errorCorrectionLevel: 'L' })
+      .then((url) => !cancelled && setMobileQr(url))
+      .catch(() => !cancelled && setMobileQr(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [exportedMobileCode]);
 
   const copyTextWithFallback = async (text: string): Promise<boolean> => {
     try {
@@ -172,6 +190,12 @@ export function GoogleSyncModal({ opened, onClose }: GoogleSyncModalProps) {
     setIsLoggingIn(true);
     setLoginError(null);
     try {
+      // 입력한 클라이언트도, 앱 기본 클라이언트도 없으면 고급 설정으로 안내
+      if (resolveOAuthClient({ customClientId }, BUILTIN_OAUTH_ENV).source === 'none') {
+        setShowAdvanced(true);
+        setLoginError('이 빌드에는 기본 Google 클라이언트가 없어요. 아래 고급 설정에 OAuth 클라이언트 ID를 입력한 뒤 다시 눌러 주세요.');
+        return;
+      }
       // 커스텀 클라이언트 키가 있으면 먼저 저장
       if (customClientId) {
         saveGoogleConfig({
@@ -301,7 +325,7 @@ export function GoogleSyncModal({ opened, onClose }: GoogleSyncModalProps) {
                       setTimeout(() => setMobileCodeCopied(false), 3000);
                     }}
                   >
-                    {mobileCodeCopied ? '모바일 코드 복사됨!' : '모바일 연동 코드 복사'}
+                    {mobileCodeCopied ? '연결 코드 복사됨' : '휴대폰 연결'}
                   </Button>
                   <Button
                     size="compact-xs"
@@ -336,7 +360,7 @@ export function GoogleSyncModal({ opened, onClose }: GoogleSyncModalProps) {
                   <Stack gap={4}>
                     <Group justify="space-between" align="center">
                       <Text size="11px" fw={700} c="teal">
-                        📱 모바일 원클릭 연동 코드 (다른 폰/태블릿에 전달하여 붙여넣기)
+                        휴대폰 카메라로 QR을 찍어 코드를 복사한 뒤, 휴대폰 BullsNote의 연결 코드 입력란에 붙여넣으세요
                       </Text>
                       <Button
                         size="compact-xs"
@@ -352,6 +376,15 @@ export function GoogleSyncModal({ opened, onClose }: GoogleSyncModalProps) {
                         다시 복사
                       </Button>
                     </Group>
+                    {mobileQr && (
+                      <img
+                        src={mobileQr}
+                        alt="휴대폰 연결 QR 코드"
+                        width={180}
+                        height={180}
+                        style={{ alignSelf: 'center', borderRadius: 8, background: '#fff' }}
+                      />
+                    )}
                     <TextInput
                       value={exportedMobileCode}
                       readOnly
@@ -413,11 +446,13 @@ export function GoogleSyncModal({ opened, onClose }: GoogleSyncModalProps) {
               </Avatar>
               <div style={{ textAlign: 'center' }}>
                 <Text size="sm" fw={700}>
-                  Google 계정으로 간편하게 시작하세요
+                  Google Drive로 백업하고 기기 간 맞추기
                 </Text>
-                <Text size="xs" c="dimmed" mt={4} style={{ maxWidth: 360 }}>
-                  별도의 데이터베이스 구축 없이, 구글 로그인만으로 개인 Google Drive(15GB)에 노트와 첨부파일이 안전하게 동기화됩니다.
-                </Text>
+                <Stack gap={2} mt={8} align="flex-start" style={{ maxWidth: 360, marginInline: 'auto' }}>
+                  <Text size="xs" c="dimmed">✓ 내 Drive의 BullsNote 폴더에만 저장돼요</Text>
+                  <Text size="xs" c="dimmed">✓ 휴대폰 알림은 Google 캘린더로 받아요</Text>
+                  <Text size="xs" c="dimmed">✓ 언제든 끌 수 있고, 꺼도 이 기기 데이터는 그대로예요</Text>
+                </Stack>
               </div>
 
               {loginError && (
@@ -448,7 +483,7 @@ export function GoogleSyncModal({ opened, onClose }: GoogleSyncModalProps) {
                 onClick={handleLogin}
                 mt="xs"
               >
-                Google 계정으로 로그인 & 연동
+                Google로 계속
               </Button>
 
               <Divider w="100%" label="또는 PC에서 복사한 모바일 연동 코드 입력" labelPosition="center" my={4} />
@@ -632,7 +667,7 @@ export function GoogleSyncModal({ opened, onClose }: GoogleSyncModalProps) {
             <Group gap="xs">
               <IconSettings size={16} color="gray" />
               <Text size="xs" fw={700} c="dimmed" tt="uppercase">
-                고급 설정 (커스텀 Google OAuth 키)
+                고급: 내 OAuth 클라이언트 사용
               </Text>
             </Group>
             <ActionIcon variant="subtle" size="xs" color="gray">

@@ -1054,3 +1054,8 @@ span.shiki,
 .bn-toolbar-accessory::-webkit-scrollbar {
   display: none;
 }
+
+/* 사이드바 하단 저장·동기화 상태 줄 */
+.bn-sync-status-row:hover {
+  background-color: var(--bn-card-hover);
+}

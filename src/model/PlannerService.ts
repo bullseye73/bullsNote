@@ -420,6 +420,29 @@ export function resolveTaskSchedulePatch(
 }
 
 /**
+ * 새 작업의 일정 계산: 마감일만 주어지면 마감일을 지키고 소요일을 역산, 아니면 소요일(기본 1일)로 마감일 산출
+ */
+export function buildNewTaskSchedule(
+  params: { startDate?: string; dueDate?: string; durationDays?: number; useWorkingDays?: boolean },
+  defaultStart: string,
+  customHolidays?: CustomHoliday[]
+): { startDate: string; dueDate: string; durationDays: number; useWorkingDays: boolean } {
+  const useWorkingDays = params.useWorkingDays !== false;
+  const keepDueDate = Boolean(params.dueDate) && params.durationDays === undefined;
+  const r = resolveTaskSchedulePatch(
+    { status: 'todo', useWorkingDays },
+    {
+      startDate: params.startDate ?? defaultStart,
+      ...(keepDueDate ? { dueDate: params.dueDate } : { durationDays: params.durationDays ?? 1, dueDate: params.dueDate }),
+      useWorkingDays,
+    },
+    defaultStart,
+    customHolidays
+  );
+  return { startDate: r.startDate, dueDate: r.dueDate, durationDays: r.durationDays, useWorkingDays: r.useWorkingDays };
+}
+
+/**
  * Due Date 기준 오전 09:00 자동 알림(NoteReminder) 객체 생성
  * - 미래의 09:00이면 활성 알람(dismissed: false)으로 등록
  * - 이미 완료(done/drop)되었거나 현재 시각이 해당 날짜 09:00을 지난 경우 즉시 알람 모달이 뜨지 않도록 dismissed: true로 스마트 설정
