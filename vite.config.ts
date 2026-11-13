@@ -1,10 +1,12 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import packageJson from './package.json';
+import { thirdPartyNotices } from './scripts/vite-plugin-third-party-notices';
 
 export default defineConfig({
   plugins: [
     react(),
+    thirdPartyNotices(),
     {
       name: 'html-inject-app-version',
       transformIndexHtml(html) {

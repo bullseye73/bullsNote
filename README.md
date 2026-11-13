@@ -9,6 +9,7 @@ Windows · macOS · Linux 데스크톱 앱과 iPhone · iPad · Android에서 �
 - **버전:** 2.0.0
 - **플랫폼:** Windows · macOS · Linux · PWA
 - **스택:** Electron, React 18, TypeScript, Vite
+- **라이선스:** [MIT](LICENSE)
 
 ---
 
@@ -309,6 +310,17 @@ docs/           설계 문서와 README 이미지
 
 ## 라이선스
 
-이 프로젝트의 라이선스는 아직 정해지지 않았습니다.
+[MIT License](LICENSE) © 2026 bullseye
 
-이 앱은 오픈소스 라이브러리를 사용합니다. 대부분 MIT · ISC · BSD · Apache-2.0 라이선스입니다. 블록 에디터인 [BlockNote](https://github.com/TypeCellOS/BlockNote)(`@blocknote/core`, `@blocknote/react`, `@blocknote/ariakit`)는 **MPL-2.0** 라이선스입니다.
+누구나 자유롭게 쓰고, 고치고, 배포하고, 상업적으로도 이용할 수 있습니다. 단, 저작권 표시와 라이선스 문구를 함께 남겨야 합니다. 소프트웨어는 "있는 그대로" 제공되며 어떠한 보증도 하지 않습니다.
+
+**함께 쓰는 오픈소스**
+
+- 사용한 오픈소스 패키지의 라이선스 고지는 빌드할 때 `dist/THIRD_PARTY_NOTICES.txt`로 자동 생성되며, 웹 앱과 설치 파일에 함께 들어갑니다.
+- 대부분 MIT · ISC · BSD · Apache-2.0 라이선스입니다.
+- 블록 에디터 [BlockNote](https://github.com/TypeCellOS/BlockNote)(`@blocknote/core`, `@blocknote/react`, `@blocknote/ariakit`)는 **MPL-2.0**입니다. 수정하지 않고 그대로 사용합니다. BlockNote 파일을 고치면 고친 파일의 소스를 MPL-2.0으로 공개해야 합니다.
+- `@blocknote/xl-*` 패키지는 GPL 또는 상용 라이선스이므로, 추가하기 전에 라이선스를 확인하세요.
+
+**이름과 아이콘**
+
+MIT 라이선스는 "BullsNote"라는 이름과 아이콘의 사용 권한까지 주지는 않습니다. 이 프로젝트를 고쳐서 따로 배포할 때는 다른 이름과 아이콘을 써 주세요.
