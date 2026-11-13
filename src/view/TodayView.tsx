@@ -3,7 +3,7 @@ import { ActionIcon, Box, Button, Group, Popover, Progress, ScrollArea, SimpleGr
 import { IconCalendar, IconChevronLeft, IconChevronRight, IconPlus } from '@tabler/icons-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNotes } from '../controller/NotesController';
-import { findDailyNote, formatDashboardDateLabel, isDailyNoteProject } from '../model/DailyNoteService';
+import { findDailyNote, formatDashboardDateLabel, isDailyNoteProject, removeDailyBriefing } from '../model/DailyNoteService';
 import { noteBodyText } from '../model/HashtagService';
 import type { BriefingInput } from '../model/TodayBriefing';
 import { TodayBriefingCard } from './TodayBriefingCard';
@@ -72,7 +72,7 @@ export function TodayView() {
         overdue: t.dueDate !== null && t.dueDate < viewDate,
       })),
       schedule: board.schedule.map((s) => ({ time: hhmm(s.at), title: s.label })),
-      dailyNote: daily ? noteBodyText(daily.content) : '',
+      dailyNote: daily ? noteBodyText(removeDailyBriefing(daily.content)) : '',
     };
   };
 

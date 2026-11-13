@@ -58,7 +58,7 @@ import { hasAnyEncryptedNotes, hasLegacyEncryptedText, recoverEncryptedNotes } f
 import { parseSearchQuery, searchNotes } from '../model/SearchService';
 import { formatDateIso } from '../model/dateUtils';
 import { GeminiService } from '../model/GeminiService';
-import { appendToDailyMemo, buildDailyNoteBlocks, isDailyNoteProject } from '../model/DailyNoteService';
+import { appendToDailyMemo, buildDailyNoteBlocks, isDailyNoteProject, writeDailyBriefing } from '../model/DailyNoteService';
 import { buildTaskItems, getTodayBoard } from '../model/TaskQueryService';
 import {
   CustomHoliday,
@@ -230,6 +230,8 @@ export interface NotesActions {
   ensureDailyNote(dateStr: string): string;
   /** 실제 오늘 노트의 메모 칸 끝에 줄들을 붙인다 (없으면 만든 뒤) */
   appendToDailyNote(lines: string[]): string;
+  /** 그 날짜 노트의 "브리핑" 섹션을 lines 로 바꾼다 (노트가 없으면 만든다). 선택은 바꾸지 않는다 */
+  saveDailyBriefing(dateStr: string, lines: string[]): string;
   setShowFavoriteOnly(v: boolean): void;
   exportAll(): void;
   importFromFile(file: File): Promise<void>;
@@ -2942,6 +2944,11 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     [upsertDailyNote]
   );
 
+  const saveDailyBriefing = useCallback(
+    (dateStr: string, lines: string[]): string => upsertDailyNote(dateStr, (c) => writeDailyBriefing(c, lines)).id,
+    [upsertDailyNote]
+  );
+
   const hasEncryptedNotes = useMemo(() => hasAnyEncryptedNotes(notes), [notes]);
 
   const decryptAllLegacyNotes = useCallback(
@@ -2999,6 +3006,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       setSelectedDate,
       openOrCreateDailyNote,
       ensureDailyNote,
+      saveDailyBriefing,
       appendToDailyNote,
       showFavoriteOnly,
       tagCounts,
@@ -3193,6 +3201,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       selectedDate,
       openOrCreateDailyNote,
       ensureDailyNote,
+      saveDailyBriefing,
       appendToDailyNote,
       geminiModalOpened,
       geminiModalTab,

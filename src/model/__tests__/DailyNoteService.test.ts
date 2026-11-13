@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { createEmptyNote, type Project } from '../Note';
 import {
   appendToDailyMemo,
+  readDailyBriefing,
+  removeDailyBriefing,
+  writeDailyBriefing,
   buildDailyNoteBlocks,
   findDailyNote,
   formatDailyCaptureLine,
@@ -94,5 +97,48 @@ describe('findDailyNote', () => {
     const elsewhere = createEmptyNote({ id: 'x', title: '2026-11-13', projectId: 'w' });
     expect(findDailyNote([elsewhere, inDaily], [work, daily], '2026-11-13')?.id).toBe('d1');
     expect(findDailyNote([elsewhere], [work, daily], '2026-11-13')).toBeUndefined();
+  });
+});
+
+describe('writeDailyBriefing / readDailyBriefing', () => {
+  const template = JSON.stringify(buildDailyNoteBlocks(['a']));
+
+  it('브리핑 섹션이 없으면 맨 위에 만들고, 다시 쓰면 그 섹션만 바꾼다', () => {
+    const once = writeDailyBriefing(template, ['첫 줄', '둘째 줄']);
+    expect(shape(parse(once)).slice(0, 4)).toEqual([
+      'heading:브리핑',
+      'bulletListItem:첫 줄',
+      'bulletListItem:둘째 줄',
+      'heading:오늘 순서',
+    ]);
+    const twice = writeDailyBriefing(once, ['새 줄']);
+    expect(shape(parse(twice)).slice(0, 3)).toEqual(['heading:브리핑', 'bulletListItem:새 줄', 'heading:오늘 순서']);
+    expect(shape(parse(twice)).filter((x) => x === 'heading:브리핑')).toHaveLength(1);
+    expect(readDailyBriefing(twice)).toEqual(['새 줄']);
+  });
+
+  it('브리핑이 섹션 중간에 있어도 그 섹션만 바꾸고 나머지는 그대로 둔다', () => {
+    const blocks = parse(template);
+    blocks.push(
+      { type: 'heading', props: { level: 2 }, content: [{ text: '브리핑' }] },
+      { type: 'bulletListItem', content: [{ text: '옛 줄' }] },
+    );
+    const out = shape(parse(writeDailyBriefing(JSON.stringify(blocks), ['새 줄'])));
+    expect(out.slice(-3)).toEqual(['paragraph:', 'heading:브리핑', 'bulletListItem:새 줄']);
+  });
+
+  it('빈 본문·마크다운 본문에서도 동작하고, 섹션이 없으면 빈 목록을 읽는다', () => {
+    expect(shape(parse(writeDailyBriefing('', ['줄'])))).toEqual(['heading:브리핑', 'bulletListItem:줄']);
+    expect(readDailyBriefing(template)).toEqual([]);
+    expect(readDailyBriefing('옛 마크다운')).toEqual([]);
+  });
+});
+
+describe('removeDailyBriefing', () => {
+  it('브리핑 섹션(제목 포함)만 빼고 나머지는 그대로 둔다', () => {
+    const template = JSON.stringify(buildDailyNoteBlocks(['a']));
+    const withBriefing = writeDailyBriefing(template, ['요약']);
+    expect(removeDailyBriefing(withBriefing)).toBe(template);
+    expect(removeDailyBriefing(template)).toBe(template);
   });
 });
