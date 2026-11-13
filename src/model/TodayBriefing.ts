@@ -1,4 +1,4 @@
-// MODEL: 오늘 브리핑 — AI에 보낼 요청문 만들기, 응답 다듬기, 날짜별 저장 형식 (순수 함수)
+// MODEL: 오늘 브리핑 — AI에 보낼 요청문 만들기, 응답 다듬기 (순수 함수). 저장은 Daily Note의 "브리핑" 섹션 (DailyNoteService)
 import type { TodoStatus } from './Note';
 
 export interface BriefingTask {
@@ -75,22 +75,4 @@ export function cleanBriefingText(raw: string): string {
     .filter(Boolean)
     .slice(0, MAX_LINES)
     .join('\n');
-}
-
-export const BRIEFING_STORAGE_KEY = 'bullsnote.today.briefing';
-
-export function serializeBriefing(dateIso: string, text: string, at: number): string {
-  return JSON.stringify({ date: dateIso, text, at });
-}
-
-/** 같은 날짜의 저장값만 돌려준다 */
-export function readStoredBriefing(raw: string | null, dateIso: string): { text: string; at: number } | null {
-  if (!raw) return null;
-  try {
-    const v = JSON.parse(raw) as { date?: unknown; text?: unknown; at?: unknown };
-    if (v.date !== dateIso || typeof v.text !== 'string' || typeof v.at !== 'number') return null;
-    return { text: v.text, at: v.at };
-  } catch {
-    return null;
-  }
 }
