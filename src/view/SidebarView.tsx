@@ -20,7 +20,7 @@ import {
   Tooltip,
   useComputedColorScheme,
 } from '@mantine/core';
-import { useDisclosure } from '@mantine/hooks';
+import { useDisclosure, useMediaQuery } from '@mantine/hooks';
 import {
   IconBrandGoogle,
   IconCalendar,
@@ -143,6 +143,7 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
     openTodos,
     openQuickCapture,
 } = useNotes();
+  const isPhone = Boolean(useMediaQuery('(max-width: 767px)'));
 
   // 모든 검색/태그/날짜/퀵필터 조건을 일괄 초기화하여 대상 목록을 온전히 표시
   const resetAllFilters = useCallback(() => {
@@ -471,7 +472,8 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
         )}
       </div>
 
-      {/* 작업 공간: 오늘 / 할일 */}
+      {/* 작업 공간: 오늘 / 할일 (모바일은 하단 탭이 이 역할을 하므로 숨김) */}
+      {!isPhone && (
       <Stack gap={2}>
         <NavLink
           label="오늘"
@@ -505,8 +507,9 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
           }}
         />
       </Stack>
+      )}
 
-      <Divider color="var(--bn-border-subtle)" />
+      {!isPhone && <Divider color="var(--bn-border-subtle)" />}
 
       {/* 노트 영역 */}
       <Stack gap={2}>

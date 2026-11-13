@@ -61,7 +61,7 @@ export function QuickCaptureModal() {
     setError(null);
     if (kind === 'todo') {
       const params = toTaskParams(parsed);
-      createPlannerTask({ ...params, memo: [memo.trim(), params.memo].filter(Boolean).join(' ') });
+      createPlannerTask({ ...params, memo: [memo.trim(), params.memo].filter(Boolean).join(' '), select: false });
     } else {
       const tagLine = parsed.tags.map((t) => `#${t}`).join(' ');
       await createQuickNote({

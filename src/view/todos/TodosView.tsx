@@ -55,7 +55,7 @@ export function TodosView() {
   const addTask = () => {
     const text = draft.trim();
     if (!text) return;
-    createPlannerTask(toTaskParams(parseQuickCapture(text, new Date())));
+    createPlannerTask({ ...toTaskParams(parseQuickCapture(text, new Date())), select: false });
     setDraft('');
   };
 

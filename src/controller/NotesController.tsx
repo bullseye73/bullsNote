@@ -299,6 +299,8 @@ export interface NotesActions {
     tags?: string[];
     /** true면 시작일·마감일 없이 만든다 (날짜 없는 할일) */
     withoutSchedule?: boolean;
+    /** false면 만든 뒤 선택하지 않는다 (빠른 입력: 지금 보던 노트를 그대로 유지) */
+    select?: boolean;
   }): string;
   /** 로그인 없이 이 기기에 저장하며 시작 (다음 실행에도 유지, 할일이 없으면 예시 할일 생성) */
   startLocal(): void;
@@ -2820,6 +2822,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       memo?: string;
       tags?: string[];
       withoutSchedule?: boolean;
+      select?: boolean;
     }): string => {
       const status: TodoStatus = params.status || 'todo';
       const parentId =
@@ -2878,7 +2881,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       });
 
       setNotes((prev) => [newNote, ...prev]);
-      setSelectedId(newNote.id);
+      if (params.select !== false) setSelectedId(newNote.id);
       queueNoteSync(newNote);
       syncNoteReminderWithCalendar(newNote, null);
       return newNote.id;
