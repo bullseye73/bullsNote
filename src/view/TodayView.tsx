@@ -3,7 +3,10 @@ import { ActionIcon, Box, Button, Group, Popover, Progress, ScrollArea, SimpleGr
 import { IconCalendar, IconChevronLeft, IconChevronRight, IconPlus } from '@tabler/icons-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNotes } from '../controller/NotesController';
-import { formatDashboardDateLabel, isDailyNoteProject } from '../model/DailyNoteService';
+import { findDailyNote, formatDashboardDateLabel, isDailyNoteProject } from '../model/DailyNoteService';
+import { noteBodyText } from '../model/HashtagService';
+import type { BriefingInput } from '../model/TodayBriefing';
+import { TodayBriefingCard } from './TodayBriefingCard';
 import { addCalendarDays, diffCalendarDays } from '../model/PlannerService';
 import { CalendarPicker } from './CalendarPicker';
 import { DailyNotePanel } from './DailyNotePanel';
@@ -54,6 +57,24 @@ export function TodayView() {
     const t = setInterval(() => setNow(Date.now()), 60_000);
     return () => clearInterval(t);
   }, []);
+
+  // 브리핑 자료는 누를 때 계산 (현재 시각 포함)
+  const getBriefingInput = (): BriefingInput => {
+    const daily = findDailyNote(tasks.notes, projects, viewDate);
+    return {
+      todayIso: viewDate,
+      dateLabel: formatDashboardDateLabel(viewDate, tasks.todayIso),
+      nowTime: hhmm(Date.now()),
+      tasks: board.tasks.map((t) => ({
+        title: t.note.title || '제목 없음',
+        dueDate: t.dueDate,
+        status: t.status,
+        overdue: t.dueDate !== null && t.dueDate < viewDate,
+      })),
+      schedule: board.schedule.map((s) => ({ time: hhmm(s.at), title: s.label })),
+      dailyNote: daily ? noteBodyText(daily.content) : '',
+    };
+  };
 
   const nowIndex = board.schedule.findIndex((s) => s.at > now);
   const splitAt = nowIndex === -1 ? board.schedule.length : nowIndex;
@@ -126,6 +147,7 @@ export function TodayView() {
         <SimpleGrid cols={{ base: 1, md: 2 }} spacing="xl" p="lg" style={{ alignItems: 'start' }}>
           {/* 왼쪽: 그날의 Daily Note(계획표) + 할 일 */}
           <Stack gap="lg">
+            {isToday && <TodayBriefingCard todayIso={tasks.todayIso} getInput={getBriefingInput} />}
             <DailyNotePanel dateIso={viewDate} todayIso={tasks.todayIso} />
           <Box>
             <SectionTitle>{isToday ? '오늘 할 일' : '할 일'}</SectionTitle>

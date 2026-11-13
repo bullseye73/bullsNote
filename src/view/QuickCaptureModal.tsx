@@ -1,10 +1,11 @@
 // VIEW: 빠른 입력 (⌘N) — 한 줄로 할일/노트 만들기, 날짜·시각·#태그 자동 인식, 긴 글은 AI로 정리
-import { Alert, Badge, Button, Group, Modal, SegmentedControl, Stack, Text, Textarea, TextInput } from '@mantine/core';
+import { ActionIcon, Alert, Badge, Button, Group, Modal, SegmentedControl, Stack, Text, Textarea, TextInput, Tooltip } from '@mantine/core';
 import { IconBell, IconCalendar, IconHash, IconSparkles } from '@tabler/icons-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNotes } from '../controller/NotesController';
 import { GeminiService } from '../model/GeminiService';
-import { parseQuickCapture, toTaskParams } from '../model/QuickCaptureParser';
+import { parseQuickCapture, toTaskParams, type QuickCaptureResult } from '../model/QuickCaptureParser';
+import { buildCaptureParsePrompt, parseAiCaptureResponse } from '../model/AiCaptureParser';
 import { formatDailyCaptureLine } from '../model/DailyNoteService';
 
 type CaptureKind = 'todo' | 'note' | 'daily';
@@ -34,6 +35,10 @@ export function QuickCaptureModal() {
   const [kindOverride, setKindOverride] = useState<CaptureKind | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // AI 해석 결과는 해석한 그 문장일 때만 쓴다 (글자를 바꾸면 규칙 해석으로 돌아감)
+  const [aiParsed, setAiParsed] = useState<{ text: string; result: QuickCaptureResult } | null>(null);
+  const [aiParseBusy, setAiParseBusy] = useState(false);
+  const [aiParseNote, setAiParseNote] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -47,14 +52,20 @@ export function QuickCaptureModal() {
     setKindOverride(isLong ? 'note' : null);
     setError(null);
     setAiBusy(false);
+    setAiParsed(null);
+    setAiParseNote(null);
   }, [quickCaptureOpened, quickCaptureInitialText]);
 
-  const parsed = useMemo(() => parseQuickCapture(text, new Date()), [text]);
+  const ruleParsed = useMemo(() => parseQuickCapture(text, new Date()), [text]);
+  const aiActive = aiParsed !== null && aiParsed.text === text;
+  const parsed = aiActive ? aiParsed.result : ruleParsed;
   const kind: CaptureKind = kindOverride ?? parsed.kind;
   const longText = `${text}\n${memo}`.trim();
   const canTidyWithAi = longText.length >= AI_TIDY_MIN_LENGTH;
 
   const reset = () => {
+    setAiParsed(null);
+    setAiParseNote(null);
     setText('');
     setMemo('');
     setShowMemo(false);
@@ -81,6 +92,28 @@ export function QuickCaptureModal() {
     }
     reset();
     closeQuickCapture();
+  };
+
+  const canParseWithAi = GeminiService.isConfigured() && kind !== 'daily' && text.trim().length > 0;
+
+  const parseWithAi = async () => {
+    const asked = text;
+    setAiParseBusy(true);
+    setAiParseNote(null);
+    try {
+      const result = parseAiCaptureResponse(await GeminiService.generateContent(buildCaptureParsePrompt(asked, new Date())), new Date());
+      if (result) {
+        setAiParsed({ text: asked, result });
+        setKindOverride(null);
+      } else {
+        setAiParseNote('AI가 날짜를 읽지 못해 기존 해석을 그대로 써요.');
+      }
+    } catch (e) {
+      setAiParseNote(e instanceof Error ? e.message : 'AI 해석에 실패했어요.');
+    } finally {
+      setAiParseBusy(false);
+      inputRef.current?.focus();
+    }
   };
 
   const tidyWithAi = async () => {
@@ -155,8 +188,23 @@ export function QuickCaptureModal() {
           styles={{ input: { fontSize: 18 } }}
           aria-label="빠른 입력"
         />
-        {kind !== 'daily' && (parsed.dueDate || parsed.time || parsed.tags.length > 0) && (
-          <Group gap={6}>
+        {kind !== 'daily' && (parsed.dueDate || parsed.time || parsed.tags.length > 0 || canParseWithAi) && (
+          <Group gap={6} wrap="wrap">
+            {canParseWithAi && (
+              <Tooltip label={aiActive ? 'AI가 해석함' : 'AI로 날짜·시각 다시 읽기'} openDelay={300}>
+                <ActionIcon
+                  size="sm"
+                  variant={aiActive ? 'filled' : 'light'}
+                  color="violet"
+                  loading={aiParseBusy}
+                  onClick={() => void parseWithAi()}
+                  aria-label="AI로 해석"
+                  aria-pressed={aiActive}
+                >
+                  <IconSparkles size={13} />
+                </ActionIcon>
+              </Tooltip>
+            )}
             {parsed.dueDate && (
               <Badge variant="light" leftSection={<IconCalendar size={12} />}>
                 {shortDate(parsed.dueDate)} 마감
@@ -173,6 +221,11 @@ export function QuickCaptureModal() {
               </Badge>
             ))}
           </Group>
+        )}
+        {aiParseNote && (
+          <Text size="xs" c="dimmed">
+            {aiParseNote}
+          </Text>
         )}
         {showMemo && (
           <Textarea
