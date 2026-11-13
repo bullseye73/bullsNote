@@ -15,7 +15,7 @@ const TODAY = '2026-11-12'; // 목요일
 
 function todo(
   id: string,
-  opts: { status?: TodoStatus; start?: string; due?: string; tags?: string[]; sourceNoteId?: string } = {}
+  opts: { status?: TodoStatus; start?: string; due?: string; tags?: string[]; sourceNoteId?: string; completedAt?: number } = {}
 ): Note {
   const status = opts.status ?? 'todo';
   return createEmptyNote({
@@ -30,6 +30,7 @@ function todo(
       startDate: opts.start ?? opts.due ?? null,
       dueDate: opts.due ?? null,
       sourceNoteId: opts.sourceNoteId,
+      completedAt: opts.completedAt ?? null,
     },
   });
 }
@@ -41,6 +42,21 @@ function itemsOf(notes: Note[]) {
 const ids = (xs: Array<{ note: Note }>) => xs.map((x) => x.note.id);
 
 describe('getTodayBoard', () => {
+  it('그날 완료한 할일을 완료 시각 순으로 따로 모은다 (다른 날 완료·완료 시각 없음은 제외)', () => {
+    const at = (d: number, h: number) => new Date(2026, 10, d, h).getTime();
+    const notes = [
+      todo('done-late', { status: 'done', due: '2026-11-20', completedAt: at(12, 17) }),
+      todo('done-early', { status: 'done', due: TODAY, completedAt: at(12, 9) }),
+      todo('done-yesterday', { status: 'done', due: '2026-11-11', completedAt: at(11, 18) }),
+      todo('done-unknown', { status: 'done', due: TODAY }),
+      todo('due-today', { due: TODAY }),
+    ];
+    const board = getTodayBoard(itemsOf(notes), notes, TODAY);
+    expect(ids(board.completed)).toEqual(['done-early', 'done-late']);
+    expect(ids(board.tasks)).toEqual(['due-today']);
+    expect(board.counts.completed).toBe(2);
+  });
+
   it('지연된 미완료 할일을 맨 앞에 두고 지연 개수를 센다', () => {
     const notes = [todo('due-today', { due: TODAY }), todo('late', { due: '2026-11-11' })];
     const board = getTodayBoard(itemsOf(notes), notes, TODAY);
@@ -82,7 +98,13 @@ describe('getTodayBoard', () => {
 
   it('할일이 없으면 모든 영역이 비어 있다', () => {
     const board = getTodayBoard([], [], TODAY);
-    expect(board).toEqual({ tasks: [], schedule: [], ongoing: [], counts: { tasks: 0, doing: 0, overdue: 0 } });
+    expect(board).toEqual({
+      tasks: [],
+      completed: [],
+      schedule: [],
+      ongoing: [],
+      counts: { tasks: 0, doing: 0, overdue: 0, completed: 0 },
+    });
   });
 });
 

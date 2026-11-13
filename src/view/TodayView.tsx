@@ -128,6 +128,7 @@ export function TodayView() {
           </Group>
           <Text size="sm" c="dimmed">
             할 일 {board.counts.tasks} · 진행 중 {board.counts.doing}
+            {board.counts.completed > 0 && ` · 완료 ${board.counts.completed}`}
             {board.counts.overdue > 0 && (
               <Text span c="red" inherit>
                 {' '}
@@ -151,7 +152,11 @@ export function TodayView() {
             <DailyNotePanel dateIso={viewDate} todayIso={tasks.todayIso} />
           <Box>
             <SectionTitle>{isToday ? '오늘 할 일' : '할 일'}</SectionTitle>
-            {board.tasks.length === 0 ? (
+            {board.tasks.length === 0 && board.completed.length > 0 ? (
+              <Text size="sm" c="dimmed" py={6}>
+                {isToday ? '오늘 할 일을 모두 끝냈어요 🎉' : '이 날 할 일을 모두 끝냈어요'}
+              </Text>
+            ) : board.tasks.length === 0 ? (
               <Stack align="center" gap={8} py="xl" style={{ border: '1px dashed var(--bn-border-subtle)', borderRadius: 10 }}>
                 <Text fw={600} size="sm">
                   {isToday ? '오늘 할 일이 없어요' : '이 날 할 일이 없어요'}
@@ -177,6 +182,25 @@ export function TodayView() {
                   />
                 ))}
               </Stack>
+            )}
+            {board.completed.length > 0 && (
+              <Box mt="md">
+                <Text size="xs" fw={600} c="dimmed" mb={8}>
+                  완료 {board.completed.length}
+                </Text>
+                <Stack gap={8}>
+                  {board.completed.map((item) => (
+                    <TaskCard
+                      key={item.note.id}
+                      item={item}
+                      sourceTitle={tasks.sourceTitleOf(item)}
+                      onOpen={tasks.openDetail}
+                      onToggleDone={tasks.toggleDone}
+                      onOpenSource={tasks.openSource}
+                    />
+                  ))}
+                </Stack>
+              </Box>
             )}
           </Box>
           </Stack>

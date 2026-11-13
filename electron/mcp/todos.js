@@ -153,15 +153,25 @@ function effectiveStatus(note, byId) {
 
 /**
  * notes: { id, title, projectId, parentId, reminder, todoMeta }[]
- * -> { tasks: {title,status,dueDate,overdue}[], schedule: {time,title}[] }
+ * -> { tasks: {title,status,dueDate,overdue}[], completed: {title,time}[], schedule: {time,title}[] }
  */
 function todayBoard(notes, todayIso) {
   const byId = new Map(notes.map((n) => [n.id, n]));
   const isGroup = (n) => Boolean(GROUP_ID_TO_STATUS[n.id]);
   const rank = (t) => (t.dueDate && t.dueDate < todayIso ? 0 : t.dueDate === todayIso ? 1 : 2);
 
-  const tasks = notes
-    .filter((n) => n.projectId === TODO_PROJECT_ID && !isGroup(n))
+  const todoNotes = notes.filter((n) => n.projectId === TODO_PROJECT_ID && !isGroup(n));
+  const completedAt = (n) => (n.todoMeta && typeof n.todoMeta.completedAt === 'number' ? n.todoMeta.completedAt : null);
+  const hhmm = (ms) => {
+    const d = new Date(ms);
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+  const completed = todoNotes
+    .filter((n) => effectiveStatus(n, byId) === 'done' && completedAt(n) !== null && toIsoDate(new Date(completedAt(n))) === todayIso)
+    .sort((a, b) => completedAt(a) - completedAt(b))
+    .map((n) => ({ title: n.title || '제목 없음', time: hhmm(completedAt(n)) }));
+
+  const tasks = todoNotes
     .map((n) => ({
       title: n.title || '제목 없음',
       status: effectiveStatus(n, byId),
@@ -174,12 +184,9 @@ function todayBoard(notes, todayIso) {
   const schedule = notes
     .filter((n) => !isGroup(n) && n.reminder && typeof n.reminder.targetAt === 'number' && toIsoDate(new Date(n.reminder.targetAt)) === todayIso)
     .sort((a, b) => a.reminder.targetAt - b.reminder.targetAt)
-    .map((n) => {
-      const d = new Date(n.reminder.targetAt);
-      return { time: `${pad(d.getHours())}:${pad(d.getMinutes())}`, title: n.title || '제목 없음' };
-    });
+    .map((n) => ({ time: hhmm(n.reminder.targetAt), title: n.title || '제목 없음' }));
 
-  return { tasks, schedule };
+  return { tasks, completed, schedule };
 }
 
 /** list_today 응답 문장 */
@@ -190,6 +197,10 @@ function formatTodayBoard(board, todayIso) {
   for (const t of board.tasks) {
     const when = t.overdue ? `지연, ${t.dueDate} 마감` : t.dueDate === todayIso ? '오늘 마감' : t.dueDate ? `${t.dueDate} 마감` : '마감일 없음';
     lines.push(`- ${t.title} (${label[t.status]}, ${when})`);
+  }
+  if (board.completed.length > 0) {
+    lines.push('', `오늘 완료 (${board.completed.length}개)`);
+    for (const c of board.completed) lines.push(`- ${c.title} (${c.time} 완료)`);
   }
   lines.push('', `오늘 일정 (${board.schedule.length}개)`);
   if (board.schedule.length === 0) lines.push('- 없음');

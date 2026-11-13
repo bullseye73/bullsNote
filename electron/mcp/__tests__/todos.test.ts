@@ -9,14 +9,14 @@ import { buildTaskItems, getTodayBoard } from '../../../src/model/TaskQueryServi
 const { parseNoteMeta, resolveDueDate, buildTodoNote, todayBoard } = todos;
 const TODAY = '2026-11-12';
 
-function todo(id: string, status: TodoStatus, due?: string, reminderAt?: number): Note {
+function todo(id: string, status: TodoStatus, due?: string, reminderAt?: number, completedAt?: number): Note {
   return createEmptyNote({
     id,
     title: id,
     projectId: TODO_PROJECT_ID,
     parentId: STATUS_TO_GROUP_ID[status],
     reminder: reminderAt ? { targetAt: reminderAt, repeat: 'none', dismissed: false } : null,
-    todoMeta: { status, startDate: due ?? null, dueDate: due ?? null, durationDays: 1, useWorkingDays: false },
+    todoMeta: { status, startDate: due ?? null, dueDate: due ?? null, durationDays: 1, useWorkingDays: false, completedAt: completedAt ?? null },
   });
 }
 
@@ -29,7 +29,8 @@ describe('todayBoard (MCP) — 앱의 getTodayBoard와 같은 기준', () => {
     todo('오늘마감', 'todo', TODAY, new Date(2026, 10, 12, 15, 0).getTime()),
     todo('진행중', 'doing', '2026-11-20'),
     todo('미래', 'todo', '2026-11-30'),
-    todo('완료', 'done', TODAY),
+    todo('완료', 'done', TODAY, undefined, new Date(2026, 10, 12, 11, 0).getTime()),
+    todo('어제완료', 'done', '2026-11-11', undefined, new Date(2026, 10, 11, 11, 0).getTime()),
     todo('날짜없음', 'todo'),
   ];
 
@@ -38,6 +39,8 @@ describe('todayBoard (MCP) — 앱의 getTodayBoard와 같은 기준', () => {
     const mcp = todayBoard(notes, TODAY);
     expect(mcp.tasks.map((t: { title: string }) => t.title)).toEqual(app.tasks.map((t) => t.note.title));
     expect(mcp.tasks[0].overdue).toBe(true);
+    expect(mcp.completed.map((t: { title: string }) => t.title)).toEqual(app.completed.map((t) => t.note.title));
+    expect(mcp.completed).toEqual([{ title: '완료', time: '11:00' }]);
   });
 
   it('오늘 알림이 있는 항목을 시각과 함께 일정으로 돌려준다', () => {

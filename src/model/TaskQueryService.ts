@@ -47,17 +47,27 @@ export interface TodayScheduleEntry {
 
 export interface TodayBoard {
   tasks: TaskItem[];
+  /** 그날 완료한 할일 (완료 시각 순) */
+  completed: TaskItem[];
   schedule: TodayScheduleEntry[];
   ongoing: TaskItem[];
-  counts: { tasks: number; doing: number; overdue: number };
+  counts: { tasks: number; doing: number; overdue: number; completed: number };
 }
 
-/** 오늘 대시보드: 지연·오늘 마감·진행 중 할일, 오늘 알림 일정(이미 확인한 알림 포함), 오늘을 포함하는 기간 작업 */
+/** 오늘 대시보드: 지연·오늘 마감·진행 중 할일, 그날 완료한 할일, 오늘 알림 일정(이미 확인한 알림 포함), 오늘을 포함하는 기간 작업 */
 export function getTodayBoard(items: TaskItem[], notes: Note[], todayIso: string): TodayBoard {
   const rank = (t: TaskItem) => (t.dueDate && t.dueDate < todayIso ? 0 : t.dueDate === todayIso ? 1 : 2);
   const tasks = items
     .filter((t) => isActive(t) && ((t.dueDate !== null && t.dueDate <= todayIso) || t.status === 'doing'))
     .sort((a, b) => rank(a) - rank(b) || (a.dueDate ?? '9999').localeCompare(b.dueDate ?? '9999'));
+
+  const completedAt = (t: TaskItem) => t.note.todoMeta?.completedAt ?? null;
+  const completed = items
+    .filter((t) => {
+      const at = completedAt(t);
+      return t.status === 'done' && at !== null && toIsoDateLocal(new Date(at)) === todayIso;
+    })
+    .sort((a, b) => completedAt(a)! - completedAt(b)!);
 
   const schedule = notes
     .filter(
@@ -81,12 +91,14 @@ export function getTodayBoard(items: TaskItem[], notes: Note[], todayIso: string
 
   return {
     tasks,
+    completed,
     schedule,
     ongoing,
     counts: {
       tasks: tasks.length,
       doing: tasks.filter((t) => t.status === 'doing').length,
       overdue: tasks.filter((t) => rank(t) === 0).length,
+      completed: completed.length,
     },
   };
 }
