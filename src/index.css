@@ -1069,3 +1069,8 @@ span.shiki,
 .bn-checklist-link-btn:focus-visible {
   opacity: 1;
 }
+
+/* 노트 목차 목록 행 */
+.bn-toc-row:hover {
+  background-color: var(--bn-card-hover);
+}

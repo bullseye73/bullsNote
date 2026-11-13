@@ -1,17 +1,6 @@
 // VIEW: 노트 본문 헤딩(H1/H2/H3) 기반 우측 상단 고정 목차(TOC) 컴포넌트
-import {
-  ActionIcon,
-  Collapse,
-  Group,
-  Paper,
-  ScrollArea,
-  Text,
-  Tooltip,
-  UnstyledButton,
-  useComputedColorScheme,
-} from '@mantine/core';
-import { IconChevronDown, IconChevronUp, IconListTree } from '@tabler/icons-react';
-import { useCallback, useEffect, useState } from 'react';
+import { Paper, ScrollArea, Text, UnstyledButton } from '@mantine/core';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { BlockNoteEditor } from '@blocknote/core';
 
 type AnyEditor = BlockNoteEditor<any, any, any>;
@@ -119,156 +108,119 @@ export function useNoteHeadings(
   return { headings, activeId, scrollToHeading };
 }
 
+/** 목차 막대의 선 길이: 제목 수준이 깊을수록 짧게 (노션식 미니맵) */
+const RAIL_WIDTH_BY_LEVEL: Record<number, number> = { 1: 16, 2: 12, 3: 8 };
+
+/**
+ * 데스크톱 목차: 평소에는 오른쪽 가장자리의 얇은 선 막대(본문을 가리지 않음),
+ * 마우스를 올리면 제목 목록이 펼쳐지고 누르면 그 위치로 이동
+ */
 export function NoteTableOfContents({ editor, scrollContainerRef }: NoteTableOfContentsProps) {
-  const scheme = useComputedColorScheme('light');
-  const isDark = scheme === 'dark';
-
-  // 로컬 스토리지에 펼침/접힘 상태 기억
-  const [expanded, setExpanded] = useState<boolean>(() => {
-    try {
-      const saved = localStorage.getItem('bullsnote.toc.expanded');
-      return saved !== null ? saved === 'true' : true;
-    } catch {
-      return true;
-    }
-  });
-
   const { headings, activeId, scrollToHeading } = useNoteHeadings(editor, scrollContainerRef);
+  const [open, setOpen] = useState(false);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const toggleExpanded = () => {
-    setExpanded((prev) => {
-      const next = !prev;
-      try {
-        localStorage.setItem('bullsnote.toc.expanded', String(next));
-      } catch {
-        /* ignore */
-      }
-      return next;
-    });
+  useEffect(() => () => {
+    if (closeTimer.current) clearTimeout(closeTimer.current);
+  }, []);
+
+  if (headings.length === 0) return null;
+
+  const show = () => {
+    if (closeTimer.current) clearTimeout(closeTimer.current);
+    setOpen(true);
   };
-
-  const handleHeadingClick = scrollToHeading;
-
-  // 헤딩이 없는 경우 표시하지 않음
-  if (headings.length === 0) {
-    return null;
-  }
+  // 막대와 목록 사이를 지나는 동안 닫히지 않도록 약간 늦게 닫음
+  const hide = () => {
+    if (closeTimer.current) clearTimeout(closeTimer.current);
+    closeTimer.current = setTimeout(() => setOpen(false), 150);
+  };
 
   return (
     <div
       className="no-print"
-      style={{
-        position: 'absolute',
-        top: 14,
-        right: 18,
-        zIndex: 10,
-        pointerEvents: 'none', // 배경 클릭 통과
-      }}
+      onMouseEnter={show}
+      onMouseLeave={hide}
+      style={{ position: 'absolute', top: 16, right: 6, zIndex: 10, display: 'flex', alignItems: 'flex-start' }}
     >
-      <Paper
-        shadow="md"
-        radius="md"
-        p={expanded ? 'xs' : '4px 8px'}
-        style={{
-          pointerEvents: 'auto', // 컨트롤 영역만 이벤트 수신
-          width: expanded ? 220 : 'auto',
-          backgroundColor: isDark ? 'rgba(26, 27, 30, 0.88)' : 'rgba(255, 255, 255, 0.92)',
-          backdropFilter: 'blur(10px)',
-          border: `1px solid ${isDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)'}`,
-          transition: 'width 0.2s ease, padding 0.2s ease',
-          userSelect: 'none',
-        }}
-      >
-        {/* 목차 헤더 바 */}
-        <Group
-          justify="space-between"
-          gap={6}
-          style={{ cursor: 'pointer' }}
-          onClick={toggleExpanded}
-          wrap="nowrap"
+      {open && (
+        <Paper
+          shadow="md"
+          radius="md"
+          p={6}
+          style={{
+            width: 260,
+            marginRight: 6,
+            backgroundColor: 'var(--mantine-color-body)',
+            border: '1px solid var(--bn-border-subtle)',
+          }}
         >
-          <Group gap={5} wrap="nowrap">
-            <IconListTree size={14} style={{ opacity: 0.7 }} />
-            <Text size="xs" fw={700} c={isDark ? 'gray.3' : 'dark.4'}>
-              목차
-            </Text>
-            {!expanded && (
-              <Text size="10px" c="dimmed">
-                ({headings.length})
-              </Text>
-            )}
-          </Group>
-          <ActionIcon
-            variant="subtle"
-            color="gray"
-            size="xs"
-            aria-label={expanded ? '목차 접기' : '목차 펼치기'}
-          >
-            {expanded ? <IconChevronUp size={13} /> : <IconChevronDown size={13} />}
-          </ActionIcon>
-        </Group>
-
-        {/* 목차 항목 리스트 */}
-        <Collapse in={expanded}>
-          <ScrollArea.Autosize mah="55vh" type="hover" offsetScrollbars style={{ marginTop: 6 }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <ScrollArea.Autosize mah="60vh" type="auto">
+            <nav aria-label="목차" style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
               {headings.map((h) => {
                 const isActive = activeId === h.id;
-                const indent = Math.max(0, (h.level - 1) * 10);
-
                 return (
-                  <Tooltip key={h.id} label={h.text} position="left" withArrow openDelay={400}>
-                    <UnstyledButton
-                      onClick={() => handleHeadingClick(h.id)}
-                      style={{
-                        padding: '4px 8px',
-                        paddingLeft: `${8 + indent}px`,
-                        borderRadius: 5,
-                        backgroundColor: isActive
-                          ? isDark
-                            ? 'rgba(255, 255, 255, 0.14)'
-                            : 'rgba(0, 0, 0, 0.08)'
-                          : 'transparent',
-                        color: isActive
-                          ? isDark
-                            ? '#ffffff'
-                            : '#111827'
-                          : isDark
-                          ? 'rgba(255, 255, 255, 0.7)'
-                          : '#4b5563',
-                        fontWeight: isActive ? 600 : 400,
-                        fontSize: '12px',
-                        lineHeight: 1.4,
-                        display: 'block',
-                        width: '100%',
-                        textAlign: 'left',
-                        whiteSpace: 'nowrap',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        transition: 'background-color 0.15s ease, color 0.15s ease',
-                      }}
-                      onMouseEnter={(e) => {
-                        if (!isActive) {
-                          e.currentTarget.style.backgroundColor = isDark
-                            ? 'rgba(255, 255, 255, 0.06)'
-                            : 'rgba(0, 0, 0, 0.04)';
-                        }
-                      }}
-                      onMouseLeave={(e) => {
-                        if (!isActive) {
-                          e.currentTarget.style.backgroundColor = 'transparent';
-                        }
-                      }}
-                    >
-                      {h.text}
-                    </UnstyledButton>
-                  </Tooltip>
+                  <UnstyledButton
+                    key={h.id}
+                    onClick={() => scrollToHeading(h.id)}
+                    className="bn-toc-row"
+                    data-active={isActive || undefined}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      padding: '4px 8px',
+                      paddingLeft: 8 + Math.max(0, h.level - 1) * 14,
+                      borderRadius: 6,
+                      fontSize: 13,
+                      lineHeight: 1.4,
+                      color: isActive ? 'var(--mantine-color-blue-6)' : 'var(--mantine-color-text)',
+                      fontWeight: isActive ? 600 : 400,
+                    }}
+                  >
+                    <span aria-hidden style={{ flexShrink: 0, opacity: 0.45 }}>—</span>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.text}</span>
+                  </UnstyledButton>
                 );
               })}
-            </div>
+            </nav>
           </ScrollArea.Autosize>
-        </Collapse>
-      </Paper>
+        </Paper>
+      )}
+
+      {/* 평소 모습: 제목마다 짧은 선 하나 (현재 위치는 진하게) */}
+      <div
+        role="button"
+        tabIndex={0}
+        aria-label={`목차 (${headings.length})`}
+        onFocus={show}
+        onBlur={hide}
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'flex-end',
+          gap: 7,
+          padding: '6px 4px',
+          cursor: 'pointer',
+          maxHeight: '60vh',
+          overflow: 'hidden',
+        }}
+      >
+        {headings.map((h) => (
+          <span
+            key={h.id}
+            style={{
+              display: 'block',
+              width: RAIL_WIDTH_BY_LEVEL[h.level] ?? 8,
+              height: 2,
+              borderRadius: 1,
+              backgroundColor:
+                activeId === h.id ? 'var(--mantine-color-text)' : 'var(--mantine-color-dimmed)',
+              opacity: activeId === h.id ? 0.9 : 0.4,
+            }}
+          />
+        ))}
+      </div>
     </div>
   );
 }
