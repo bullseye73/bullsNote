@@ -58,11 +58,14 @@ import { hasAnyEncryptedNotes, hasLegacyEncryptedText, recoverEncryptedNotes } f
 import { parseSearchQuery, searchNotes } from '../model/SearchService';
 import { formatDateIso } from '../model/dateUtils';
 import { GeminiService } from '../model/GeminiService';
+import { appendToDailyMemo, buildDailyNoteBlocks, isDailyNoteProject } from '../model/DailyNoteService';
+import { buildTaskItems, getTodayBoard } from '../model/TaskQueryService';
 import {
   CustomHoliday,
   SchedulePatchInput,
   buildDueDateMorningReminder,
   buildNewTaskSchedule,
+  computeEffectivePlannerMap,
   addCalendarDays,
   getTodayIsoStr,
   loadCustomHolidays,
@@ -223,6 +226,10 @@ export interface NotesActions {
   setActiveTag(t: string | null): void;
   setSelectedDate(date: string | null): void;
   openOrCreateDailyNote(dateStr?: string): string;
+  /** 날짜 노트를 찾거나 계획표 템플릿으로 만든다 (선택·폴더는 그대로) */
+  ensureDailyNote(dateStr: string): string;
+  /** 실제 오늘 노트의 메모 칸 끝에 줄들을 붙인다 (없으면 만든 뒤) */
+  appendToDailyNote(lines: string[]): string;
   setShowFavoriteOnly(v: boolean): void;
   exportAll(): void;
   importFromFile(file: File): Promise<void>;
@@ -1404,94 +1411,6 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     [selectedProjectId, queueNoteSync],
   );
 
-  const openOrCreateDailyNote = useCallback(
-    (targetDateStr?: string): string => {
-      const todayStr = formatDateIso(new Date());
-      const dateStr = targetDateStr || todayStr;
-      const monthStr = dateStr.slice(0, 7); // e.g. "2026-10"
-
-      // 1. "Daily Note" 프로젝트 찾기 (또는 생성)
-      let dailyProj = projects.find(
-        (p) =>
-          p.name.trim().toLowerCase() === 'daily note' ||
-          p.name.trim().toLowerCase() === 'daily notes' ||
-          p.name.trim() === '데일리 노트'
-      );
-      let dailyProjId = dailyProj?.id;
-
-      if (!dailyProj) {
-        dailyProjId = createProjectId();
-        const newProj: Project = {
-          id: dailyProjId,
-          name: 'Daily Note',
-          icon: '📅',
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        };
-        setProjects((prev) => [...prev, newProj]);
-        queueProjectSync(newProj);
-        dailyProj = newProj;
-      }
-
-      // 2. YYYY-MM 부모 노트 찾기 (또는 생성)
-      let monthNote = notes.find(
-        (n) =>
-          (n.projectId || DEFAULT_PROJECT_ID) === dailyProjId &&
-          n.parentId === null &&
-          n.title.trim() === monthStr
-      );
-
-      let currentNotes = notes;
-
-      if (!monthNote) {
-        const newMonthNote = createEmptyNote({
-          title: monthStr,
-          projectId: dailyProjId,
-          parentId: null,
-          color: 'purple',
-        });
-        monthNote = newMonthNote;
-        currentNotes = [newMonthNote, ...currentNotes];
-        setNotes((prev) => [newMonthNote, ...prev]);
-        queueNoteSync(newMonthNote);
-      }
-
-      // 3. YYYY-MM-DD 데일리 노트 찾기 (또는 생성)
-      const dayNote = currentNotes.find(
-        (n) =>
-          (n.projectId || DEFAULT_PROJECT_ID) === dailyProjId &&
-          n.title.trim() === dateStr
-      );
-
-      if (dayNote) {
-        setSelectedProjectId(dailyProjId!);
-        setSelectedDate(null);
-        select(dayNote.id);
-        return dayNote.id;
-      }
-
-      // 새로 생성 (타겟 날짜의 정오를 생성 시각으로 지정)
-      const targetDate = new Date(`${dateStr}T12:00:00`);
-      const noteCreatedAt = isNaN(targetDate.getTime()) ? Date.now() : targetDate.getTime();
-
-      const newDayNote = createEmptyNote({
-        title: dateStr,
-        projectId: dailyProjId,
-        parentId: monthNote.id,
-        color: 'blue',
-        createdAt: noteCreatedAt,
-        updatedAt: Date.now(),
-      });
-
-      setNotes((prev) => [newDayNote, ...prev]);
-      setSelectedProjectId(dailyProjId!);
-      setSelectedDate(null);
-      select(newDayNote.id);
-      queueNoteSync(newDayNote);
-      return newDayNote.id;
-    },
-    [projects, notes, select, queueProjectSync, queueNoteSync],
-  );
 
   /** 노트/할일 알람을 Google Calendar 일정으로 백그라운드 동기화 (모바일 푸시 알림 연동) */
   const syncNoteReminderWithCalendar = useCallback(
@@ -2923,6 +2842,106 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   }, [createPlannerTask]);
   const enterGuestMode = startLocal;
 
+  /**
+   * 날짜 노트(Daily Note/YYYY-MM/YYYY-MM-DD)를 찾거나 계획표 템플릿으로 만든다. 선택·폴더는 바꾸지 않는다.
+   * transform이 있으면 본문(새 노트면 템플릿)에 적용해 저장한다.
+   */
+  const upsertDailyNote = useCallback(
+    (dateStr: string, transform?: (content: string) => string): { id: string; projectId: string } => {
+      const allNotes = notesRef.current;
+      const monthStr = dateStr.slice(0, 7);
+
+      // 1. "Daily Note" 폴더 찾기 (또는 생성)
+      let dailyProj = projects.find(isDailyNoteProject);
+      if (!dailyProj) {
+        const newProj: Project = {
+          id: createProjectId(),
+          name: 'Daily Note',
+          icon: '📅',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        };
+        setProjects((prev) => [...prev, newProj]);
+        queueProjectSync(newProj);
+        dailyProj = newProj;
+      }
+      const dailyProjId = dailyProj.id;
+
+      // 2. 날짜 노트가 있으면 (필요 시) 본문만 갱신
+      const dayNote = allNotes.find(
+        (n) => (n.projectId || DEFAULT_PROJECT_ID) === dailyProjId && n.title.trim() === dateStr
+      );
+      if (dayNote) {
+        if (transform) updateContent(dayNote.id, transform(dayNote.content));
+        return { id: dayNote.id, projectId: dailyProjId };
+      }
+
+      // 3. YYYY-MM 월 노트 찾기 (또는 생성)
+      const created: Note[] = [];
+      let monthNote = allNotes.find(
+        (n) =>
+          (n.projectId || DEFAULT_PROJECT_ID) === dailyProjId &&
+          n.parentId === null &&
+          n.title.trim() === monthStr
+      );
+      if (!monthNote) {
+        monthNote = createEmptyNote({ title: monthStr, projectId: dailyProjId, parentId: null, color: 'purple' });
+        created.push(monthNote);
+      }
+
+      // 4. 계획표 템플릿: 그 날짜의 "오늘 할 일" 제목으로 오늘 순서를 미리 채움
+      const board = getTodayBoard(
+        buildTaskItems(allNotes, computeEffectivePlannerMap(allNotes, customHolidaysRef.current)),
+        allNotes,
+        dateStr
+      );
+      const templateJson = JSON.stringify(
+        buildDailyNoteBlocks(board.tasks.map((t) => t.note.title || '제목 없음'))
+      );
+      const content = transform ? transform(templateJson) : templateJson;
+
+      // 타겟 날짜의 정오를 생성 시각으로 지정 (날짜별 작성 노트 집계와 일치)
+      const targetDate = new Date(`${dateStr}T12:00:00`);
+      const dayNoteNew = createEmptyNote({
+        title: dateStr,
+        projectId: dailyProjId,
+        parentId: monthNote.id,
+        color: 'blue',
+        content,
+        tags: extractHashtags(dateStr, content),
+        createdAt: isNaN(targetDate.getTime()) ? Date.now() : targetDate.getTime(),
+        updatedAt: Date.now(),
+      });
+      created.push(dayNoteNew);
+      setNotes((prev) => [...created.slice().reverse(), ...prev]);
+      created.forEach((n) => queueNoteSync(n));
+      return { id: dayNoteNew.id, projectId: dailyProjId };
+    },
+    [projects, queueProjectSync, queueNoteSync, updateContent]
+  );
+
+  /** 노트 화면에서 날짜 노트를 연다 (폴더·선택 이동) */
+  const openOrCreateDailyNote = useCallback(
+    (targetDateStr?: string): string => {
+      const { id, projectId } = upsertDailyNote(targetDateStr || formatDateIso(new Date()));
+      setSelectedProjectId(projectId);
+      setSelectedDate(null);
+      select(id);
+      return id;
+    },
+    [upsertDailyNote, select]
+  );
+
+  /** 오늘 화면용: 날짜 노트를 찾거나 만들되 선택은 바꾸지 않는다 */
+  const ensureDailyNote = useCallback((dateStr: string): string => upsertDailyNote(dateStr).id, [upsertDailyNote]);
+
+  /** 빠른 입력 "오늘 노트": 실제 오늘 노트의 메모 칸에 줄들을 붙인다 */
+  const appendToDailyNote = useCallback(
+    (lines: string[]): string =>
+      upsertDailyNote(formatDateIso(new Date()), (c) => appendToDailyMemo(c, lines)).id,
+    [upsertDailyNote]
+  );
+
   const hasEncryptedNotes = useMemo(() => hasAnyEncryptedNotes(notes), [notes]);
 
   const decryptAllLegacyNotes = useCallback(
@@ -2979,6 +2998,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       selectedDate,
       setSelectedDate,
       openOrCreateDailyNote,
+      ensureDailyNote,
+      appendToDailyNote,
       showFavoriteOnly,
       tagCounts,
       tree,
@@ -3171,6 +3192,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       removeAttachment,
       selectedDate,
       openOrCreateDailyNote,
+      ensureDailyNote,
+      appendToDailyNote,
       geminiModalOpened,
       geminiModalTab,
       openGeminiModal,
