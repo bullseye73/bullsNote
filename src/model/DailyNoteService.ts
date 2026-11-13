@@ -80,13 +80,36 @@ export function appendToDailyMemo(content: string, lines: string[]): string {
   return JSON.stringify(blocks);
 }
 
-/** 브리핑 섹션을 lines 로 바꾼다 (없으면 맨 위에 만든다) */
+/**
+ * 브리핑 섹션: "브리핑" 제목과 바로 뒤에 이어진 글머리 항목들 (앱이 쓰는 모양 그대로).
+ * 다음 제목까지로 잡으면 제목 없는 노트에서 사용자가 이어 쓴 글까지 브리핑으로 읽고 지우게 된다.
+ */
+function findBriefing(blocks: Block[]): { heading: number; end: number } | null {
+  const heading = blocks.findIndex((b) => isHeading(b) && blockText(b).trim() === DAILY_SECTION.briefing);
+  if (heading === -1) return null;
+  let end = heading + 1;
+  while (end < blocks.length && blocks[end].type === 'bulletListItem') end++;
+  return { heading, end };
+}
+
+/** 브리핑 섹션을 lines 로 바꾼다 (없으면 맨 위에 만든다). 뒤에 제목이 없으면 메모 제목을 경계로 둔다 */
 export function writeDailyBriefing(content: string, lines: string[]): string {
   const blocks = toBlocks(content);
   const items = bulletItems(lines);
-  const section = findSection(blocks, DAILY_SECTION.briefing);
-  if (section) blocks.splice(section.heading + 1, section.end - section.heading - 1, ...items);
-  else blocks.unshift(heading(DAILY_SECTION.briefing), ...items);
+  const section = findBriefing(blocks);
+  let after: number;
+  if (section) {
+    blocks.splice(section.heading + 1, section.end - section.heading - 1, ...items);
+    after = section.heading + 1 + items.length;
+  } else {
+    blocks.unshift(heading(DAILY_SECTION.briefing), ...items);
+    after = 1 + items.length;
+  }
+  // 이어 쓰는 글머리 항목이 브리핑에 붙지 않도록, 뒤가 제목이 아니면 메모 칸을 만든다 (메모가 이미 있으면 두지 않음)
+  const next = blocks[after];
+  if ((!next || !isHeading(next)) && !findSection(blocks, DAILY_SECTION.memo)) {
+    blocks.splice(after, 0, heading(DAILY_SECTION.memo), ...(next ? [] : [block('paragraph')]));
+  }
   return JSON.stringify(blocks);
 }
 
@@ -94,7 +117,7 @@ export function writeDailyBriefing(content: string, lines: string[]): string {
 export function removeDailyBriefing(content: string): string {
   const blocks = parseBlocks(content) as Block[] | null;
   if (!blocks) return content;
-  const section = findSection(blocks, DAILY_SECTION.briefing);
+  const section = findBriefing(blocks);
   if (!section) return content;
   return JSON.stringify([...blocks.slice(0, section.heading), ...blocks.slice(section.end)]);
 }
@@ -103,7 +126,7 @@ export function removeDailyBriefing(content: string): string {
 export function readDailyBriefing(content: string): string[] {
   const blocks = parseBlocks(content);
   if (!blocks) return [];
-  const section = findSection(blocks as Block[], DAILY_SECTION.briefing);
+  const section = findBriefing(blocks as Block[]);
   if (!section) return [];
   return (blocks as Block[]).slice(section.heading + 1, section.end).map((b) => blockText(b).trim()).filter(Boolean);
 }

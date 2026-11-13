@@ -128,7 +128,7 @@ describe('writeDailyBriefing / readDailyBriefing', () => {
   });
 
   it('빈 본문·마크다운 본문에서도 동작하고, 섹션이 없으면 빈 목록을 읽는다', () => {
-    expect(shape(parse(writeDailyBriefing('', ['줄'])))).toEqual(['heading:브리핑', 'bulletListItem:줄']);
+    expect(shape(parse(writeDailyBriefing('', ['줄'])))).toEqual(['heading:브리핑', 'bulletListItem:줄', 'heading:메모', 'paragraph:']);
     expect(readDailyBriefing(template)).toEqual([]);
     expect(readDailyBriefing('옛 마크다운')).toEqual([]);
   });
@@ -140,5 +140,33 @@ describe('removeDailyBriefing', () => {
     const withBriefing = writeDailyBriefing(template, ['요약']);
     expect(removeDailyBriefing(withBriefing)).toBe(template);
     expect(removeDailyBriefing(template)).toBe(template);
+  });
+});
+
+describe('브리핑 섹션 경계 — 노트에 직접 쓴 내용을 브리핑으로 읽거나 지우지 않는다', () => {
+  const H = (t: string) => ({ type: 'heading', props: { level: 2 }, content: [{ text: t }] });
+  const li = (t: string) => ({ type: 'bulletListItem', content: [{ text: t }] });
+  const p = (t: string) => ({ type: 'paragraph', content: t ? [{ text: t }] : [] });
+
+  it('브리핑은 제목 바로 뒤 이어진 글머리 항목까지만 읽는다', () => {
+    const content = JSON.stringify([H('브리핑'), li('a'), li('b'), p('내가 쓴 글'), li('내 항목')]);
+    expect(readDailyBriefing(content)).toEqual(['a', 'b']);
+  });
+
+  it('다시 만들어도 브리핑 뒤에 직접 쓴 내용은 남기고, 그 앞에 메모 제목을 둔다', () => {
+    const content = JSON.stringify([H('브리핑'), li('옛 요약'), p('내가 쓴 글')]);
+    const out = shape(parse(writeDailyBriefing(content, ['새 요약'])));
+    expect(out).toEqual(['heading:브리핑', 'bulletListItem:새 요약', 'heading:메모', 'paragraph:내가 쓴 글']);
+    expect(readDailyBriefing(JSON.stringify(parse(writeDailyBriefing(content, ['새 요약']))))).toEqual(['새 요약']);
+  });
+
+  it('제목 없는 빈 노트에 넣으면 아래에 메모 칸을 만들어 둔다', () => {
+    const out = shape(parse(writeDailyBriefing(JSON.stringify([p('')]), ['요약'])));
+    expect(out).toEqual(['heading:브리핑', 'bulletListItem:요약', 'heading:메모', 'paragraph:']);
+  });
+
+  it('브리핑 섹션을 빼도 그 뒤에 직접 쓴 내용은 남는다', () => {
+    const content = JSON.stringify([H('브리핑'), li('요약'), p('내가 쓴 글')]);
+    expect(shape(parse(removeDailyBriefing(content)))).toEqual(['paragraph:내가 쓴 글']);
   });
 });
