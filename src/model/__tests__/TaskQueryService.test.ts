@@ -66,7 +66,7 @@ describe('getTodayBoard', () => {
     expect(ids(board.ongoing)).toEqual(['span']);
   });
 
-  it('오늘 시각의 알림만 시간순 일정으로 모은다', () => {
+  it('오늘 시각의 알림만 시간순 일정으로 모은다 (이미 확인한 오늘 알림도 지난 일정으로 남긴다)', () => {
     const at = (d: number, h: number) => new Date(2026, 10, d, h, 0).getTime();
     const withReminder = (id: string, targetAt: number, dismissed = false) =>
       createEmptyNote({ id, title: id, reminder: { targetAt, repeat: 'none', dismissed } });
@@ -77,7 +77,7 @@ describe('getTodayBoard', () => {
       withReminder('dismissed', at(12, 10), true),
     ];
     const board = getTodayBoard(itemsOf(notes), notes, TODAY);
-    expect(board.schedule.map((s) => s.note.id)).toEqual(['morning', 'afternoon']);
+    expect(board.schedule.map((s) => s.note.id)).toEqual(['morning', 'dismissed', 'afternoon']);
   });
 
   it('할일이 없으면 모든 영역이 비어 있다', () => {

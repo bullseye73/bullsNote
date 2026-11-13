@@ -52,7 +52,7 @@ export interface TodayBoard {
   counts: { tasks: number; doing: number; overdue: number };
 }
 
-/** 오늘 대시보드: 지연·오늘 마감·진행 중 할일, 오늘 알림 일정, 오늘을 포함하는 기간 작업 */
+/** 오늘 대시보드: 지연·오늘 마감·진행 중 할일, 오늘 알림 일정(이미 확인한 알림 포함), 오늘을 포함하는 기간 작업 */
 export function getTodayBoard(items: TaskItem[], notes: Note[], todayIso: string): TodayBoard {
   const rank = (t: TaskItem) => (t.dueDate && t.dueDate < todayIso ? 0 : t.dueDate === todayIso ? 1 : 2);
   const tasks = items
@@ -64,7 +64,6 @@ export function getTodayBoard(items: TaskItem[], notes: Note[], todayIso: string
       (n) =>
         !isSystemGroupNote(n) &&
         n.reminder &&
-        !n.reminder.dismissed &&
         toIsoDateLocal(new Date(n.reminder.targetAt)) === todayIso
     )
     .map((n) => ({ at: n.reminder!.targetAt, note: n, label: n.title || '제목 없음' }))

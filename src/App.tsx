@@ -53,6 +53,7 @@ import { AlarmModal } from './view/AlarmModal';
 import { GoogleSyncModal } from './view/GoogleSyncModal';
 import { WelcomeView } from './view/WelcomeView';
 import { TodosView } from './view/todos/TodosView';
+import { TodayView } from './view/TodayView';
 import { QuickSearchModal } from './view/QuickSearchModal';
 import { GeminiAiModal } from './view/GeminiAiModal';
 import { SortMenu } from './view/SortMenu';
@@ -308,9 +309,13 @@ function Shell() {
     projectPath.length > 1
       ? projectPath.map((p) => formatProjLabel(p)).join(' / ')
       : formatProjLabel(selectedProject);
-  const contextLabel = plannerViewActive
-    ? '📊 플래너 (Schedule)'
-    : showFavoriteOnly
+  const contextLabel =
+    // 모바일 셸은 오늘 화면 없이 노트 목록을 보여주므로 데스크톱에서만 '오늘'
+    workspaceView === 'today' && !isPhone
+      ? '오늘'
+      : workspaceView === 'todos'
+      ? '할일'
+      : showFavoriteOnly
     ? '⭐ 즐겨찾기'
     : isTodoBoard
     ? '📋 할일관리'
@@ -721,7 +726,7 @@ function Shell() {
             <Text size="xs" c="dimmed" truncate style={{ maxWidth: 160 }}>
               {contextLabel}
             </Text>
-            {selected && (
+            {selected && workspaceView === 'notes' && (
               <>
                 <IconChevronRight size={12} style={{ opacity: 0.45, flexShrink: 0 }} />
                 <Text size="xs" fw={500} truncate style={{ maxWidth: 260 }}>
@@ -865,7 +870,11 @@ function Shell() {
 
       <AppShell.Main h="calc(100vh - 40px)">
         <ErrorBoundary title="화면을 표시하지 못했습니다">
-          {workspaceView === 'todos' ? (
+          {workspaceView === 'today' ? (
+            <div style={{ display: 'flex', height: '100%', width: '100%', overflow: 'hidden' }}>
+              <TodayView />
+            </div>
+          ) : workspaceView === 'todos' ? (
             <div style={{ display: 'flex', height: '100%', width: '100%', overflow: 'hidden' }}>
               <TodosView />
             </div>
