@@ -138,10 +138,13 @@ function BlockEditor({
   backlinks,
   onEditorInit,
   compact = false,
+  embedded = false,
   onScrollContainerReady,
 }: {
   note: Note;
   backlinks: Note[];
+  /** 다른 화면(오늘 화면 등) 안에 끼워 넣을 때: 첨부·백링크 하단 패널, 플로팅 목차 숨김 */
+  embedded?: boolean;
   onEditorInit?: (editor: AnyEditor) => void;
   /** 모바일: 서식 툴바는 편집 중에만 키보드 위에 표시, 플로팅 목차 숨김 */
   compact?: boolean;
@@ -1107,7 +1110,7 @@ function BlockEditor({
         }}
       >
         {/* 우측 상단 고정 목차 (TOC) */}
-        {!compact && <NoteTableOfContents editor={editor} scrollContainerRef={scrollContainerRef} />}
+        {!compact && !embedded && <NoteTableOfContents editor={editor} scrollContainerRef={scrollContainerRef} />}
 
         <div
           ref={attachScrollContainer}
@@ -1116,7 +1119,7 @@ function BlockEditor({
             flex: 1,
             minHeight: 0,
             overflow: 'auto',
-            paddingBottom: 280,
+            paddingBottom: embedded ? 24 : 280,
             backgroundColor: 'var(--bn-surface-editor)',
           }}
           onClick={(e) => {
@@ -1293,6 +1296,7 @@ function BlockEditor({
           </BlockNoteView>
 
           {/* 노트 하단 영역: 첨부파일 목록 및 백링크 목록 */}
+          {!embedded && (
           <div
             className="no-print note-bottom-panels"
             onClick={(e) => e.stopPropagation()}
@@ -1326,6 +1330,7 @@ function BlockEditor({
               )}
             </Stack>
           </div>
+          )}
         </div>
       </div>
 
@@ -1345,6 +1350,18 @@ function BlockEditor({
         onApplyResult={handleApplyAiResult}
       />
     </Stack>
+  );
+}
+
+/** 다른 화면 안에서 노트 본문만 편집하는 에디터 (하단 패널 없음, 선택 노트와 무관하게 noteId로 지정) */
+export function EmbeddedNoteEditor({ noteId }: { noteId: string }) {
+  const { notes } = useNotes();
+  const note = notes.find((n) => n.id === noteId);
+  if (!note) return null;
+  return (
+    <ErrorBoundary title="노트를 표시하지 못했습니다">
+      <BlockEditor key={note.id} note={note} backlinks={[]} embedded />
+    </ErrorBoundary>
   );
 }
 
