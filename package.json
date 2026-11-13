@@ -1,0 +1,110 @@
+{
+  "name": "bullsnote",
+  "version": "1.4.6",
+  "description": "BullsNote - 크로스플랫폼 지식관리 메모장 (Notion-like, hashtag 지원)",
+  "author": {
+    "name": "BullsNote",
+    "email": "bullseye73@gmail.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bullseye73/bullsNote.git"
+  },
+  "main": "electron/main.js",
+  "scripts": {
+    "predev": "node scripts/sync-version.mjs",
+    "prebuild": "node scripts/sync-version.mjs",
+    "dev": "concurrently -k \"vite\" \"wait-on http://localhost:5190 && electron .\"",
+    "dev:browser": "vite --host",
+    "dev:pwa": "vite --host",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --host --port 5190",
+    "electron:dev": "concurrently -k \"vite\" \"wait-on http://localhost:5190 && electron .\"",
+    "electron:prod": "npm run build && electron .",
+    "dist": "npm run build && electron-builder",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:linux": "npm run build && electron-builder --linux",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@blocknote/ariakit": "0.55.0",
+    "@blocknote/core": "0.55.0",
+    "@blocknote/react": "0.55.0",
+    "@mantine/core": "^7.13.0",
+    "@mantine/hooks": "^7.13.0",
+    "@tabler/icons-react": "^3.19.0",
+    "@types/qrcode": "^1.5.6",
+    "@types/react": "^18.3.5",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.3",
+    "concurrently": "^9.0.1",
+    "electron": "^44.10.2",
+    "electron-builder": "^26.18.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "shiki": "^4.5.0",
+    "tslib": "^2.8.1",
+    "typescript": "^5.6.2",
+    "vite": "^5.4.8",
+    "vitest": "^3.2.7",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.bullsnote.app",
+    "productName": "BullsNote",
+    "icon": "electron/assets/icon",
+    "compression": "maximum",
+    "electronLanguages": [
+      "ko",
+      "en",
+      "en-US"
+    ],
+    "publish": {
+      "provider": "github",
+      "owner": "bullseye73",
+      "repo": "bullsNote"
+    },
+    "directories": {
+      "output": "release"
+    },
+    "asarUnpack": [
+      "electron/mcp/**"
+    ],
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "!electron/assets/icon.icns",
+      "!electron/assets/icon.ico",
+      "!**/.DS_Store",
+      "!**/node_modules/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "electron/assets/icon.ico"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "electron/assets/icon.png",
+      "category": "Utility",
+      "maintainer": "BullsNote <bullseye73@gmail.com>"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "icon": "electron/assets/icon.icns"
+    }
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4"
+  }
+}
