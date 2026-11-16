@@ -177,6 +177,24 @@ export async function shareNative(title: string, text: string): Promise<boolean>
   }
 }
 
+/**
+ * 인쇄 (Electron: 실제 출력물 PDF를 미리보기 창에 띄우고 그 창에서 인쇄 / 브라우저: 기본 인쇄창)
+ * Electron의 window.print()는 Chromium 인쇄 미리보기를 지원하지 않아 시스템 인쇄창에 미리보기가 비어 나온다.
+ */
+export async function printNote(title: string): Promise<{ success: boolean }> {
+  if (window.bullsNote?.print?.preview) {
+    try {
+      const res = await window.bullsNote.print.preview(title);
+      if (res.success) return { success: true };
+      console.warn('인쇄 미리보기 창 생성 실패, window.print()로 fallback:', res.error);
+    } catch (err) {
+      console.warn('인쇄 미리보기 창 생성 실패, window.print()로 fallback:', err);
+    }
+  }
+  window.print();
+  return { success: true };
+}
+
 /** PDF 내보내기 (Electron 네이티브 PDF 저장 또는 브라우저 인쇄 fallback) */
 export async function exportToPdf(title: string): Promise<{ success: boolean; canceled?: boolean }> {
   // Electron 환경인 경우 네이티브 showSaveDialog + printToPDF 실행

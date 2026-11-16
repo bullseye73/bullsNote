@@ -375,10 +375,12 @@ body,
     display: block !important;
   }
 
-  /* 인쇄용 페이지 여백 */
+  /* 인쇄용 페이지 여백
+     background 필수: 없으면 Electron printToPDF/인쇄가 여백을 창 배경색(다크 모드 #121214)으로 칠해 검은 테두리가 생긴다 */
   @page {
     size: A4 portrait;
     margin: 15mm;
+    background: #ffffff;
   }
 
   /* 페이지 잘림 방지 */

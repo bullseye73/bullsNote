@@ -1,10 +1,11 @@
-const { app, BrowserWindow, nativeImage, shell, Notification, Menu, MenuItem, dialog, nativeTheme } = require('electron');
+const { app, BrowserWindow, nativeImage, shell, Notification, Menu, MenuItem, nativeTheme } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const packageJson = require('../package.json');
 const { registerVaultIpc } = require('./vault-ipc');
 const { registerGoogleAuthIpc } = require('./google-auth-ipc');
 const { registerMcpIpc } = require('./mcp-ipc');
+const { registerPrintIpc } = require('./print-ipc');
 const { setupTray } = require('./tray');
 const { isAppUrl } = require('./app-origin');
 const { secureHandle } = require('./ipc-guard');
@@ -328,39 +329,7 @@ app.whenReady().then(() => {
     }
   });
 
-  secureHandle('print:exportPdf', async (event, { title }) => {
-    const win = BrowserWindow.fromWebContents(event.sender);
-    if (!win) return { success: false, error: '창을 찾을 수 없습니다.' };
-
-    const safeTitle = String(title || '노트').slice(0, 120).replace(/[/\\?%*:|"<>]/g, '_').trim() || '노트';
-    const { canceled, filePath } = await dialog.showSaveDialog(win, {
-      title: 'PDF로 내보내기',
-      defaultPath: `${safeTitle}.pdf`,
-      filters: [{ name: 'PDF 문서', extensions: ['pdf'] }],
-    });
-
-    if (canceled || !filePath) {
-      return { success: false, canceled: true };
-    }
-
-    try {
-      const pdfData = await event.sender.printToPDF({
-        pageSize: 'A4',
-        printBackground: true,
-        margins: {
-          top: 0.4,
-          bottom: 0.4,
-          left: 0.4,
-          right: 0.4,
-        },
-      });
-      await fs.promises.writeFile(filePath, pdfData);
-      return { success: true, filePath };
-    } catch (err) {
-      console.error('PDF 내보내기 실패:', err);
-      return { success: false, error: err.message };
-    }
-  });
+  registerPrintIpc();
 
   trayCtl = setupTray({ app }, () => mainWindow);
   createWindow();
