@@ -41,6 +41,7 @@ contextBridge.exposeInMainWorld('bullsNote', {
   },
   print: {
     exportPdf: (title) => ipcRenderer.invoke('print:exportPdf', { title }),
+    preview: (title) => ipcRenderer.invoke('print:preview', { title }),
   },
   mcp: {
     status: () => ipcRenderer.invoke('mcp:status'),

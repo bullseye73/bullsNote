@@ -108,6 +108,7 @@ import {
   exportToHtmlDocument,
   exportToMarkdown,
   exportToPdf,
+  printNote,
   sanitizeFileName,
   shareNative,
 } from '../model/exportUtils';
@@ -1436,8 +1437,8 @@ export function NoteEditorView({
 
   // 인쇄 실행
   const handlePrint = useCallback(() => {
-    window.print();
-  }, []);
+    void printNote(selected?.title || '노트');
+  }, [selected?.title]);
 
   // 단축키: Ctrl + P (Mac: Cmd + P) -> 인쇄 미리보기 열기
   useEffect(() => {
