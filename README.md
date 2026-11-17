@@ -6,7 +6,7 @@ Windows · macOS · Linux 데스크톱 앱과 iPhone · iPad · Android에서 �
 
 ![오늘 화면](docs/images/today.jpg)
 
-- **버전:** 2.0.0
+- **버전:** 2.0.1
 - **플랫폼:** Windows · macOS · Linux · PWA
 - **스택:** Electron, React 18, TypeScript, Vite
 - **라이선스:** [MIT](LICENSE)
@@ -282,7 +282,8 @@ src/
 electron/       데스크톱 셸 — 창, 트레이, 저장 폴더, Google 로그인, MCP 등록
   mcp/          MCP 서버 (의존성 없는 stdio 서버)
 public/         PWA 매니페스트, 서비스 워커, 아이콘
-docs/           설계 문서와 README 이미지
+docs/           설계 스펙과 README 이미지
+DESIGN.md       전체 시스템 아키텍처 및 구성도
 ```
 
 | 영역 | 사용 기술 |
