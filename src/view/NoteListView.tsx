@@ -25,6 +25,7 @@ import {
   IconBellRinging,
   IconCalendar,
   IconCalendarEvent,
+  IconMessageCircle,
   IconPin,
   IconPlus,
   IconStar,
@@ -589,6 +590,16 @@ function TreeRow({
                   flexShrink: 0,
                 }}
               />
+            )}
+            {(n.comments?.length ?? 0) > 0 && !isSystemGroup && (
+              <Tooltip label={`댓글 ${n.comments!.length}개`}>
+                <Group gap={2} wrap="nowrap" style={{ flexShrink: 0, color: 'var(--mantine-color-teal-6)' }}>
+                  <IconMessageCircle size={12} />
+                  <Text size="11px" fw={600}>
+                    {n.comments!.length}
+                  </Text>
+                </Group>
+              </Tooltip>
             )}
             {n.systemGroupType && (
               <Badge size="xs" variant="light" color={n.color || 'blue'} style={{ flexShrink: 0 }}>

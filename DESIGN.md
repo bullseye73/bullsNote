@@ -1,6 +1,6 @@
 # BullsNote — 아키텍처 설계 문서
 
-이 문서는 BullsNote(v2.0.1 기준)의 전체 시스템 아키텍처, MVC 계층 구조, 데스크톱(Electron) 및 웹(PWA) 듀얼 런타임 구성, 그리고 외부 연동 흐름을 정의합니다.
+이 문서는 BullsNote(v2.0.2 기준)의 전체 시스템 아키텍처, MVC 계층 구조, 데스크톱(Electron) 및 웹(PWA) 듀얼 런타임 구성, 그리고 외부 연동 흐름을 정의합니다.
 
 ---
 
@@ -24,7 +24,7 @@ flowchart TB
     subgraph View["View Layer (src/view/ — React 18 + Mantine 7 + BlockNote 0.55)"]
         Today["TodayView · DailyNotePanel\n· TodayBriefingCard"]
         Todos["TodosView (목록 · 보드 · 타임라인)\n· PlannerView"]
-        Editor["NoteEditorView · QuickCaptureModal\n· Mobile Views"]
+        Editor["NoteEditorView · NoteCommentsView\n· QuickCaptureModal · Mobile Views"]
     end
 
     subgraph Controller["Controller Layer (src/controller/)"]
@@ -32,7 +32,7 @@ flowchart TB
     end
 
     subgraph Model["Model Layer (src/model/ — 순수 규칙 & 서비스)"]
-        Domain["Note · TodoService · PlannerService\n· TaskQueryService · DailyNoteService"]
+        Domain["Note (NoteComment 포함) · TodoService\n· PlannerService · TaskQueryService · DailyNoteService"]
         Parsing["QuickCaptureParser · AiCaptureParser\n· HashtagService · SearchService · FileVault"]
         ExtSvc["GoogleDriveService · GoogleCalendarService\n· GoogleTasksService · GeminiService · TodayBriefing"]
     end
@@ -77,9 +77,9 @@ flowchart TB
 
 | 계층 | 경로 | 책임 |
 |---|---|---|
-| **Model** | `src/model/` | `Note` 타입/트리/정렬, `TodoService`(체크리스트 ↔ 할일 양방향 동기화), `PlannerService`(근무일·공휴일 기반 기간 계산), `DailyNoteService` & `TodayBriefing`(일일 노트·AI 브리핑), `QuickCaptureParser` & `AiCaptureParser`(자연어 날짜/시각/태그 파싱), `FileVault`(Markdown frontmatter 직렬화/역직렬화 및 에셋 변환) |
-| **Controller** | `src/controller/NotesController.tsx` | 앱 전역 상태 관리, 노트 CRUD 및 히스토리(최대 30개) 스냅샷, 로컬 볼트 파일 변경 감지 반영, Google Drive/Calendar/Tasks 동기화 오케스트레이션 |
-| **View** | `src/view/` | `TodayView`(오늘 할일·일정·기간 작업·브리핑), `TodosView`(목록·칸반 보드·간트 타임라인), `NoteEditorView`(BlockNote + Shiki 코드 강조 + 목차), `QuickCaptureModal`, `mobile/` 반응형 레이아웃 |
+| **Model** | `src/model/` | `Note` 타입/트리/정렬(`NoteComment` 스레드 모델 및 `removeCommentWithReplies` 연쇄 삭제 포함), `TodoService`(체크리스트 ↔ 할일 양방향 동기화), `PlannerService`(근무일·공휴일 기반 기간 계산), `DailyNoteService` & `TodayBriefing`(일일 노트·AI 브리핑), `QuickCaptureParser` & `AiCaptureParser`(자연어 날짜/시각/태그 파싱), `SearchService`(제목·본문·태그·첨부·댓글 통합 검색), `FileVault`(Markdown frontmatter `comments` 포함 직렬화/역직렬화 및 에셋 변환) |
+| **Controller** | `src/controller/NotesController.tsx` | 앱 전역 상태 관리, 노트 CRUD 및 히스토리(최대 30개) 스냅샷, 댓글 CRUD·해결 토글(`addComment`, `updateComment`, `deleteComment`, `toggleCommentResolved`), 로컬 볼트 파일 변경 감지 반영, Google Drive/Calendar/Tasks 동기화 오케스트레이션 |
+| **View** | `src/view/` | `TodayView`(오늘 할일·일정·기간 작업·브리핑), `TodosView`(목록·칸반 보드·간트 타임라인), `NoteEditorView`(BlockNote + Shiki 코드 강조 + 목차 + 헤더 댓글 포커스 트리거), `NoteCommentsView`(노트 하단 1단계 스레드형 댓글·답글 패널 및 해결됨/미해결 필터), `NoteListView`(트리 목록 및 댓글 수 배지), `QuickCaptureModal`, `mobile/` 반응형 레이아웃 |
 | **Electron Shell** | `electron/` | 단일 인스턴스 락, 트레이 백그라운드 상주, `ipc-guard.js` 및 `app-origin.js` 기반 IPC/Origin 보안 검증, `vault-ipc.js` 파일시스템 연동, `google-auth-ipc.js` OAuth 처리 |
 | **MCP Server** | `electron/mcp/` | 외부 의존성 없는 Node.js stdio MCP 서버 (`save_note`, `list_projects`, `add_todo`, `list_today`). 데스크톱 앱과 동일한 `.md` 볼트 및 `.bullsnote.json` 포맷을 공유 |
 
@@ -107,3 +107,8 @@ sequenceDiagram
 - **데스크톱 → 모바일 페어링:** Google Drive 연결 후 생성되는 QR 코드 또는 `BNM1:` 연동 코드를 PWA에서 스캔/입력하면 동일한 Google Drive 앱 폴더에 연결됩니다.
 - **증분 동기화:** `GoogleDriveService`가 변경된 노트(`updatedAt` 및 리비전 비교)와 첨부 에셋만 업로드·다운로드하여 네트워크 전송량을 최소화합니다.
 - **알림 연동:** `GoogleCalendarService`를 통해 알림 시각이 설정된 할일을 Google Calendar 이벤트로 동기화하여 모바일 푸시 알림을 보조합니다.
+
+### 4-3. 노트 댓글 & 하위 답글(스레드) 구조
+- **1단계 스레드 모델:** `Note.comments`는 `NoteComment`(`id`, `content`, `author`, `parentId`, `resolved`, `createdAt`, `updatedAt`) 배열로 저장됩니다. `NotesController.addComment`는 하위 답글 작성 시 부모를 `targetParent.parentId || targetParent.id`로 정규화하여 항상 1단계 스레드 구조를 유지합니다.
+- **연쇄 삭제 및 잠금 연동:** 루트 댓글 삭제 시 `removeCommentWithReplies()`가 하위 답글을 함께 제거하며, 잠긴 노트에서는 `NoteCommentsView`가 읽기 전용(`disabled`)으로 동작합니다.
+- **영속성 및 검색:** 댓글 데이터는 `FileVault`의 `.md` frontmatter(`comments`)와 `NoteRepository`의 `localStorage` 마이그레이션에 함께 저장되며, `SearchService` 검색 인덱싱(초성 검색 포함) 대상에 포함됩니다.

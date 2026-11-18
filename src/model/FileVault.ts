@@ -1,5 +1,5 @@
 // MODEL: 파일 볼트 포맷 (frontmatter + Markdown) - 순수 함수만
-import { DEFAULT_PROJECT_ID, DEFAULT_PROJECTS, Note, NoteAttachment, NoteReminder, NoteSnapshot, Project, TodoMeta, TodoStatus } from './Note';
+import { DEFAULT_PROJECT_ID, DEFAULT_PROJECTS, Note, NoteAttachment, NoteComment, NoteReminder, NoteSnapshot, Project, TodoMeta, TodoStatus } from './Note';
 
 export interface ParsedNoteFile {
   id: string;
@@ -12,6 +12,7 @@ export interface ParsedNoteFile {
   favorite: boolean;
   tags: string[];
   attachments?: NoteAttachment[];
+  comments?: NoteComment[];
   todoMeta?: TodoMeta;
   systemGroupType?: TodoStatus;
   createdAt: number;
@@ -45,6 +46,7 @@ export function serializeNoteFile(note: Note, body: string): string {
     `favorite: ${esc(note.favorite)}`,
     `tags: ${esc(note.tags)}`,
     `attachments: ${esc(note.attachments || [])}`,
+    `comments: ${esc(note.comments || [])}`,
     `todoMeta: ${esc(note.todoMeta || null)}`,
     `systemGroupType: ${esc(note.systemGroupType || null)}`,
     `createdAt: ${esc(note.createdAt)}`,
@@ -80,6 +82,16 @@ export function parseNoteFile(id: string, text: string): ParsedNoteFile | null {
   const attachments = Array.isArray(meta.attachments)
     ? (meta.attachments as NoteAttachment[])
     : [];
+  const comments = Array.isArray(meta.comments)
+    ? (meta.comments.filter(
+        (c): c is NoteComment =>
+          Boolean(c) &&
+          typeof (c as { id?: unknown }).id === 'string' &&
+          typeof (c as { content?: unknown }).content === 'string' &&
+          typeof (c as { createdAt?: unknown }).createdAt === 'number' &&
+          typeof (c as { updatedAt?: unknown }).updatedAt === 'number',
+      ))
+    : [];
   const todoMeta =
     typeof meta.todoMeta === 'object' && meta.todoMeta !== null
       ? (meta.todoMeta as TodoMeta)
@@ -99,6 +111,7 @@ export function parseNoteFile(id: string, text: string): ParsedNoteFile | null {
     favorite: meta.favorite === true,
     tags: Array.isArray(meta.tags) ? meta.tags.filter((t): t is string => typeof t === 'string') : [],
     attachments,
+    comments,
     todoMeta,
     systemGroupType,
     createdAt: num(meta.createdAt),

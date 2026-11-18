@@ -317,6 +317,7 @@ export function searchNotes(
     const noteTagsStr = note.tags.join(' ');
     const projName = projectMap.get(note.projectId || 'default')?.name || '';
     const attachmentNames = (note.attachments || []).map((a) => a.name).join(' ');
+    const commentsText = (note.comments || []).map((c) => c.content).join(' ');
 
     for (const token of parsed.tokens) {
       let tokenMatched = false;
@@ -351,6 +352,12 @@ export function searchNotes(
       // (4) 첨부파일 이름 검사
       if (attachmentNames && matchTextOrChoseong(attachmentNames, token)) {
         score += 25;
+        tokenMatched = true;
+      }
+
+      // (4.5) 댓글 내용 검사
+      if (commentsText && matchTextOrChoseong(commentsText, token)) {
+        score += 18;
         tokenMatched = true;
       }
 

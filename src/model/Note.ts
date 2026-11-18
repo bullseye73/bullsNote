@@ -340,6 +340,17 @@ export interface GoogleTaskLink {
   completed: boolean;
 }
 
+export interface NoteComment {
+  id: string;
+  content: string;
+  author?: string;
+  /** 상위 댓글 ID (최상위 댓글이면 null/undefined) */
+  parentId?: string | null;
+  resolved?: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface Note {
   id: string;
   title: string;
@@ -361,6 +372,8 @@ export interface Note {
   history: NoteSnapshot[];
   /** 첨부 파일 목록 (Google Drive Storage 등) */
   attachments?: NoteAttachment[];
+  /** 노트 댓글 목록 */
+  comments?: NoteComment[];
   /** 할일 관리 메타데이터 (할일 항목일 경우) */
   todoMeta?: TodoMeta;
   /** 시스템 관리 상위 그룹 여부 ('todo' | 'doing' | 'done' | 'drop') */
@@ -379,6 +392,26 @@ export function createNoteId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
+export function createCommentId(): string {
+  return `cmt-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+/** 댓글과 그 하위 댓글(대댓글)을 함께 제거 */
+export function removeCommentWithReplies(comments: NoteComment[], targetId: string): NoteComment[] {
+  const doomed = new Set<string>([targetId]);
+  let added = true;
+  while (added) {
+    added = false;
+    for (const c of comments) {
+      if (c.parentId && doomed.has(c.parentId) && !doomed.has(c.id)) {
+        doomed.add(c.id);
+        added = true;
+      }
+    }
+  }
+  return comments.filter((c) => !doomed.has(c.id));
+}
+
 export function createEmptyNote(partial?: Partial<Note>): Note {
   const now = Date.now();
   return {
@@ -394,6 +427,7 @@ export function createEmptyNote(partial?: Partial<Note>): Note {
     parentId: null,
     history: [],
     attachments: [],
+    comments: [],
     createdAt: now,
     updatedAt: now,
     ...partial,

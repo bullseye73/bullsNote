@@ -15,10 +15,12 @@ import {
   buildTree,
   canSetProjectParent,
   computeNextReminderTime,
+  createCommentId,
   createEmptyNote,
   createProjectId,
   getDescendantIds,
   getProjectDescendantIds,
+  removeCommentWithReplies,
   TreeNode,
   SortOption,
   compareProjects,
@@ -214,6 +216,10 @@ export interface NotesActions {
   closeAlarmModal(): void;
   togglePin(id: string): void;
   toggleFavorite(id: string): void;
+  addComment(noteId: string, content: string, author?: string, parentId?: string | null): void;
+  updateComment(noteId: string, commentId: string, content: string): void;
+  deleteComment(noteId: string, commentId: string): void;
+  toggleCommentResolved(noteId: string, commentId: string): void;
   setParent(id: string, parentId: string | null): void;
   indent(id: string): void;
   outdent(id: string): void;
@@ -746,6 +752,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
                 favorite: parsed.favorite,
                 parentId: parsed.parentId,
                 attachments: parsed.attachments,
+                comments: parsed.comments,
                 todoMeta: parsed.todoMeta,
                 systemGroupType: parsed.systemGroupType,
                 syncedAt: GoogleDriveService.getNoteSyncedAt(parsed.id) ?? undefined,
@@ -947,6 +954,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
                 favorite: parsed.favorite,
                 parentId: parsed.parentId,
                 attachments: parsed.attachments,
+                comments: parsed.comments,
                 todoMeta: parsed.todoMeta,
                 systemGroupType: parsed.systemGroupType,
                 syncedAt: GoogleDriveService.getNoteSyncedAt(parsed.id) ?? undefined,
@@ -985,6 +993,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
                       favorite: parsed.favorite,
                       parentId: parsed.parentId,
                       attachments: parsed.attachments ?? n.attachments,
+                      comments: parsed.comments ?? n.comments,
                       todoMeta: parsed.todoMeta ?? n.todoMeta,
                       systemGroupType: parsed.systemGroupType ?? n.systemGroupType,
                       updatedAt: parsed.updatedAt,
@@ -1739,6 +1748,93 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         if (isSystemGroupNote(n)) return n;
         return { ...n, favorite: !n.favorite };
       }),
+    [mutate],
+  );
+
+  const addComment = useCallback(
+    (noteId: string, content: string, author?: string, parentId?: string | null) => {
+      const trimmed = content.trim();
+      if (!trimmed) return;
+      const now = Date.now();
+      const authorName = (author || googleConfig.user?.name || '나').trim() || '나';
+      mutate(noteId, (n) => {
+        if (isSystemGroupNote(n)) return n;
+        const existing = n.comments || [];
+        // 하위 댓글은 최상위 부모 댓글에 연결해 1단계 스레드 구조를 유지
+        let resolvedParentId: string | null = null;
+        if (parentId) {
+          const targetParent = existing.find((c) => c.id === parentId);
+          if (targetParent) {
+            resolvedParentId = targetParent.parentId || targetParent.id;
+          }
+        }
+        const nextComments = [
+          ...existing,
+          {
+            id: createCommentId(),
+            content: trimmed,
+            author: authorName,
+            ...(resolvedParentId ? { parentId: resolvedParentId } : {}),
+            resolved: false,
+            createdAt: now,
+            updatedAt: now,
+          },
+        ];
+        return { ...n, comments: nextComments };
+      });
+    },
+    [mutate, googleConfig.user?.name],
+  );
+
+  const updateComment = useCallback(
+    (noteId: string, commentId: string, content: string) => {
+      const trimmed = content.trim();
+      if (!trimmed) return;
+      const now = Date.now();
+      mutate(noteId, (n) => {
+        if (isSystemGroupNote(n)) return n;
+        const comments = n.comments || [];
+        if (!comments.some((c) => c.id === commentId)) return n;
+        return {
+          ...n,
+          comments: comments.map((c) =>
+            c.id === commentId ? { ...c, content: trimmed, updatedAt: now } : c,
+          ),
+        };
+      });
+    },
+    [mutate],
+  );
+
+  const deleteComment = useCallback(
+    (noteId: string, commentId: string) => {
+      mutate(noteId, (n) => {
+        if (isSystemGroupNote(n)) return n;
+        const comments = n.comments || [];
+        if (!comments.some((c) => c.id === commentId)) return n;
+        return {
+          ...n,
+          comments: removeCommentWithReplies(comments, commentId),
+        };
+      });
+    },
+    [mutate],
+  );
+
+  const toggleCommentResolved = useCallback(
+    (noteId: string, commentId: string) => {
+      mutate(noteId, (n) => {
+        if (isSystemGroupNote(n)) return n;
+        const comments = n.comments || [];
+        if (!comments.some((c) => c.id === commentId)) return n;
+        return {
+          ...n,
+          comments: comments.map((c) =>
+            c.id === commentId ? { ...c, resolved: !c.resolved } : c,
+          ),
+        };
+      });
+    },
     [mutate],
   );
 
@@ -3050,6 +3146,10 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       closeAlarmModal,
       togglePin,
       toggleFavorite,
+      addComment,
+      updateComment,
+      deleteComment,
+      toggleCommentResolved,
       setParent,
       indent,
       outdent,
@@ -3161,6 +3261,10 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       closeAlarmModal,
       togglePin,
       toggleFavorite,
+      addComment,
+      updateComment,
+      deleteComment,
+      toggleCommentResolved,
       setParent,
       indent,
       outdent,

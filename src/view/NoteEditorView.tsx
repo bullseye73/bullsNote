@@ -34,6 +34,7 @@ import {
   IconHistory,
   IconLockOpen,
   IconMarkdown,
+  IconMessageCircle,
   IconPalette,
   IconPin,
   IconPrinter,
@@ -98,6 +99,7 @@ import { AiActionType } from '../model/GeminiService';
 import { SHORTCUTS } from '../model/shortcutUtils';
 import { NoteBacklinksView } from './NoteBacklinksView';
 import { NoteAttachmentsView } from './NoteAttachmentsView';
+import { NoteCommentsView } from './NoteCommentsView';
 import { GoogleDriveService } from '../model/GoogleDriveService';
 import { createSyntaxExtension, getAppSchema } from '../model/codeHighlight';
 import {
@@ -141,6 +143,8 @@ function BlockEditor({
   compact = false,
   embedded = false,
   onScrollContainerReady,
+  commentFocusSignal = 0,
+  isNoteLocked = false,
 }: {
   note: Note;
   backlinks: Note[];
@@ -151,6 +155,8 @@ function BlockEditor({
   compact?: boolean;
   /** 본문 스크롤 컨테이너를 상위(헤더 숨김·목차 시트)에 전달 */
   onScrollContainerReady?: (el: HTMLDivElement | null) => void;
+  commentFocusSignal?: number;
+  isNoteLocked?: boolean;
 }) {
   const {
     updateContent,
@@ -1330,6 +1336,14 @@ function BlockEditor({
                   onSelectNote={select}
                 />
               )}
+
+              {/* 노트 댓글 패널 */}
+              <NoteCommentsView
+                note={note}
+                compact={compact}
+                disabled={isNoteLocked}
+                focusSignal={commentFocusSignal}
+              />
             </Stack>
           </div>
           )}
@@ -1400,6 +1414,7 @@ export function NoteEditorView({
     previous: NoteSnapshot | null;
   } | null>(null);
   const [printPreviewOpen, setPrintPreviewOpen] = useState(false);
+  const [commentFocusSignal, setCommentFocusSignal] = useState(0);
   const [currentEditor, setCurrentEditor] = useState<AnyEditor | null>(null);
   const [editorScrollEl, setEditorScrollEl] = useState<HTMLDivElement | null>(null);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
@@ -1898,6 +1913,38 @@ export function NoteEditorView({
                 히스토리
               </Button>
             )}
+            {isCompact ? (
+              <Tooltip label={`댓글 (${selected.comments?.length ?? 0})`}>
+                <ActionIcon
+                  size="lg"
+                  variant={(selected.comments?.length ?? 0) > 0 ? 'light' : 'subtle'}
+                  color={(selected.comments?.length ?? 0) > 0 ? 'teal' : 'gray'}
+                  onClick={() => setCommentFocusSignal((s) => s + 1)}
+                  aria-label="댓글"
+                >
+                  <IconMessageCircle size={17} />
+                </ActionIcon>
+              </Tooltip>
+            ) : (
+              <Button
+                size="xs"
+                variant="light"
+                color={(selected.comments?.length ?? 0) > 0 ? 'teal' : 'gray'}
+                leftSection={<IconMessageCircle size={15} />}
+                rightSection={
+                  <Badge
+                    size="xs"
+                    variant="filled"
+                    color={(selected.comments?.length ?? 0) > 0 ? 'teal' : 'gray'}
+                  >
+                    {selected.comments?.length ?? 0}
+                  </Badge>
+                }
+                onClick={() => setCommentFocusSignal((s) => s + 1)}
+              >
+                댓글
+              </Button>
+            )}
             <Divider orientation="vertical" color="var(--bn-border-subtle)" />
             <Tooltip label={isNoteLocked ? '잠긴 상태에서는 변경할 수 없습니다' : (selected.pinned ? '핀 해제' : '상단 고정')}>
               <ActionIcon
@@ -2082,6 +2129,8 @@ export function NoteEditorView({
               onEditorInit={setCurrentEditor}
               compact={isCompact}
               onScrollContainerReady={setEditorScrollEl}
+              commentFocusSignal={commentFocusSignal}
+              isNoteLocked={isNoteLocked}
             />
           </ErrorBoundary>
         </div>
