@@ -6,7 +6,7 @@ Windows · macOS · Linux 데스크톱 앱과 iPhone · iPad · Android에서 �
 
 ![오늘 화면](docs/images/today.jpg)
 
-- **버전:** 2.0.2
+- **버전:** 2.0.3
 - **플랫폼:** Windows · macOS · Linux · PWA
 - **스택:** Electron, React 18, TypeScript, Vite
 - **라이선스:** [MIT](LICENSE)
