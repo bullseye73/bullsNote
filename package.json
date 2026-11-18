@@ -13,8 +13,6 @@
   },
   "main": "electron/main.js",
   "scripts": {
-    "predev": "node scripts/sync-version.mjs",
-    "prebuild": "node scripts/sync-version.mjs",
     "dev": "concurrently -k \"vite\" \"wait-on http://localhost:5190 && electron .\"",
     "dev:browser": "vite --host",
     "dev:pwa": "vite --host",
@@ -26,7 +24,8 @@
     "dist:win": "npm run build && electron-builder --win",
     "dist:linux": "npm run build && electron-builder --linux",
     "dist:mac": "npm run build && electron-builder --mac",
-    "test": "vitest run"
+    "test": "vitest run",
+    "preversion": "npm test && npm run build"
   },
   "devDependencies": {
     "@blocknote/ariakit": "0.55.0",
