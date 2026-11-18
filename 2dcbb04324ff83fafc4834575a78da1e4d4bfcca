@@ -1,0 +1,31 @@
+# [코드리뷰][bullsNote] build: npm version 사전 검증 워크플로우(preversion) 설정 및 scripts 정리 (2dcbb04)
+
+- **저장소**: `bullsNote`
+- **커밋**: `2dcbb04`
+- **작성자**: Jeong Chang-Hun
+- **일시**: 2026-11-18 15:19:57
+
+---
+
+### 1. 변경 요약
+`npm version` 명령 실행 전 테스트와 빌드를 필수 검증 단계로 강제하는 `preversion` 라이프사이클 스크립트를 추가했습니다. 이와 함께 기존 `dev` 및 `build` 실행 전에 매번 동작하던 `predev`, `prebuild`의 `sync-version.mjs` 호출 스크립트를 제거하여 빌드 구성을 정리했습니다.
+
+---
+
+### 2. 모범 사례 / 장점
+- **릴리스 품질 게이트 자동화**: `preversion` 훅에 `npm test && npm run build`를 설정하여, 테스트를 통과하지 못하거나 빌드가 깨진 상태에서 버전 태그 및 릴리스 커밋이 생성되는 실수를 방지했습니다.
+- **npm 표준 라이프사이클 활용**: 별도 외부 스크립트나 수동 가이드 대신 npm의 내장 훅(`preversion`)을 활용해 개발자 경험(DX)을 해치지 않고 검증 과정을 표준화했습니다.
+- **불필요한 실행 오버헤드 감소**: 매 `dev` 및 `build`마다 실행되던 버전 동기화 단계를 제거하여 개발 루프 진입 및 일반 빌드 실행 시간을 단축했습니다.
+
+---
+
+### 3. 개선 제안 / 주의점
+- **`sync-version.mjs` 실행 시점 점검**:
+  `predev`와 `prebuild`에서 제거된 `sync-version.mjs`(예: Electron 메타데이터, package.json 등 간의 버전 동기화)가 이제 어느 시점에 호출되어야 하는지 확인이 필요합니다. 버전이 변경될 때 자동으로 동기화되어 커밋에 포함되어야 한다면, `version` 라이프사이클 훅(예: `"version": "node scripts/sync-version.mjs && git add -A"`)으로 연동하는 것을 권장합니다.
+- **정적 검증(Type Check / Lint) 누락 여부**:
+  `test`가 단위 테스트만 수행한다면, 릴리스 전 타입 에러나 린트 위반을 잡기 위해 `npm run lint` 또는 `tsc --noEmit` 같은 정적 검증 단계를 `preversion` 파이프라인에 포함하는 것도 고려해 볼 수 있습니다.
+
+---
+
+### 4. 한 줄 총평
+표준 npm 라이프사이클을 통해 안정적인 릴리스 게이트를 구축한 좋은 변경이며, 기존 버전 동기화 로직(`sync-version.mjs`)의 대체 트리거 시점만 명확히 보완하면 더욱 견고해질 것입니다.
