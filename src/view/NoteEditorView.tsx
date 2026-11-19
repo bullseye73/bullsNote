@@ -27,6 +27,7 @@ import {
   IconCode,
   IconCopy,
   IconDownload,
+  IconExternalLink,
   IconEye,
   IconFileTypePdf,
   IconGitCompare,
@@ -170,6 +171,9 @@ function BlockEditor({
     searchTokens,
     setSearch,
     changeTodoStatus,
+    todoStatusOrder,
+    todoStatusLabels,
+    customTodoStatuses,
     createTodosFromChecklist,
     updateTaskSchedule,
     openPlannerView,
@@ -881,19 +885,25 @@ function BlockEditor({
                   상태 변경:
                 </Text>
                 <Group gap={6}>
-                  {TODO_GROUPS.map((g) => {
+                  {todoStatusOrder.map((status) => {
+                    const builtinGroup = TODO_GROUPS.find((g) => g.status === status);
+                    const customStatus = customTodoStatuses.find((s) => s.id === status);
                     const currentStatus: TodoStatus = getEffectiveTodoStatus(note, notes);
-                    const isCurrent = currentStatus === g.status;
+                    const isCurrent = currentStatus === status;
+                    const label = builtinGroup
+                      ? builtinGroup.title
+                      : todoStatusLabels[status] || customStatus?.label || status;
+                    const color = builtinGroup?.color || customStatus?.color || 'violet';
                     return (
                       <Chip
-                        key={g.status}
+                        key={status}
                         size="xs"
                         checked={isCurrent}
-                        color={g.color}
+                        color={color}
                         variant={isCurrent ? 'filled' : 'outline'}
-                        onChange={() => changeTodoStatus(note.id, g.status)}
+                        onChange={() => changeTodoStatus(note.id, status)}
                       >
-                        {g.title}
+                        {label}
                       </Chip>
                     );
                   })}
@@ -1384,14 +1394,17 @@ export function EmbeddedNoteEditor({ noteId }: { noteId: string }) {
 export function NoteEditorView({
   onBackToList,
   isCompact = false,
+  isPopout = false,
 }: {
   onBackToList?: () => void;
   isCompact?: boolean;
+  isPopout?: boolean;
 } = {}) {
   const {
     ready,
     selected,
     select,
+    openNoteInNewWindow,
     notes,
     projects,
     updateTitle,
@@ -1540,8 +1553,15 @@ export function NoteEditorView({
 
   if (!selected || isSystemGroupNote(selected)) {
     return (
-      <Stack align="center" justify="center" h="100%">
-        <Text c="dimmed">노트를 선택하세요.</Text>
+      <Stack align="center" justify="center" h="100%" gap={6}>
+        <Text c="dimmed">
+          {isPopout ? '노트를 찾을 수 없거나 삭제되었습니다.' : '노트를 선택하세요.'}
+        </Text>
+        {isPopout && (
+          <Text size="xs" c="dimmed">
+            이 창을 닫아도 됩니다.
+          </Text>
+        )}
       </Stack>
     );
   }
@@ -1621,7 +1641,7 @@ export function NoteEditorView({
           <>
         <Group justify="space-between" align="center" wrap="nowrap" mb={6}>
           <Group gap={4} wrap="nowrap" style={{ overflow: 'hidden', minWidth: 0, flex: 1 }}>
-            {onBackToList && (
+            {onBackToList && !isPopout && (
               <Button
                 size="compact-xs"
                 variant="light"
@@ -1755,6 +1775,21 @@ export function NoteEditorView({
                   aria-label="인쇄 및 미리보기"
                 >
                   <IconPrinter size={17} />
+                </ActionIcon>
+              </Tooltip>
+            )}
+
+            {/* 새 창에서 편집 버튼 */}
+            {!isPopout && (
+              <Tooltip label="새 창에서 편집">
+                <ActionIcon
+                  size="lg"
+                  variant="light"
+                  color="gray"
+                  onClick={() => openNoteInNewWindow(selected.id)}
+                  aria-label="새 창에서 편집"
+                >
+                  <IconExternalLink size={17} />
                 </ActionIcon>
               </Tooltip>
             )}

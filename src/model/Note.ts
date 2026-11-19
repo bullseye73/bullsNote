@@ -306,7 +306,9 @@ export interface NoteAttachment {
   createdAt: number;
 }
 
-export type TodoStatus = 'todo' | 'doing' | 'done' | 'drop';
+export type BuiltinTodoStatus = 'todo' | 'doing' | 'done' | 'drop';
+
+export type TodoStatus = BuiltinTodoStatus | (string & {});
 
 export interface TodoMeta {
   sourceNoteId?: string;

@@ -1,5 +1,5 @@
 // MODEL: 할일관리(Todo) 프로젝트 및 상위 그룹(To Do, Doing, Done, Drop) 비즈니스 로직
-import { Note, Project, TodoMeta, TodoStatus, createEmptyNote, getDescendantIds } from './Note';
+import { BuiltinTodoStatus, Note, Project, TodoMeta, TodoStatus, createEmptyNote, getDescendantIds } from './Note';
 import { formatDateTimeIso } from './dateUtils';
 import { parseBlocks } from './HashtagService';
 
@@ -19,6 +19,124 @@ export interface TodoGroupConfig {
   icon: string;
   color: string;
   description: string;
+}
+
+export type CustomTodoStatus = {
+  id: string;
+  label: string;
+  color?: string;
+};
+
+export const BUILTIN_TODO_STATUSES: BuiltinTodoStatus[] = ['todo', 'doing', 'done', 'drop'];
+
+export type TodoStatusLabels = Record<string, string>;
+
+export const TODO_STATUS_ORDER: TodoStatus[] = [...BUILTIN_TODO_STATUSES];
+
+export const DEFAULT_TODO_STATUS_LABELS: Record<BuiltinTodoStatus, string> = {
+  todo: '대기',
+  doing: '진행 중',
+  done: '완료',
+  drop: '중단',
+};
+
+export const TODO_STATUS_LABELS_STORAGE_KEY = 'bullsnote.todoStatusLabels.v1';
+export const CUSTOM_TODO_STATUSES_STORAGE_KEY = 'bullsnote.customTodoStatuses.v1';
+const MAX_TODO_STATUS_LABEL_LENGTH = 24;
+
+export function isBuiltinTodoStatus(status: string): status is BuiltinTodoStatus {
+  return (BUILTIN_TODO_STATUSES as readonly string[]).includes(status);
+}
+
+export function createCustomStatusId(): string {
+  return `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
+}
+
+export function normalizeCustomTodoStatuses(raw: unknown): CustomTodoStatus[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const result: CustomTodoStatus[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const rec = item as Record<string, unknown>;
+    if (typeof rec.id !== 'string' || typeof rec.label !== 'string') continue;
+    const id = rec.id.trim();
+    if (!id || isBuiltinTodoStatus(id) || seen.has(id)) continue;
+    const label = rec.label.trim().slice(0, MAX_TODO_STATUS_LABEL_LENGTH);
+    if (!label) continue;
+    seen.add(id);
+    const color =
+      typeof rec.color === 'string' && rec.color.trim() ? rec.color.trim() : undefined;
+    result.push(color ? { id, label, color } : { id, label });
+  }
+  return result;
+}
+
+export function loadCustomTodoStatuses(): CustomTodoStatus[] {
+  try {
+    if (typeof localStorage === 'undefined') {
+      return [];
+    }
+    const raw = localStorage.getItem(CUSTOM_TODO_STATUSES_STORAGE_KEY);
+    if (!raw) return [];
+    return normalizeCustomTodoStatuses(JSON.parse(raw));
+  } catch {
+    return [];
+  }
+}
+
+export function saveCustomTodoStatuses(list: CustomTodoStatus[]): void {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem(
+      CUSTOM_TODO_STATUSES_STORAGE_KEY,
+      JSON.stringify(normalizeCustomTodoStatuses(list))
+    );
+  } catch {
+    /* ignore */
+  }
+}
+
+export function normalizeTodoStatusLabels(raw: unknown): TodoStatusLabels {
+  const next: TodoStatusLabels = { ...DEFAULT_TODO_STATUS_LABELS };
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return next;
+  const record = raw as Record<string, unknown>;
+  for (const [status, value] of Object.entries(record)) {
+    const key = status.trim();
+    if (!key) continue;
+    if (typeof value === 'string') {
+      const trimmed = value.trim().slice(0, MAX_TODO_STATUS_LABEL_LENGTH);
+      if (trimmed) {
+        next[key] = trimmed;
+      }
+    }
+  }
+  return next;
+}
+
+export function loadTodoStatusLabels(): TodoStatusLabels {
+  try {
+    if (typeof localStorage === 'undefined') {
+      return { ...DEFAULT_TODO_STATUS_LABELS };
+    }
+    const raw = localStorage.getItem(TODO_STATUS_LABELS_STORAGE_KEY);
+    if (!raw) return { ...DEFAULT_TODO_STATUS_LABELS };
+    return normalizeTodoStatusLabels(JSON.parse(raw));
+  } catch {
+    return { ...DEFAULT_TODO_STATUS_LABELS };
+  }
+}
+
+export function saveTodoStatusLabels(labels: TodoStatusLabels): void {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem(
+      TODO_STATUS_LABELS_STORAGE_KEY,
+      JSON.stringify(normalizeTodoStatusLabels(labels))
+    );
+  } catch {
+    /* ignore */
+  }
 }
 
 export const TODO_GROUPS: TodoGroupConfig[] = [
@@ -56,7 +174,7 @@ export const TODO_GROUPS: TodoGroupConfig[] = [
   },
 ];
 
-export const STATUS_TO_GROUP_ID: Record<TodoStatus, string> = {
+export const STATUS_TO_GROUP_ID: Record<string, string> = {
   todo: TODO_GROUP_TODO_ID,
   doing: TODO_GROUP_DOING_ID,
   done: TODO_GROUP_DONE_ID,
@@ -641,7 +759,7 @@ export function createTodoNotes(
           ? parentTodoId
           : hasCustomTodoParent
           ? matchedExisting.parentId
-          : STATUS_TO_GROUP_ID[nextStatus];
+          : STATUS_TO_GROUP_ID[nextStatus] ?? TODO_GROUP_TODO_ID;
 
       const candidateContent = buildTodoNoteContent(
         sourceNote,
@@ -674,7 +792,7 @@ export function createTodoNotes(
           tags: Array.from(
             new Set([
               ...(matchedExisting.tags || []).filter(
-                (t) => !['todo', 'doing', 'done', 'drop'].includes(t)
+                (t) => !isBuiltinTodoStatus(t) && t !== matchedExisting.todoMeta?.status
               ),
               '할일',
               nextStatus,
@@ -751,9 +869,9 @@ export function syncTodoStatusToSourceNote(
 ): { updatedNotes: Note[]; sourceUpdated: boolean; changedNoteIds: string[] } {
   const now = Date.now();
   const nowStr = formatDateTimeIso(new Date(now));
-  const targetGroupId = STATUS_TO_GROUP_ID[newStatus];
+  const targetGroupId = STATUS_TO_GROUP_ID[newStatus] ?? TODO_GROUP_TODO_ID;
   const targetGroup = TODO_GROUPS.find((g) => g.status === newStatus);
-  const statusColor = targetGroup?.color || 'blue';
+  const statusColor = targetGroup?.color || (isBuiltinTodoStatus(newStatus) ? 'blue' : 'violet');
 
   const descendantIds = getDescendantIds(allNotes, todoNote.id);
   const targetTodoNotes = allNotes.filter(
@@ -801,7 +919,9 @@ export function syncTodoStatusToSourceNote(
       color: statusColor,
       tags: Array.from(
         new Set([
-          ...(itemNote.tags || []).filter((t) => !['todo', 'doing', 'done', 'drop'].includes(t)),
+          ...(itemNote.tags || []).filter(
+            (t) => !isBuiltinTodoStatus(t) && t !== itemNote.todoMeta?.status
+          ),
           newStatus,
         ])
       ),
@@ -1024,7 +1144,7 @@ export function syncSourceChecklistToTodoNotes(
           ? parentTodoId
           : hasCustomTodoParent
           ? matchedTodo.parentId
-          : STATUS_TO_GROUP_ID[nextStatus];
+          : STATUS_TO_GROUP_ID[nextStatus] ?? TODO_GROUP_TODO_ID;
 
       const targetGroup = TODO_GROUPS.find((g) => g.status === nextStatus);
       const nextColor = targetGroup?.color || matchedTodo.color || 'blue';
@@ -1056,7 +1176,9 @@ export function syncSourceChecklistToTodoNotes(
           content: contentChanged ? candidateContent : matchedTodo.content,
           tags: Array.from(
             new Set([
-              ...(matchedTodo.tags || []).filter((t) => !['todo', 'doing', 'done', 'drop'].includes(t)),
+              ...(matchedTodo.tags || []).filter(
+                (t) => !isBuiltinTodoStatus(t) && t !== matchedTodo.todoMeta?.status
+              ),
               '할일',
               nextStatus,
             ])

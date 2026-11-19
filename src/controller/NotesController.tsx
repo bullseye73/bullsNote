@@ -32,6 +32,20 @@ import {
   TODO_PROJECT_ID,
   TODO_GROUP_TODO_ID,
   ExtractedChecklistItem,
+  CustomTodoStatus,
+  BUILTIN_TODO_STATUSES,
+  CUSTOM_TODO_STATUSES_STORAGE_KEY,
+  createCustomStatusId,
+  isBuiltinTodoStatus,
+  normalizeCustomTodoStatuses,
+  loadCustomTodoStatuses,
+  saveCustomTodoStatuses,
+  TodoStatusLabels,
+  DEFAULT_TODO_STATUS_LABELS,
+  TODO_STATUS_LABELS_STORAGE_KEY,
+  normalizeTodoStatusLabels,
+  loadTodoStatusLabels,
+  saveTodoStatusLabels,
   ensureTodoProjectAndGroups,
   createTodoNotes,
   syncTodoStatusToSourceNote,
@@ -43,6 +57,7 @@ import {
 } from '../model/TodoService';
 import { playChimeSound } from '../model/sound';
 import { NoteRepository, seedNotes } from '../model/NoteRepository';
+import { mergeRemoteWindowNote, parsePopoutParams, removeRemoteWindowNote } from '../model/NoteWindowSync';
 import { extractHashtags, extractHashtagsFromText, isBlocksJson, noteBodyText, parseBlocks } from '../model/HashtagService';
 import {
   parseNoteFile,
@@ -195,6 +210,12 @@ export interface NotesState {
   workspaceView: WorkspaceView;
   /** 할일 화면 보기 방식 */
   todoViewMode: TodoViewMode;
+  /** 칸반 보드 할일 상태 표시 이름 */
+  todoStatusLabels: TodoStatusLabels;
+  /** 사용자 추가 할일 상태 목록 */
+  customTodoStatuses: CustomTodoStatus[];
+  /** 기본 + 사용자 추가 할일 상태 순서 */
+  todoStatusOrder: TodoStatus[];
   /** 빠른 입력 창 열림 여부와 처음 채울 텍스트 */
   quickCaptureOpened: boolean;
   quickCaptureInitialText: string;
@@ -289,8 +310,14 @@ export interface NotesActions {
   openToday(): void;
   openTodos(mode?: TodoViewMode): void;
   setTodoViewMode(mode: TodoViewMode): void;
+  renameTodoStatus(status: TodoStatus, label: string): void;
+  resetTodoStatusLabels(): void;
+  addCustomTodoStatus(label: string): TodoStatus | null;
+  deleteCustomTodoStatus(status: TodoStatus): void;
   /** 노트 화면으로 전환하며 해당 노트를 연다 (검색 결과·출처 노트 링크 등) */
   openNote(id: string): void;
+  /** 독립 창에서 노트를 연다 */
+  openNoteInNewWindow(noteId: string): void;
   openQuickCapture(initialText?: string): void;
   closeQuickCapture(): void;
   updateTaskSchedule(
@@ -340,6 +367,39 @@ function withHistory(note: Note, force = false): Note {
 }
 
 export function NotesProvider({ children }: { children: React.ReactNode }) {
+  const { isPopout: isPopoutWindow, noteId: popoutNoteId } = useMemo(
+    () => parsePopoutParams(typeof window !== 'undefined' ? window.location.search : ''),
+    [],
+  );
+  const senderIdRef = useRef(
+    `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`,
+  );
+  const syncChannelRef = useRef<BroadcastChannel | null>(null);
+
+  const broadcastNoteUpsert = useCallback((note: Note) => {
+    try {
+      syncChannelRef.current?.postMessage({
+        type: 'note-upsert',
+        note,
+        senderId: senderIdRef.current,
+      });
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const broadcastNoteDelete = useCallback((noteId: string) => {
+    try {
+      syncChannelRef.current?.postMessage({
+        type: 'note-delete',
+        noteId,
+        senderId: senderIdRef.current,
+      });
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   const [projects, setProjects] = useState<Project[]>(() => {
     const list = NoteRepository.loadProjects();
     const loadedNotes = NoteRepository.load();
@@ -414,6 +474,83 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   // 앱을 열면 오늘 대시보드부터 (스펙 1장 성공 기준)
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView>('today');
   const [todoViewMode, setTodoViewModeState] = useState<TodoViewMode>(loadTodoViewMode);
+  const [todoStatusLabels, setTodoStatusLabels] = useState<TodoStatusLabels>(() => loadTodoStatusLabels());
+  const [customTodoStatuses, setCustomTodoStatuses] = useState<CustomTodoStatus[]>(() => loadCustomTodoStatuses());
+  const todoStatusOrder = useMemo<TodoStatus[]>(
+    () => [...BUILTIN_TODO_STATUSES, ...customTodoStatuses.map((s) => s.id)],
+    [customTodoStatuses]
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === TODO_STATUS_LABELS_STORAGE_KEY) {
+        if (!e.newValue) {
+          setTodoStatusLabels({ ...DEFAULT_TODO_STATUS_LABELS });
+          return;
+        }
+        try {
+          setTodoStatusLabels(normalizeTodoStatusLabels(JSON.parse(e.newValue)));
+        } catch {
+          setTodoStatusLabels({ ...DEFAULT_TODO_STATUS_LABELS });
+        }
+      } else if (e.key === CUSTOM_TODO_STATUSES_STORAGE_KEY) {
+        if (!e.newValue) {
+          setCustomTodoStatuses([]);
+          return;
+        }
+        try {
+          setCustomTodoStatuses(normalizeCustomTodoStatuses(JSON.parse(e.newValue)));
+        } catch {
+          setCustomTodoStatuses([]);
+        }
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, []);
+
+  const renameTodoStatus = useCallback((status: TodoStatus, label: string) => {
+    const trimmed = label.trim().slice(0, 24);
+    if (!trimmed) return;
+    setTodoStatusLabels((prev) => {
+      if (prev[status] === trimmed) return prev;
+      const next: TodoStatusLabels = { ...prev, [status]: trimmed };
+      saveTodoStatusLabels(next);
+      return next;
+    });
+  }, []);
+
+  const resetTodoStatusLabels = useCallback(() => {
+    setTodoStatusLabels((prev) => {
+      const next: TodoStatusLabels = { ...DEFAULT_TODO_STATUS_LABELS };
+      for (const [k, v] of Object.entries(prev)) {
+        if (!isBuiltinTodoStatus(k) && typeof v === 'string' && v.trim()) {
+          next[k] = v;
+        }
+      }
+      saveTodoStatusLabels(next);
+      return next;
+    });
+  }, []);
+
+  const addCustomTodoStatus = useCallback((label: string): TodoStatus | null => {
+    const trimmed = label.trim().slice(0, 24);
+    if (!trimmed) return null;
+    const id = createCustomStatusId();
+    const newStatus: CustomTodoStatus = { id, label: trimmed, color: 'violet' };
+    setCustomTodoStatuses((prev) => {
+      const next = [...prev, newStatus];
+      saveCustomTodoStatuses(next);
+      return next;
+    });
+    setTodoStatusLabels((prev) => {
+      const next: TodoStatusLabels = { ...prev, [id]: trimmed };
+      saveTodoStatusLabels(next);
+      return next;
+    });
+    return id;
+  }, []);
   /** 기존 플래너 화면 = 할일 화면의 타임라인 보기 (모바일·기존 호출부 호환용 파생값) */
   const plannerViewActive = workspaceView === 'todos' && todoViewMode === 'timeline';
   const [quickCaptureOpened, setQuickCaptureOpened] = useState(false);
@@ -501,9 +638,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     [noteSortOption],
   );
 
-  // 주기적으로 알람 감지 (5초 주기)
+  // 주기적으로 알람 감지 (5초 주기) — 독립 창에서는 중복 알람 방지
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || isPopoutWindow) return;
 
     const checkAlarms = () => {
       const now = Date.now();
@@ -574,6 +711,55 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const lastSidecarRef = useRef<{ projects: unknown; histories: Map<string, unknown> } | null>(null);
   /** 볼트 저장 직렬화 체인 (저장 작업이 겹쳐 실행되지 않도록) */
   const saveChainRef = useRef<Promise<void>>(Promise.resolve());
+
+  // 창 간 실시간 동기화 (BroadcastChannel)
+  useEffect(() => {
+    if (typeof BroadcastChannel === 'undefined') return;
+    const channel = new BroadcastChannel('bullsnote-sync-v1');
+    syncChannelRef.current = channel;
+    const mySenderId = senderIdRef.current;
+
+    channel.onmessage = (event: MessageEvent) => {
+      const data = event.data;
+      if (!data || typeof data !== 'object' || data.senderId === mySenderId) return;
+
+      if (data.type === 'note-upsert' && data.note) {
+        const incoming = data.note as Note;
+        setNotes((prev) => {
+          const merged = mergeRemoteWindowNote(prev, incoming);
+          if (!merged.changed || !merged.appliedNote) return prev;
+          lastProcessedNoteRef.current.set(incoming.id, merged.appliedNote);
+          lastWrittenRef.current.set(incoming.id, Date.now() + 5000);
+          return merged.notes;
+        });
+        setExternalChange((cur) => (cur?.noteId === incoming.id ? null : cur));
+      } else if (data.type === 'note-delete' && typeof data.noteId === 'string') {
+        const deletedId = data.noteId;
+        setNotes((prev) => {
+          const res = removeRemoteWindowNote(prev, deletedId);
+          return res.changed ? res.notes : prev;
+        });
+        lastProcessedNoteRef.current.delete(deletedId);
+        lastSavedRef.current.delete(deletedId);
+        lastWrittenRef.current.delete(deletedId);
+      }
+    };
+
+    return () => {
+      syncChannelRef.current = null;
+      channel.close();
+    };
+  }, []);
+
+  // 독립 창(popout) 모드: ready 완료 시 대상 노트를 selectedId로 고정
+  useEffect(() => {
+    if (!ready || !isPopoutWindow || !popoutNoteId) return;
+    setSelectedId(popoutNoteId);
+    const target = notesRef.current.find((n) => n.id === popoutNoteId);
+    if (target) {
+      setSelectedProjectId(target.projectId || DEFAULT_PROJECT_ID);
+    }
+  }, [ready, isPopoutWindow, popoutNoteId]);
 
   const doLocalSave = useCallback(
     async (currentNotes: Note[], seq: number) => {
@@ -1002,6 +1188,12 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
               ),
             );
           if (selectedIdRef.current === f.id) {
+            const currentInMem = notesRef.current.find((n) => n.id === f.id);
+            if (currentInMem && parsed.updatedAt <= currentInMem.updatedAt) {
+              lastSavedRef.current.set(f.id, text);
+              lastWrittenRef.current.set(f.id, f.mtimeMs);
+              continue;
+            }
             // 동기 confirm()은 응답 전까지 렌더러 전체(저장·알람·동기화)를 정지시키므로 비차단 알림으로 대체
             externalApplyRef.current = () => {
               apply();
@@ -1095,13 +1287,14 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
           if (n.id === id) {
             const updated = { ...fn(n), updatedAt: Date.now() };
             queueNoteSync(updated);
+            broadcastNoteUpsert(updated);
             return updated;
           }
           return n;
         }),
       );
     },
-    [queueNoteSync],
+    [queueNoteSync, broadcastNoteUpsert],
   );
 
   const refreshTags = useCallback((note: Note, title: string, content: string): Note => {
@@ -1140,6 +1333,16 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     },
     [select]
   );
+
+  const openNoteInNewWindow = useCallback((noteId: string) => {
+    if (!noteId || isSystemGroupNote(noteId)) return;
+    if (window.bullsNote?.openNoteWindow) {
+      void window.bullsNote.openNoteWindow(noteId);
+      return;
+    }
+    const url = `${window.location.pathname}?popout=1&noteId=${encodeURIComponent(noteId)}`;
+    window.open(url, `bullsnote-${noteId}`, 'width=960,height=740,noopener');
+  }, []);
 
   const selectedProject = useMemo(
     () => projects.find((p) => p.id === selectedProjectId) ?? projects[0] ?? null,
@@ -1362,13 +1565,14 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
               updatedAt: Date.now(),
             };
             queueNoteSync(updated);
+            broadcastNoteUpsert(updated);
             return updated;
           }
           return n;
         });
       });
     },
-    [queueNoteSync],
+    [queueNoteSync, broadcastNoteUpsert],
   );
 
   const create = useCallback(
@@ -1394,11 +1598,12 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       setNotes((prev) => [n, ...prev]);
       setSelectedId(n.id);
       queueNoteSync(n);
+      broadcastNoteUpsert(n);
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('bullsnote:mobile-open-editor'));
       }
     },
-    [selectedProjectId, notes, queueNoteSync],
+    [selectedProjectId, notes, queueNoteSync, broadcastNoteUpsert],
   );
 
   const duplicate = useCallback(
@@ -1416,10 +1621,11 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
           updatedAt: Date.now(),
         };
         queueNoteSync(copy);
+        broadcastNoteUpsert(copy);
         return [copy, ...prev];
       });
     },
-    [selectedProjectId, queueNoteSync],
+    [selectedProjectId, queueNoteSync, broadcastNoteUpsert],
   );
 
 
@@ -1546,13 +1752,14 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
           GoogleDriveService.recordDeletedNote(doomedId);
         }
         NoteRepository.save(fixed);
+        broadcastNoteDelete(id);
         if (GoogleDriveService.isConnected() && googleConfig.autoSync) {
           queueProjectSync();
         }
         return fixed;
       });
     },
-    [selectedId, selectedProjectId, googleConfig.autoSync, queueProjectSync],
+    [selectedId, selectedProjectId, googleConfig.autoSync, queueProjectSync, broadcastNoteDelete],
   );
 
   const updateTitle = useCallback(
@@ -1564,13 +1771,14 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
             if (n.title === title) return n;
             const updated = { ...refreshTags(withHistory(n), title, n.content), updatedAt: Date.now() };
             queueNoteSync(updated);
+            broadcastNoteUpsert(updated);
             return updated;
           }
           return n;
         }),
       );
     },
-    [refreshTags, queueNoteSync],
+    [refreshTags, queueNoteSync, broadcastNoteUpsert],
   );
 
   const updateContent = useCallback(
@@ -1583,6 +1791,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
             if (n.content === content) return n;
             const updated = { ...refreshTags(withHistory(n), n.title, content), updatedAt: Date.now() };
             queueNoteSync(updated);
+            broadcastNoteUpsert(updated);
             updatedTarget = updated;
             return updated;
           }
@@ -1597,6 +1806,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
             syncRes.updatedNotes.forEach((n) => {
               if (n.projectId === TODO_PROJECT_ID && n.todoMeta?.sourceNoteId === id) {
                 queueNoteSync(n);
+                broadcastNoteUpsert(n);
                 const prevTodo = prevMap.get(n.id);
                 if (prevTodo && prevTodo.todoMeta?.status !== n.todoMeta?.status && n.reminder) {
                   syncNoteReminderWithCalendar(n, n.reminder.calendarEventId);
@@ -1610,7 +1820,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         return nextList;
       });
     },
-    [refreshTags, queueNoteSync, syncNoteReminderWithCalendar],
+    [refreshTags, queueNoteSync, syncNoteReminderWithCalendar, broadcastNoteUpsert],
   );
 
   const updateColor = useCallback(
@@ -1623,13 +1833,14 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
             if (n.color === color) return n;
             const updated = { ...n, color, updatedAt: Date.now() };
             queueNoteSync(updated);
+            broadcastNoteUpsert(updated);
             return updated;
           }
           return n;
         });
       });
     },
-    [queueNoteSync],
+    [queueNoteSync, broadcastNoteUpsert],
   );
 
   const setReminder = useCallback(
@@ -1656,6 +1867,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
               : null;
             const updated: Note = { ...n, reminder: mergedReminder, updatedAt: Date.now() };
             queueNoteSync(updated);
+            broadcastNoteUpsert(updated);
             syncNoteReminderWithCalendar(updated, prevEventId);
             return updated;
           }
@@ -1663,7 +1875,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         }),
       );
     },
-    [queueNoteSync, syncNoteReminderWithCalendar],
+    [queueNoteSync, syncNoteReminderWithCalendar, broadcastNoteUpsert],
   );
 
   const dismissReminder = useCallback(
@@ -1697,13 +1909,14 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
             };
           }
           queueNoteSync(updated);
+          broadcastNoteUpsert(updated);
           syncNoteReminderWithCalendar(updated, n.reminder.calendarEventId);
           return updated;
         }),
       );
       setActiveAlarmNote((cur) => (cur?.id === id ? null : cur));
     },
-    [queueNoteSync, syncNoteReminderWithCalendar],
+    [queueNoteSync, syncNoteReminderWithCalendar, broadcastNoteUpsert],
   );
 
   const snoozeReminder = useCallback(
@@ -1721,13 +1934,14 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
             updatedAt: Date.now(),
           };
           queueNoteSync(updated);
+          broadcastNoteUpsert(updated);
           syncNoteReminderWithCalendar(updated, n.reminder.calendarEventId);
           return updated;
         }),
       );
       setActiveAlarmNote((cur) => (cur?.id === id ? null : cur));
     },
-    [queueNoteSync, syncNoteReminderWithCalendar],
+    [queueNoteSync, syncNoteReminderWithCalendar, broadcastNoteUpsert],
   );
 
   const closeAlarmModal = useCallback(() => {
@@ -1907,18 +2121,20 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
               updatedAt: Date.now(),
             };
             queueNoteSync(updated);
+            broadcastNoteUpsert(updated);
             return updated;
           }
           if (targetIds && targetIds.has(n.id) && parentColor) {
             const updated = { ...n, color: parentColor, updatedAt: Date.now() };
             queueNoteSync(updated);
+            broadcastNoteUpsert(updated);
             return updated;
           }
           return n;
         });
       });
     },
-    [queueNoteSync, syncNoteReminderWithCalendar],
+    [queueNoteSync, syncNoteReminderWithCalendar, broadcastNoteUpsert],
   );
 
   /** 이전 형제를 부모로 (들여쓰기) */
@@ -1943,13 +2159,14 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
           if (n.id === id) {
             const updated = { ...n, parentId: newParent.id, updatedAt: Date.now() };
             queueNoteSync(updated);
+            broadcastNoteUpsert(updated);
             return updated;
           }
           return n;
         });
       });
     },
-    [queueNoteSync],
+    [queueNoteSync, broadcastNoteUpsert],
   );
 
   /** 부모의 형제로 (내어쓰기) */
@@ -1968,13 +2185,14 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
           if (n.id === id) {
             const updated = { ...n, parentId: grandParent, updatedAt: Date.now() };
             queueNoteSync(updated);
+            broadcastNoteUpsert(updated);
             return updated;
           }
           return n;
         });
       });
     },
-    [queueNoteSync],
+    [queueNoteSync, broadcastNoteUpsert],
   );
 
   /** 히스토리 스냅샷으로 복원 (현재 상태는 강제 저장) */
@@ -1993,11 +2211,12 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
             updatedAt: Date.now(),
           };
           queueNoteSync(updated);
+          broadcastNoteUpsert(updated);
           return updated;
         }),
       );
     },
-    [refreshTags, queueNoteSync],
+    [refreshTags, queueNoteSync, broadcastNoteUpsert],
   );
 
   const exportAll = useCallback(() => {
@@ -2034,7 +2253,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   // 선택된 노트가 현재 프로젝트에 없으면 첫 번째 일반 노트로 동기화 (시스템 그룹 노트 제외)
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || isPopoutWindow) return;
     if (selectedId && isSystemGroupNote(selectedId)) {
       const selectable = currentProjectNotes.filter((n) => !isSystemGroupNote(n));
       setSelectedId(selectable[0]?.id ?? null);
@@ -2061,6 +2280,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     selectedDate,
     search,
     quickFilter,
+    isPopoutWindow,
   ]);
 
   const tagCounts = useMemo(() => {
@@ -2300,16 +2520,16 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   // 앱에서 연결된 할일의 제목·기한·완료 상태가 바뀌면 2초 뒤 Google Tasks에 반영
   useEffect(() => {
-    if (!ready || !googleConnected || !googleConfig.tasksEnabled) return;
+    if (!ready || isPopoutWindow || !googleConnected || !googleConfig.tasksEnabled) return;
     const listIds = googleConfig.tasksListIds || [];
     if (listIds.length === 0 || !hasLocalTaskChanges(notes, listIds)) return;
     const timer = setTimeout(() => void syncGoogleTasks(true), 2000);
     return () => clearTimeout(timer);
-  }, [notes, ready, googleConnected, googleConfig.tasksEnabled, googleConfig.tasksListIds, syncGoogleTasks]);
+  }, [notes, ready, isPopoutWindow, googleConnected, googleConfig.tasksEnabled, googleConfig.tasksListIds, syncGoogleTasks]);
 
   // Google 쪽 변경 가져오기: 시작 시 1회 + 창 포커스 복귀 + 온라인 복귀 + 폴링 주기 (최소 30초 간격)
   useEffect(() => {
-    if (!ready || !googleConnected || !googleConfig.tasksEnabled) return;
+    if (!ready || isPopoutWindow || !googleConnected || !googleConfig.tasksEnabled) return;
     if ((googleConfig.tasksListIds || []).length === 0) return;
 
     const pull = () => {
@@ -2382,19 +2602,19 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     setSyncError(null);
   }, []);
 
-  // Google Drive 최초 기동 시 1회만 클라우드 데이터와 양방향 동기화
+  // Google Drive 최초 기동 시 1회만 클라우드 데이터와 양방향 동기화 (독립 창 제외)
   const initialGoogleSyncedRef = useRef(false);
   useEffect(() => {
-    if (!ready || initialGoogleSyncedRef.current) return;
+    if (!ready || isPopoutWindow || initialGoogleSyncedRef.current) return;
     if (googleConfig.enabled && GoogleDriveService.isConnected()) {
       initialGoogleSyncedRef.current = true;
       void syncWithGoogleDrive(true);
     }
-  }, [ready, googleConfig.enabled, syncWithGoogleDrive]);
+  }, [ready, isPopoutWindow, googleConfig.enabled, syncWithGoogleDrive]);
 
-  // --- Google Drive 다중 기기 자동 동기화 트리거 및 사용자 설정 주기별 폴링 ---
+  // --- Google Drive 다중 기기 자동 동기화 트리거 및 사용자 설정 주기별 폴링 (독립 창 제외) ---
   useEffect(() => {
-    if (!ready || !googleConnected || !googleConfig.autoSync) return;
+    if (!ready || isPopoutWindow || !googleConnected || !googleConfig.autoSync) return;
 
     // 1. 창 포커스 복귀 시
     const onFocus = async () => {
@@ -2443,7 +2663,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       document.removeEventListener('visibilitychange', onVisibilityChange);
       window.removeEventListener('online', onOnline);
     };
-  }, [ready, googleConnected, googleConfig.autoSync, googleConfig.pollingIntervalMs, syncWithGoogleDrive]);
+  }, [ready, isPopoutWindow, googleConnected, googleConfig.autoSync, googleConfig.pollingIntervalMs, syncWithGoogleDrive]);
 
   const [googleSyncModalOpened, setGoogleSyncModalOpened] = useState(false);
   const openGoogleSyncModal = useCallback(() => setGoogleSyncModalOpened(true), []);
@@ -2515,9 +2735,10 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       });
       setNotes((prev) => [n, ...prev]);
       queueNoteSync(n);
+      broadcastNoteUpsert(n);
       return n.id;
     },
-    [projects, queueNoteSync]
+    [projects, queueNoteSync, broadcastNoteUpsert]
   );
 
   const createNoteFromGemini = useCallback(
@@ -2570,6 +2791,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
       setNotes((prev) => [newNote, ...prev]);
       queueNoteSync(newNote);
+      broadcastNoteUpsert(newNote);
 
       // 프로젝트 및 노트 선택 전환
       setSelectedProjectId(geminiProjId!);
@@ -2578,7 +2800,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
       return newNote.id;
     },
-    [projects, queueProjectSync, queueNoteSync, select]
+    [projects, queueProjectSync, queueNoteSync, select, broadcastNoteUpsert]
   );
 
   const createNoteFromClipboard = useCallback(async (): Promise<{ success: boolean; noteId?: string; error?: string }> => {
@@ -2623,12 +2845,18 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
           const mergedPrev = prev.map((n) => updatedMap.get(n.id) || n);
           return [...newNotes, ...missingGroupNotes, ...mergedPrev];
         });
-        newNotes.forEach((n) => queueNoteSync(n));
-        updatedNotes.forEach((n) => queueNoteSync(n));
+        newNotes.forEach((n) => {
+          queueNoteSync(n);
+          broadcastNoteUpsert(n);
+        });
+        updatedNotes.forEach((n) => {
+          queueNoteSync(n);
+          broadcastNoteUpsert(n);
+        });
       }
       return { createdCount: newNotes.length, updatedCount, duplicateCount };
     },
-    [queueProjectSync, queueNoteSync],
+    [queueProjectSync, queueNoteSync, broadcastNoteUpsert],
   );
 
   const changeTodoStatus = useCallback(
@@ -2640,7 +2868,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         if (isSystemGroupNote(todoNote)) return prev;
         // 이미 해당 상태이고 그룹 루트 이동 요청이 아니면 불필요한 재연산 방지
         const currentStatus = getEffectiveTodoStatus(todoNote, prev);
-        const targetGroupId = STATUS_TO_GROUP_ID[newStatus];
+        const targetGroupId = STATUS_TO_GROUP_ID[newStatus] ?? TODO_GROUP_TODO_ID;
         if (
           currentStatus === newStatus &&
           (!moveToGroupRoot || todoNote.parentId === targetGroupId) &&
@@ -2659,6 +2887,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         updatedNotes.forEach((n) => {
           if (changedSet.has(n.id)) {
             queueNoteSync(n);
+            broadcastNoteUpsert(n);
             if (n.projectId === TODO_PROJECT_ID && n.reminder) {
               syncNoteReminderWithCalendar(n, n.reminder.calendarEventId);
             }
@@ -2667,7 +2896,60 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         return updatedNotes;
       });
     },
-    [queueNoteSync, syncNoteReminderWithCalendar],
+    [queueNoteSync, syncNoteReminderWithCalendar, broadcastNoteUpsert],
+  );
+
+  const deleteCustomTodoStatus = useCallback(
+    (status: TodoStatus) => {
+      if (isBuiltinTodoStatus(status)) return;
+      setCustomTodoStatuses((prev) => {
+        const next = prev.filter((s) => s.id !== status);
+        saveCustomTodoStatuses(next);
+        return next;
+      });
+      setTodoStatusLabels((prev) => {
+        if (!(status in prev)) return prev;
+        const next = { ...prev };
+        delete next[status];
+        saveTodoStatusLabels(next);
+        return next;
+      });
+      setNotes((prev) => {
+        const targets = prev.filter(
+          (n) =>
+            n.projectId === TODO_PROJECT_ID &&
+            !isSystemGroupNote(n) &&
+            getEffectiveTodoStatus(n, prev) === status
+        );
+        if (targets.length === 0) return prev;
+        let currentNotes = prev;
+        const allChangedIds = new Set<string>();
+        for (const t of targets) {
+          const latest = currentNotes.find((n) => n.id === t.id);
+          if (!latest || getEffectiveTodoStatus(latest, currentNotes) !== status) continue;
+          const { updatedNotes, changedNoteIds } = syncTodoStatusToSourceNote(
+            latest,
+            'todo',
+            currentNotes,
+            { moveToGroupRoot: true }
+          );
+          currentNotes = updatedNotes;
+          changedNoteIds.forEach((id) => allChangedIds.add(id));
+        }
+        if (allChangedIds.size === 0) return prev;
+        currentNotes.forEach((n) => {
+          if (allChangedIds.has(n.id)) {
+            queueNoteSync(n);
+            broadcastNoteUpsert(n);
+            if (n.projectId === TODO_PROJECT_ID && n.reminder) {
+              syncNoteReminderWithCalendar(n, n.reminder.calendarEventId);
+            }
+          }
+        });
+        return currentNotes;
+      });
+    },
+    [queueNoteSync, syncNoteReminderWithCalendar, broadcastNoteUpsert],
   );
 
   // --- 플래너(Schedule) 전용 액션 ---
@@ -2812,6 +3094,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
           };
 
           queueNoteSync(updated);
+          broadcastNoteUpsert(updated);
           if (nextReminder && (nextReminder.targetAt !== n.reminder?.targetAt || !n.reminder)) {
             syncNoteReminderWithCalendar(updated, prevEventId);
           }
@@ -2819,7 +3102,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         })
       );
     },
-    [queueNoteSync, syncNoteReminderWithCalendar]
+    [queueNoteSync, syncNoteReminderWithCalendar, broadcastNoteUpsert]
   );
 
   /**
@@ -2900,10 +3183,11 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       setNotes((prev) => [newNote, ...prev]);
       if (params.select !== false) setSelectedId(newNote.id);
       queueNoteSync(newNote);
+      broadcastNoteUpsert(newNote);
       syncNoteReminderWithCalendar(newNote, null);
       return newNote.id;
     },
-    [queueNoteSync, syncNoteReminderWithCalendar]
+    [queueNoteSync, syncNoteReminderWithCalendar, broadcastNoteUpsert]
   );
 
   const startLocal = useCallback(() => {
@@ -3012,10 +3296,13 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       });
       created.push(dayNoteNew);
       setNotes((prev) => [...created.slice().reverse(), ...prev]);
-      created.forEach((n) => queueNoteSync(n));
+      created.forEach((n) => {
+        queueNoteSync(n);
+        broadcastNoteUpsert(n);
+      });
       return { id: dayNoteNew.id, projectId: dailyProjId };
     },
-    [projects, queueProjectSync, queueNoteSync, updateContent]
+    [projects, queueProjectSync, queueNoteSync, updateContent, broadcastNoteUpsert]
   );
 
   /** 노트 화면에서 날짜 노트를 연다 (폴더·선택 이동) */
@@ -3194,12 +3481,20 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       plannerViewActive,
       workspaceView,
       todoViewMode,
+      todoStatusLabels,
+      customTodoStatuses,
+      todoStatusOrder,
       quickCaptureOpened,
       quickCaptureInitialText,
       openToday,
       openTodos,
       setTodoViewMode,
+      renameTodoStatus,
+      resetTodoStatusLabels,
+      addCustomTodoStatus,
+      deleteCustomTodoStatus,
       openNote,
+      openNoteInNewWindow,
       openQuickCapture,
       closeQuickCapture,
       customHolidays,
@@ -3319,12 +3614,20 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       plannerViewActive,
       workspaceView,
       todoViewMode,
+      todoStatusLabels,
+      customTodoStatuses,
+      todoStatusOrder,
       quickCaptureOpened,
       quickCaptureInitialText,
       openToday,
       openTodos,
       setTodoViewMode,
+      renameTodoStatus,
+      resetTodoStatusLabels,
+      addCustomTodoStatus,
+      deleteCustomTodoStatus,
       openNote,
+      openNoteInNewWindow,
       openQuickCapture,
       closeQuickCapture,
       customHolidays,

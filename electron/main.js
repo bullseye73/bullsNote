@@ -23,6 +23,7 @@ if (!gotTheLock) {
 }
 
 let mainWindow = null;
+const noteWindows = new Map();
 let trayCtl = { tray: null, requestQuit: () => app.quit(), isQuitting: () => true };
 
 app.on('second-instance', () => {
@@ -132,18 +133,14 @@ app.on('web-contents-created', (_event, contents) => {
   });
 });
 
-function createWindow() {
+function getSharedWindowOptions(overrides = {}) {
   const iconPath = getPlatformIconPath();
   const appVersion = packageJson.version || app.getVersion();
   const isDark = nativeTheme.shouldUseDarkColors;
   const isMac = process.platform === 'darwin';
 
-  const win = new BrowserWindow({
+  return {
     title: `BullsNote v${appVersion}`,
-    width: 1280,
-    height: 820,
-    minWidth: 920,
-    minHeight: 600,
     backgroundColor: isDark ? '#121214' : '#ffffff',
     icon: nativeImage.createFromPath(iconPath),
     titleBarStyle: isMac ? 'hiddenInset' : 'hidden',
@@ -167,25 +164,11 @@ function createWindow() {
       spellcheck: true,
     },
     autoHideMenuBar: true,
-  });
-  mainWindow = win;
+    ...overrides,
+  };
+}
 
-  nativeTheme.on('updated', () => {
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    if (process.platform !== 'darwin' && typeof mainWindow.setTitleBarOverlay === 'function') {
-      const dark = nativeTheme.shouldUseDarkColors;
-      try {
-        mainWindow.setTitleBarOverlay({
-          color: '#00000000',
-          symbolColor: dark ? '#a1a1aa' : '#52525b',
-          height: 40,
-        });
-      } catch {
-        // ignore if unsupported on some Linux WMs
-      }
-    }
-  });
-
+function attachContextMenu(win) {
   // 마우스 우클릭 컨텍스트 메뉴 등록 (잘라내기, 복사, 붙여넣기, 모두 선택 등)
   win.webContents.on('context-menu', (_event, params) => {
     const contextMenu = new Menu();
@@ -214,25 +197,43 @@ function createWindow() {
 
     contextMenu.popup({ window: win });
   });
+}
 
+function focusMainAndOpenNote(noteId) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+    mainWindow.webContents.send('alarm:openNote', noteId);
+  }
+}
+
+function attachNavigationGuards(win, { isPopout = false } = {}) {
   // 외부 링크 클릭 시 새 Electron 창 대신 시스템 기본 브라우저로 오픈
-  // (앱 내부에 어떤 자식 창도 만들지 않음: 자식 창은 preload를 상속하므로 외부 페이지에 API가 노출될 수 있음)
   win.webContents.setWindowOpenHandler(({ url }) => {
     const noteId = extractNoteId(url);
     if (noteId) {
-      win.webContents.send('alarm:openNote', noteId);
+      if (isPopout) {
+        focusMainAndOpenNote(noteId);
+      } else {
+        win.webContents.send('alarm:openNote', noteId);
+      }
       return { action: 'deny' };
     }
     openExternalSafe(url);
     return { action: 'deny' };
   });
 
-  // 본문 내 링크로 인한 메인 창 이동 방지 (앱 index.html 외 모든 문서 이동 차단)
+  // 본문 내 링크로 인한 창 이동 방지 (앱 index.html 외 모든 문서 이동 차단)
   win.webContents.on('will-navigate', (event, url) => {
     const noteId = extractNoteId(url);
     if (noteId) {
       event.preventDefault();
-      win.webContents.send('alarm:openNote', noteId);
+      if (isPopout) {
+        focusMainAndOpenNote(noteId);
+      } else {
+        win.webContents.send('alarm:openNote', noteId);
+      }
       return;
     }
     if (!isAppUrl(url)) {
@@ -240,12 +241,61 @@ function createWindow() {
       openExternalSafe(url);
     }
   });
+}
+
+function closeAllNoteWindows() {
+  for (const win of noteWindows.values()) {
+    if (win && !win.isDestroyed()) {
+      win.close();
+    }
+  }
+  noteWindows.clear();
+}
+
+function applyTitleBarOverlayToWindow(win, isDark, overlayColor = '#00000000') {
+  if (!win || win.isDestroyed()) return;
+  if (process.platform !== 'darwin' && typeof win.setTitleBarOverlay === 'function') {
+    try {
+      win.setTitleBarOverlay({
+        color: overlayColor,
+        symbolColor: isDark ? '#a1a1aa' : '#52525b',
+        height: 40,
+      });
+    } catch {
+      // ignore if unsupported on some Linux WMs
+    }
+  }
+}
+
+function createWindow() {
+  const win = new BrowserWindow(
+    getSharedWindowOptions({
+      width: 1280,
+      height: 820,
+      minWidth: 920,
+      minHeight: 600,
+    }),
+  );
+  mainWindow = win;
+
+  nativeTheme.on('updated', () => {
+    const dark = nativeTheme.shouldUseDarkColors;
+    applyTitleBarOverlayToWindow(mainWindow, dark);
+    for (const nw of noteWindows.values()) {
+      applyTitleBarOverlayToWindow(nw, dark);
+    }
+  });
+
+  attachContextMenu(win);
+  attachNavigationGuards(win, { isPopout: false });
 
   // 닫기 버튼 -> 종료 대신 트레이로 숨김
   win.on('close', (e) => {
     if (!trayCtl.isQuitting()) {
       e.preventDefault();
       win.hide();
+    } else {
+      closeAllNoteWindows();
     }
   });
   win.on('closed', () => {
@@ -257,6 +307,35 @@ function createWindow() {
     // win.webContents.openDevTools({ mode: 'detach' });
   } else {
     win.loadFile(path.join(__dirname, '../dist/index.html'));
+  }
+  return win;
+}
+
+function createNoteWindow(noteId) {
+  const win = new BrowserWindow(
+    getSharedWindowOptions({
+      width: 960,
+      height: 740,
+      minWidth: 520,
+      minHeight: 420,
+    }),
+  );
+
+  attachContextMenu(win);
+  attachNavigationGuards(win, { isPopout: true });
+
+  noteWindows.set(noteId, win);
+  win.on('closed', () => {
+    if (noteWindows.get(noteId) === win) {
+      noteWindows.delete(noteId);
+    }
+  });
+
+  const search = `popout=1&noteId=${encodeURIComponent(noteId)}`;
+  if (isDev) {
+    win.loadURL(`http://localhost:5190?${search}`);
+  } else {
+    win.loadFile(path.join(__dirname, '../dist/index.html'), { search });
   }
   return win;
 }
@@ -288,19 +367,28 @@ app.whenReady().then(() => {
   registerMcpIpc(app);
 
   secureHandle('window:setTitleBarTheme', (_event, isDark) => {
-    if (!mainWindow || mainWindow.isDestroyed()) return false;
-    if (process.platform !== 'darwin' && typeof mainWindow.setTitleBarOverlay === 'function') {
-      try {
-        mainWindow.setTitleBarOverlay({
-          color: isDark ? '#121214' : '#f4f4f5',
-          symbolColor: isDark ? '#a1a1aa' : '#52525b',
-          height: 40,
-        });
-      } catch {
-        // ignore if unsupported
-      }
+    const overlayColor = isDark ? '#121214' : '#f4f4f5';
+    applyTitleBarOverlayToWindow(mainWindow, Boolean(isDark), overlayColor);
+    for (const nw of noteWindows.values()) {
+      applyTitleBarOverlayToWindow(nw, Boolean(isDark), overlayColor);
     }
     return true;
+  });
+
+  secureHandle('window:openNoteWindow', (_event, noteId) => {
+    if (typeof noteId !== 'string' || !noteId.trim()) {
+      return { success: false, error: '유효하지 않은 노트 ID입니다.' };
+    }
+    const cleanId = noteId.trim();
+    const existing = noteWindows.get(cleanId);
+    if (existing && !existing.isDestroyed()) {
+      if (existing.isMinimized()) existing.restore();
+      existing.show();
+      existing.focus();
+      return { success: true, reused: true };
+    }
+    createNoteWindow(cleanId);
+    return { success: true, reused: false };
   });
 
   secureHandle('notification:show', (event, { title, body, noteId }) => {
@@ -344,11 +432,12 @@ app.whenReady().then(() => {
   });
 });
 
-// Cmd+Q 또는 app.quit() 호출 시 트레이 숨김 방지 플래그 활성화
+// Cmd+Q 또는 app.quit() 호출 시 트레이 숨김 방지 플래그 활성화 및 독립 창 정리
 app.on('before-quit', () => {
   if (trayCtl && typeof trayCtl.markQuitting === 'function') {
     trayCtl.markQuitting();
   }
+  closeAllNoteWindows();
 });
 
 // 트레이 상주를 위해 창이 모두 닫혀도 종료하지 않음 (종료는 트레이 메뉴)

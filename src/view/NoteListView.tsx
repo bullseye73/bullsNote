@@ -19,6 +19,7 @@ import {
   IconCloudUpload,
   IconCopy,
   IconDots,
+  IconExternalLink,
   IconGripVertical,
   IconIndentDecrease,
   IconIndentIncrease,
@@ -70,12 +71,16 @@ function RowActions({
     create,
     duplicate,
     remove,
+    openNoteInNewWindow,
     togglePin,
     toggleFavorite,
     indent,
     outdent,
     updateColor,
     changeTodoStatus,
+    todoStatusOrder,
+    todoStatusLabels,
+    customTodoStatuses,
     notes,
     projects,
     projectTree,
@@ -268,15 +273,20 @@ function RowActions({
           {isTodoItem && (
             <>
               <Menu.Label>할일 상태 변경</Menu.Label>
-              {TODO_GROUPS.map((g) => {
+              {todoStatusOrder.map((status) => {
+                const builtinGroup = TODO_GROUPS.find((g) => g.status === status);
+                const customStatus = customTodoStatuses.find((s) => s.id === status);
                 const curStatus = getEffectiveTodoStatus(note, notes);
+                const label = builtinGroup
+                  ? builtinGroup.title
+                  : todoStatusLabels[status] || customStatus?.label || status;
                 return (
                   <Menu.Item
-                    key={g.status}
-                    onClick={() => changeTodoStatus(id, g.status, true)}
-                    style={{ fontWeight: curStatus === g.status ? 700 : 400 }}
+                    key={status}
+                    onClick={() => changeTodoStatus(id, status, true)}
+                    style={{ fontWeight: curStatus === status ? 700 : 400 }}
                   >
-                    {g.title} {curStatus === g.status ? '✓' : ''}
+                    {label} {curStatus === status ? '✓' : ''}
                   </Menu.Item>
                 );
               })}
@@ -319,6 +329,14 @@ function RowActions({
             </>
           )}
           <Menu.Label>노트 관리 및 계층 제어</Menu.Label>
+          {!isSystemGroup && (
+            <Menu.Item
+              leftSection={<IconExternalLink size={14} />}
+              onClick={() => openNoteInNewWindow(id)}
+            >
+              새 창에서 열기
+            </Menu.Item>
+          )}
           <Menu.Item leftSection={<IconPlus size={14} />} onClick={() => create(id)}>
             하위 노트(할일) 추가
           </Menu.Item>

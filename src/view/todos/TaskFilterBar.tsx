@@ -7,13 +7,6 @@ import type { TodoStatus } from '../../model/Note';
 import { DEFAULT_TASK_FILTER, type PeriodFilter, type TaskFilter, type TaskItem } from '../../model/TaskQueryService';
 import { TODO_PROJECT_ID } from '../../model/TodoService';
 
-const STATUS_OPTIONS: Array<{ value: TodoStatus; label: string }> = [
-  { value: 'todo', label: '대기' },
-  { value: 'doing', label: '진행 중' },
-  { value: 'done', label: '완료' },
-  { value: 'drop', label: '중단' },
-];
-
 const PERIOD_OPTIONS: Array<{ value: PeriodFilter; label: string }> = [
   { value: 'all', label: '모든 기간' },
   { value: 'overdue', label: '지연' },
@@ -30,7 +23,15 @@ interface TaskFilterBarProps {
 }
 
 export function TaskFilterBar({ value, onChange, items, hideStatus }: TaskFilterBarProps) {
-  const { projects } = useNotes();
+  const { projects, todoStatusLabels, todoStatusOrder, customTodoStatuses } = useNotes();
+
+  const statusOptions = useMemo(() => {
+    const customMap = new Map(customTodoStatuses.map((s) => [s.id, s]));
+    return todoStatusOrder.map((status) => ({
+      value: status,
+      label: todoStatusLabels[status] || customMap.get(status)?.label || status,
+    }));
+  }, [todoStatusOrder, todoStatusLabels, customTodoStatuses]);
 
   const folderOptions = useMemo(() => {
     const used = new Set(items.map((i) => i.sourceProjectId).filter(Boolean));
@@ -40,14 +41,15 @@ export function TaskFilterBar({ value, onChange, items, hideStatus }: TaskFilter
   }, [projects, items]);
 
   const tagOptions = useMemo(() => {
+    const statusSet = new Set<string>(['일정', ...todoStatusOrder]);
     const set = new Set<string>();
     for (const i of items) {
       for (const t of [...i.note.tags, ...i.sourceTags]) {
-        if (!['일정', 'todo', 'doing', 'done', 'drop'].includes(t)) set.add(t);
+        if (!statusSet.has(t)) set.add(t);
       }
     }
     return [...set].sort((a, b) => a.localeCompare(b, 'ko')).map((t) => ({ value: t, label: `#${t}` }));
-  }, [items]);
+  }, [items, todoStatusOrder]);
 
   const isDefault =
     value.statuses.length === 0 && value.period === 'all' && !value.projectId && !value.tag;
@@ -61,7 +63,7 @@ export function TaskFilterBar({ value, onChange, items, hideStatus }: TaskFilter
           onChange={(v) => onChange({ ...value, statuses: v as TodoStatus[] })}
         >
           <Group gap={4}>
-            {STATUS_OPTIONS.map((o) => (
+            {statusOptions.map((o) => (
               <Chip key={o.value} value={o.value} size="xs" variant="light">
                 {o.label}
               </Chip>

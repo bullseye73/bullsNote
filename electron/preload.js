@@ -17,6 +17,7 @@ if (!resolvedVersion) {
 contextBridge.exposeInMainWorld('bullsNote', {
   platform: process.platform,
   version: resolvedVersion,
+  openNoteWindow: (noteId) => ipcRenderer.invoke('window:openNoteWindow', noteId),
   setTitleBarTheme: (isDark) => ipcRenderer.invoke('window:setTitleBarTheme', Boolean(isDark)),
   notification: {
     show: (data) => ipcRenderer.invoke('notification:show', data),

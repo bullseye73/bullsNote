@@ -3,16 +3,17 @@ import { ActionIcon, Badge, Box, Group, Text, Tooltip, UnstyledButton } from '@m
 import {
   IconCircle,
   IconCircleCheck,
+  IconCircleDot,
   IconCircleX,
   IconFileText,
   IconProgress,
   IconSquareCheck,
 } from '@tabler/icons-react';
-import type { TodoStatus } from '../../model/Note';
+import type { BuiltinTodoStatus } from '../../model/Note';
 import { getDueDateBadgeInfo } from '../../model/PlannerService';
 import { getBodyPreview, getChecklistProgress, type TaskItem } from '../../model/TaskQueryService';
 
-const STATUS_ICON: Record<TodoStatus, React.ReactNode> = {
+const STATUS_ICON: Record<BuiltinTodoStatus, React.ReactNode> = {
   todo: <IconCircle size={18} />,
   doing: <IconProgress size={18} color="var(--mantine-color-blue-6)" />,
   done: <IconCircleCheck size={18} color="var(--mantine-color-teal-6)" />,
@@ -27,9 +28,25 @@ interface TaskCardProps {
   onOpenSource?: (sourceNoteId: string) => void;
   /** 지연 항목 강조 테두리 */
   highlightOverdue?: boolean;
+  /** 칸반 보드 드래그 지원 */
+  draggable?: boolean;
+  isDragging?: boolean;
+  onDragStart?: (e: React.DragEvent<HTMLDivElement>) => void;
+  onDragEnd?: (e: React.DragEvent<HTMLDivElement>) => void;
 }
 
-export function TaskCard({ item, sourceTitle, onOpen, onToggleDone, onOpenSource, highlightOverdue }: TaskCardProps) {
+export function TaskCard({
+  item,
+  sourceTitle,
+  onOpen,
+  onToggleDone,
+  onOpenSource,
+  highlightOverdue,
+  draggable = false,
+  isDragging = false,
+  onDragStart,
+  onDragEnd,
+}: TaskCardProps) {
   const { note, status, dueDate } = item;
   const badge = getDueDateBadgeInfo(dueDate, status);
   const preview = getBodyPreview(note.content);
@@ -40,11 +57,17 @@ export function TaskCard({ item, sourceTitle, onOpen, onToggleDone, onOpenSource
   return (
     <Box
       className="bn-task-card"
+      draggable={draggable}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
       style={{
         border: `1px solid ${overdue ? 'var(--mantine-color-red-4)' : 'var(--bn-border-subtle)'}`,
         borderRadius: 10,
         padding: '10px 12px',
         backgroundColor: 'var(--bn-surface-editor)',
+        cursor: draggable ? (isDragging ? 'grabbing' : 'grab') : undefined,
+        opacity: isDragging ? 0.45 : 1,
+        transition: 'opacity 120ms ease, border-color 120ms ease',
       }}
     >
       <Group gap={10} wrap="nowrap" align="flex-start" style={{ minWidth: 0 }}>
@@ -57,7 +80,9 @@ export function TaskCard({ item, sourceTitle, onOpen, onToggleDone, onOpenSource
             onClick={() => onToggleDone(note.id, !isClosed)}
             aria-label={isClosed ? '할일 다시 열기' : '할일 완료'}
           >
-            {STATUS_ICON[status]}
+            {STATUS_ICON[status as BuiltinTodoStatus] ?? (
+              <IconCircleDot size={18} color="var(--mantine-color-violet-6)" />
+            )}
           </ActionIcon>
         </Tooltip>
         <UnstyledButton onClick={() => onOpen(note.id)} style={{ flex: 1, minWidth: 0 }}>

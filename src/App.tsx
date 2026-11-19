@@ -44,6 +44,7 @@ import {
   IconSun,
 } from '@tabler/icons-react';
 import { NotesProvider, useNotes } from './controller/NotesController';
+import { parsePopoutParams } from './model/NoteWindowSync';
 import { ErrorBoundary } from './view/ErrorBoundary';
 import { NoteEditorView } from './view/NoteEditorView';
 import { NoteListView } from './view/NoteListView';
@@ -280,9 +281,13 @@ function Shell() {
     }],
   ]);
 
+  const { isPopout } = parsePopoutParams(typeof window !== 'undefined' ? window.location.search : '');
+
   useEffect(() => {
-    document.title = `BullsNote v${APP_VERSION}`;
-  }, []);
+    document.title = isPopout
+      ? `${selected?.title || '노트'} - BullsNote`
+      : `BullsNote v${APP_VERSION}`;
+  }, [isPopout, selected?.title]);
 
   // Electron 환경 및 OS 플랫폼 감지 (preload의 window.bullsNote 또는 User-Agent 기반)
   const bullsNoteBridge =
@@ -335,6 +340,75 @@ function Shell() {
 
   if (!googleConnected && !guestMode) {
     return <WelcomeView />;
+  }
+
+  // 독립 창(popout) 모드: 사이드바·노트 목록 없이 슬림 타이틀바 + 전체 높이 에디터만 표시
+  if (isPopout) {
+    return (
+      <Box
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          height: '100vh',
+          width: '100vw',
+          overflow: 'hidden',
+          backgroundColor: 'var(--bn-surface-editor)',
+        }}
+      >
+        <Box
+          className="titlebar-drag-region no-print"
+          style={{
+            height: 40,
+            flexShrink: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            paddingLeft: isElectron && isMac ? 76 : 12,
+            paddingRight: isElectron && !isMac ? 148 : 12,
+            backgroundColor: 'var(--bn-surface-titlebar)',
+            borderBottom: '1px solid var(--bn-border-subtle)',
+          }}
+        >
+          <Group gap={8} wrap="nowrap" style={{ minWidth: 0, flex: 1 }}>
+            <Text fw={700} size="xs" style={{ letterSpacing: '-0.3px', flexShrink: 0 }}>
+              BullsNote
+            </Text>
+            <Text size="xs" c="dimmed" style={{ opacity: 0.45, flexShrink: 0 }}>
+              /
+            </Text>
+            <Text size="xs" fw={500} truncate style={{ minWidth: 0 }}>
+              {selected?.title || '노트 편집'}
+            </Text>
+          </Group>
+          <Group gap={6} wrap="nowrap" className="titlebar-no-drag" style={{ flexShrink: 0 }}>
+            <Tooltip label={isDark ? '라이트 모드로 전환' : '다크 모드로 전환'}>
+              <ActionIcon
+                size={26}
+                variant="subtle"
+                color="gray"
+                onClick={() => toggleColorScheme()}
+                aria-label="테마 전환"
+              >
+                {isDark ? <IconSun size={14} /> : <IconMoon size={14} />}
+              </ActionIcon>
+            </Tooltip>
+          </Group>
+        </Box>
+        <div
+          className="note-editor-wrapper"
+          style={{
+            flex: 1,
+            minHeight: 0,
+            overflow: 'hidden',
+            backgroundColor: 'var(--bn-surface-editor)',
+          }}
+        >
+          <ErrorBoundary title="화면을 표시하지 못했습니다">
+            <NoteEditorView isPopout />
+          </ErrorBoundary>
+        </div>
+      </Box>
+    );
   }
 
   // 1. 스마트폰 (Phone < 768px): 1단 전체화면 뷰 + 하단 탭 네비게이션
@@ -920,13 +994,15 @@ function Shell() {
 }
 
 export default function App() {
+  const { isPopout } = parsePopoutParams(typeof window !== 'undefined' ? window.location.search : '');
+
   return (
     <>
       <ColorSchemeScript defaultColorScheme="auto" />
       <MantineProvider theme={theme} defaultColorScheme="auto">
         <NotesProvider>
           <Shell />
-          <AlarmModal />
+          {!isPopout && <AlarmModal />}
         </NotesProvider>
       </MantineProvider>
     </>

@@ -33,12 +33,12 @@ flowchart TB
 
     subgraph Model["Model Layer (src/model/ — 순수 규칙 & 서비스)"]
         Domain["Note (NoteComment 포함) · TodoService\n· PlannerService · TaskQueryService · DailyNoteService"]
-        Parsing["QuickCaptureParser · AiCaptureParser\n· HashtagService · SearchService · FileVault"]
+        Parsing["QuickCaptureParser · AiCaptureParser · NoteWindowSync\n· HashtagService · SearchService · FileVault"]
         ExtSvc["GoogleDriveService · GoogleCalendarService\n· GoogleTasksService · GeminiService · TodayBriefing"]
     end
 
     subgraph ElectronMain["Electron Main & IPC (electron/)"]
-        MainProc["main.js · tray.js · ipc-guard.js"]
+        MainProc["main.js (Main + Popout 창) · tray.js · ipc-guard.js"]
         VaultIPC["vault-ipc.js\n(로컬 .md 파일 감시/읽기/쓰기)"]
         AuthIPC["google-auth-ipc.js\n(Desktop OAuth Loopback)"]
         MCP["mcp-ipc.js & electron/mcp/server.js\n(Stdio MCP Server)"]
@@ -77,10 +77,10 @@ flowchart TB
 
 | 계층 | 경로 | 책임 |
 |---|---|---|
-| **Model** | `src/model/` | `Note` 타입/트리/정렬(`NoteComment` 스레드 모델 및 `removeCommentWithReplies` 연쇄 삭제 포함), `TodoService`(체크리스트 ↔ 할일 양방향 동기화), `PlannerService`(근무일·공휴일 기반 기간 계산), `DailyNoteService` & `TodayBriefing`(일일 노트·AI 브리핑), `QuickCaptureParser` & `AiCaptureParser`(자연어 날짜/시각/태그 파싱), `SearchService`(제목·본문·태그·첨부·댓글 통합 검색), `FileVault`(Markdown frontmatter `comments` 포함 직렬화/역직렬화 및 에셋 변환) |
-| **Controller** | `src/controller/NotesController.tsx` | 앱 전역 상태 관리, 노트 CRUD 및 히스토리(최대 30개) 스냅샷, 댓글 CRUD·해결 토글(`addComment`, `updateComment`, `deleteComment`, `toggleCommentResolved`), 로컬 볼트 파일 변경 감지 반영, Google Drive/Calendar/Tasks 동기화 오케스트레이션 |
-| **View** | `src/view/` | `TodayView`(오늘 할일·일정·기간 작업·브리핑), `TodosView`(목록·칸반 보드·간트 타임라인), `NoteEditorView`(BlockNote + Shiki 코드 강조 + 목차 + 헤더 댓글 포커스 트리거), `NoteCommentsView`(노트 하단 1단계 스레드형 댓글·답글 패널 및 해결됨/미해결 필터), `NoteListView`(트리 목록 및 댓글 수 배지), `QuickCaptureModal`, `mobile/` 반응형 레이아웃 |
-| **Electron Shell** | `electron/` | 단일 인스턴스 락, 트레이 백그라운드 상주, `ipc-guard.js` 및 `app-origin.js` 기반 IPC/Origin 보안 검증, `vault-ipc.js` 파일시스템 연동, `google-auth-ipc.js` OAuth 처리 |
+| **Model** | `src/model/` | `Note` 타입/트리/정렬(`NoteComment` 스레드 모델 및 `removeCommentWithReplies` 연쇄 삭제 포함), `NoteWindowSync`(독립 창 쿼리 파싱 `parsePopoutParams`, 타임스탬프 기반 원격 노트 병합 `mergeRemoteWindowNote`, 연쇄 제거 `removeRemoteWindowNote`), `TodoService`(체크리스트 ↔ 할일 양방향 동기화, `TodoStatusLabels` 및 `CustomTodoStatus` 정규화·`localStorage` 영속화·`isBuiltinTodoStatus` 판별), `PlannerService`(근무일·공휴일 기반 기간 계산), `DailyNoteService` & `TodayBriefing`(일일 노트·AI 브리핑), `QuickCaptureParser` & `AiCaptureParser`(자연어 날짜/시각/태그 파싱), `SearchService`(제목·본문·태그·첨부·댓글 통합 검색), `FileVault`(Markdown frontmatter `comments` 포함 직렬화/역직렬화 및 에셋 변환) |
+| **Controller** | `src/controller/NotesController.tsx` | 앱 전역 상태 관리, 노트 CRUD 및 히스토리(최대 30개) 스냅샷, 댓글 CRUD·해결 토글(`addComment`, `updateComment`, `deleteComment`, `toggleCommentResolved`), 칸반 상태 이름 및 커스텀 상태 관리(`todoStatusLabels`, `customTodoStatuses`, `todoStatusOrder`, `renameTodoStatus`, `resetTodoStatusLabels`, `addCustomTodoStatus`, `deleteCustomTodoStatus` — 삭제 시 해당 상태 할일을 `'todo'`로 안전 이관 및 `storage` 이벤트 창 간 동기화), `openNoteInNewWindow` 및 `BroadcastChannel('bullsnote-sync-v1')` 기반 창 간 실시간 동기화(`note-upsert`/`note-delete`), 독립 창(`popout`) 모드 시 중복 알람·클라우드 백그라운드 동기화 억제, 로컬 볼트 파일 변경 감지 반영, Google Drive/Calendar/Tasks 동기화 오케스트레이션 |
+| **View** | `src/view/` | `App.tsx` 독립 창(`isPopout`) 슬림 타이틀바·단독 에디터 셸, `TodayView`(오늘 할일·일정·기간 작업·브리핑), `TodosView`(목록·칸반 보드·간트 타임라인, `TaskCard` 드래그 앤 드롭 열 간 상태 변경, 보드 열 상태 이름 인라인 편집·기본 이름 복원 및 커스텀 상태 추가·삭제), `TaskFilterBar`(사용자 지정 상태 이름 및 커스텀 상태 반영 필터 칩), `NoteEditorView`(BlockNote + Shiki 코드 강조 + 목차 + 새 창에서 편집 버튼 + 헤더 댓글 포커스 트리거 + 커스텀 상태 메뉴), `NoteCommentsView`(노트 하단 1단계 스레드형 댓글·답글 패널 및 해결됨/미해결 필터), `NoteListView`(트리 목록, 댓글 수 배지, 커스텀 상태 메뉴 및 `새 창에서 열기` 메뉴), `QuickCaptureModal`, `mobile/` 반응형 레이아웃 |
+| **Electron Shell** | `electron/` | 단일 인스턴스 락, `noteWindows` Map 기반 독립 창 관리 및 `window:openNoteWindow` IPC(기존 창 재사용/포커스 또는 `?popout=1&noteId=` 새 창 생성, `preload.js`의 `window.bullsNote.openNoteWindow` 노출), 트레이 백그라운드 상주, `ipc-guard.js` 및 `app-origin.js` 기반 IPC/Origin 보안 검증, `vault-ipc.js` 파일시스템 연동, `google-auth-ipc.js` OAuth 처리 |
 | **MCP Server** | `electron/mcp/` | 외부 의존성 없는 Node.js stdio MCP 서버 (`save_note`, `list_projects`, `add_todo`, `list_today`). 데스크톱 앱과 동일한 `.md` 볼트 및 `.bullsnote.json` 포맷을 공유 |
 
 ---
@@ -112,3 +112,24 @@ sequenceDiagram
 - **1단계 스레드 모델:** `Note.comments`는 `NoteComment`(`id`, `content`, `author`, `parentId`, `resolved`, `createdAt`, `updatedAt`) 배열로 저장됩니다. `NotesController.addComment`는 하위 답글 작성 시 부모를 `targetParent.parentId || targetParent.id`로 정규화하여 항상 1단계 스레드 구조를 유지합니다.
 - **연쇄 삭제 및 잠금 연동:** 루트 댓글 삭제 시 `removeCommentWithReplies()`가 하위 답글을 함께 제거하며, 잠긴 노트에서는 `NoteCommentsView`가 읽기 전용(`disabled`)으로 동작합니다.
 - **영속성 및 검색:** 댓글 데이터는 `FileVault`의 `.md` frontmatter(`comments`)와 `NoteRepository`의 `localStorage` 마이그레이션에 함께 저장되며, `SearchService` 검색 인덱싱(초성 검색 포함) 대상에 포함됩니다.
+
+### 4-4. 독립 창(Popout) 및 창 간 실시간 동기화 (`BroadcastChannel`)
+```mermaid
+sequenceDiagram
+    participant MainUI as 메인 창 (NotesController)
+    participant IPC as Electron Main (window:openNoteWindow)
+    participant PopoutUI as 독립 창 (?popout=1&noteId=...)
+    participant BC as BroadcastChannel ('bullsnote-sync-v1')
+
+    MainUI->>IPC: window.bullsNote.openNoteWindow(noteId)
+    IPC->>IPC: noteWindows Map 조회 (있으면 재사용·포커스, 없으면 960x740 생성)
+    IPC-->>PopoutUI: 창 로드 (?popout=1&noteId=...)
+    PopoutUI->>PopoutUI: parsePopoutParams() → 슬림 타이틀바 + 단독 NoteEditorView 렌더링
+
+    PopoutUI->>BC: note-upsert { note, senderId }
+    BC-->>MainUI: senderId 필터 후 mergeRemoteWindowNote()
+    MainUI->>MainUI: updatedAt > existing.updatedAt 시 상태 반영 및 볼트 충돌 알림 억제
+```
+- **창 생성 및 수명 주기 (`electron/main.js` · `electron/preload.js`):** `NoteEditorView`(헤더 버튼) 또는 `NoteListView`(`⋯` 메뉴)에서 `openNoteInNewWindow(noteId)`를 호출하면 Electron 환경에서는 `window:openNoteWindow` IPC가 `noteWindows` Map으로 `noteId`당 단일 독립 창을 보장(재사용 또는 신규 생성)하며, 웹/PWA 환경에서는 `window.open(?popout=1&noteId=..., ...)`으로 폴백합니다. 독립 창에서 내부 노트 링크를 클릭하면 메인 창을 포커스해 해당 노트를 열고, 앱 종료 시 `closeAllNoteWindows()`로 모든 독립 창을 함께 정리합니다.
+- **실시간 동기화 (`BroadcastChannel('bullsnote-sync-v1')` · `NoteWindowSync.ts`):** 각 창은 고유 `senderId`를 부여받아 자기 자신의 브로드캐스트를 무시합니다. 노트 생성·수정 시 `note-upsert`를 전파해 `mergeRemoteWindowNote()`가 `incoming.updatedAt > existing.updatedAt`인 경우에만 상태를 갱신하고, `lastWrittenRef` 유예 및 `vault-changed` 타임스탬프 비교로 불필요한 파일 감시 충돌 알림을 방지합니다. 노트 삭제 시에는 `note-delete`를 전파해 `removeRemoteWindowNote()`로 대상 및 하위 노트를 함께 제거합니다.
+- **백그라운드 작업 격리:** 독립 창(`isPopoutWindow`)에서는 중복 실행을 막기 위해 5초 주기 알람 감지, `<AlarmModal />` 렌더링, Google Drive 자동/초기 동기화, Google Tasks 폴링·업로드를 비활성화하고 메인 창에서만 수행합니다.

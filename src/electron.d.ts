@@ -77,6 +77,8 @@ declare global {
     bullsNote?: {
       platform: string;
       version: string;
+      setTitleBarTheme?: (isDark: boolean) => Promise<boolean>;
+      openNoteWindow?: (noteId: string) => Promise<{ success: boolean; reused?: boolean; error?: string }>;
       vault?: VaultApi;
       notification?: NotificationApi;
       print?: PrintApi;
