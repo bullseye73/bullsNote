@@ -99,8 +99,13 @@ BullsNote는 **노트와 할일, 두 기둥**으로 이루어진 개인 지식�
 
 ![노트 에디터](docs/images/note-editor.jpg)
 
-- **블록 에디터:** Notion처럼 `/`로 표·코드·이미지·파일을 넣고, 블록을 끌어서 순서를 바꿉니다.
-- **코드 블록:** 19개 언어의 문법을 강조합니다.
+- **블록 에디터:** Notion처럼 `/`로 표·코드·Mermaid 다이어그램·이미지·파일을 넣고, 블록을 끌어서 순서를 바꿉니다.
+- **코드 블록:** 18개 언어의 Shiki 문법 강조와 줄 번호·접기·복사를 지원합니다.
+- **Mermaid 다이어그램 에디터:** `/` 메뉴("Mermaid 다이어그램")나 상단 편집 툴바로 삽입하면 코드와 실시간 Drawing을 나란히 보는 **분할 에디터(`에디터`) 모드**로 바로 열립니다.
+  - 기본 **Flowchart** 스타터 코드와 5종 템플릿(Flowchart · Sequence · ERD · Gantt · Mindmap)을 제공합니다.
+  - `에디터`(분할) · `다이어그램` · `코드` 보기를 전환할 수 있으며, 다이어그램 보기에서 더블클릭하면 분할 에디터로 돌아갑니다.
+  - `mermaid` 라이브러리를 지연 로딩하고 `securityLevel: 'strict'`로 안전하게 SVG를 렌더링하며, 다크/라이트 테마에 맞춰 자동 갱신됩니다(문법 오류 시 마지막 정상 다이어그램 유지).
+  - **확대 모달**(25%~300% 줌 · SVG 다운로드)과 **SVG 복사**를 지원하며, **인쇄(`⌘P` / `Ctrl+P`)** 시에는 코드와 툴바를 숨기고 렌더링된 SVG 다이어그램만 출력합니다.
 - **날짜 넣기:** `@오늘`, `@내일`처럼 쓰면 날짜가 들어갑니다.
 - **목차:** 오른쪽 가장자리의 얇은 막대에 마우스를 올리면(모바일은 탭) 제목 목록이 펼쳐집니다. 본문을 가리지 않습니다.
 - **정리:** 폴더 · 하위 노트(트리) · 고정 · 즐겨찾기 · 7가지 색상 라벨로 정리합니다. 본문의 `#태그`는 자동으로 모입니다.
@@ -274,13 +279,42 @@ AI는 버튼을 누를 때만 호출됩니다.
 
 MVC 구조입니다. 규칙(model)은 화면과 분리된 순수 함수로 두고, 단위 테스트로 검증합니다.
 
+```mermaid
+flowchart LR
+    subgraph Runtime["클라이언트 런타임"]
+        Desktop["Desktop App (Electron 44)"]
+        PWA["Web / Mobile PWA"]
+    end
+
+    subgraph App["BullsNote MVC (src/)"]
+        View["View (src/view/)\nToday · Todos · NoteEditorView · EditorToolbar"]
+        Ctrl["Controller (src/controller/)\nNotesController (상태 · 동기화 · 히스토리)"]
+        Model["Model (src/model/)\nNote/Todo 규칙 · codeHighlight · mermaidService · FileVault"]
+    end
+
+    subgraph Ext["저장소 · AI · 외부 연동"]
+        Vault[("로컬 .md 볼트 / 브라우저 저장소")]
+        Drive["Google Drive · Calendar · Tasks"]
+        AI["Gemini API · MCP Server"]
+    end
+
+    Desktop --> View
+    PWA --> View
+    View <--> Ctrl
+    Ctrl --> Model
+    Model --> Vault
+    Model --> Drive
+    Model --> AI
+```
+
 ```
 src/
   model/        규칙과 저장 — 노트·할일·플래너 규칙, 빠른 입력 해석, Daily Note,
-                오늘 브리핑, Google Drive·Calendar 동기화, 창 간 동기화(NoteWindowSync), 파일 볼트 형식
+                오늘 브리핑, Google Drive·Calendar 동기화, 창 간 동기화(NoteWindowSync),
+                파일 볼트 형식, 코드 강조(codeHighlight) · Mermaid 다이어그램(mermaidService, mermaidSlashMenu)
     __tests__/  Vitest 단위 테스트
   controller/   NotesController.tsx — 앱 상태와 동작 (useNotes 컨텍스트)
-  view/         화면 — 오늘, 할일(목록·보드·타임라인), 노트 에디터·댓글(NoteCommentsView),
+  view/         화면 — 오늘, 할일(목록·보드·타임라인), 노트 에디터(NoteEditorView · EditorToolbar)·댓글(NoteCommentsView),
                 사이드바, 모바일 화면
 electron/       데스크톱 셸 — 메인·독립 창, 트레이, 저장 폴더, Google 로그인, MCP 등록
   mcp/          MCP 서버 (의존성 없는 stdio 서버)
@@ -293,7 +327,7 @@ DESIGN.md       전체 시스템 아키텍처 및 구성도
 |---|---|
 | 앱 | Electron 44, React 18, TypeScript, Vite 5 |
 | UI | Mantine 7, Tabler Icons |
-| 에디터 | BlockNote 0.55, Shiki (코드 강조) |
+| 에디터 | BlockNote 0.55, Shiki (코드 강조), Mermaid (다이어그램) |
 | 테스트 | Vitest |
 
 ---

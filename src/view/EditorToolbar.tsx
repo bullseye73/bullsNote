@@ -23,6 +23,7 @@ import {
   IconPhoto,
   IconPlus,
   IconQuote,
+  IconSitemap,
   IconSquareCheck,
   IconStrikethrough,
   IconTable,
@@ -35,6 +36,7 @@ import {
 import type { BlockNoteEditor } from '@blocknote/core';
 import { createContext, useContext, useState } from 'react';
 import { AI_ACTIONS_META, AiActionType, GeminiService } from '../model/GeminiService';
+import { DEFAULT_MERMAID_CODE } from '../model/mermaidService';
 import { useNotes } from '../controller/NotesController';
 import { SHORTCUTS } from '../model/shortcutUtils';
 
@@ -193,6 +195,27 @@ export function EditorToolbar({
       }
     } else {
       insertAfter({ type: 'codeBlock', props: { language: 'javascript' } });
+    }
+    editor.focus();
+  };
+
+  const insertMermaidDiagram = () => {
+    const b = cursorBlock();
+    const payload = {
+      type: 'codeBlock',
+      props: { language: 'mermaid' },
+      content: [{ type: 'text', text: DEFAULT_MERMAID_CODE, styles: {} }],
+    };
+    const isCurrentEmpty =
+      b &&
+      b.type === 'paragraph' &&
+      (!Array.isArray(b.content) || b.content.length === 0 || b.content.every((c: any) => !c.text));
+    if (isCurrentEmpty) {
+      editor.updateBlock(b, payload as never);
+    } else if (b) {
+      editor.insertBlocks([payload] as never, b, 'after');
+    } else {
+      insertAfter(payload);
     }
     editor.focus();
   };
@@ -358,6 +381,12 @@ export function EditorToolbar({
           <IconTerminal size={15} />
         </Tool>
         <Tool
+          label="Mermaid 다이어그램"
+          onClick={insertMermaidDiagram}
+        >
+          <IconSitemap size={15} />
+        </Tool>
+        <Tool
           label="해시태그 삽입 (단축키: #)"
           onClick={() => {
             editor.focus();
@@ -505,6 +534,9 @@ export function EditorToolbar({
           </Menu.Item>
           <Menu.Item leftSection={<IconTerminal size={15} />} onClick={() => setType('codeBlock')}>
             코드 블록 (문법 강조)
+          </Menu.Item>
+          <Menu.Item leftSection={<IconSitemap size={15} />} onClick={insertMermaidDiagram}>
+            Mermaid 다이어그램
           </Menu.Item>
           <Menu.Divider />
           <Menu.Label>미디어 / 구분선</Menu.Label>

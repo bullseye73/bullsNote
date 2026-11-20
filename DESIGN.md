@@ -24,7 +24,7 @@ flowchart TB
     subgraph View["View Layer (src/view/ — React 18 + Mantine 7 + BlockNote 0.55)"]
         Today["TodayView · DailyNotePanel\n· TodayBriefingCard"]
         Todos["TodosView (목록 · 보드 · 타임라인)\n· PlannerView"]
-        Editor["NoteEditorView · NoteCommentsView\n· QuickCaptureModal · Mobile Views"]
+        Editor["NoteEditorView · EditorToolbar · NoteCommentsView\n· QuickCaptureModal · Mobile Views"]
     end
 
     subgraph Controller["Controller Layer (src/controller/)"]
@@ -34,6 +34,7 @@ flowchart TB
     subgraph Model["Model Layer (src/model/ — 순수 규칙 & 서비스)"]
         Domain["Note (NoteComment 포함) · TodoService\n· PlannerService · TaskQueryService · DailyNoteService"]
         Parsing["QuickCaptureParser · AiCaptureParser · NoteWindowSync\n· HashtagService · SearchService · FileVault"]
+        EditorModel["codeHighlight · mermaidService\n· mermaidSlashMenu"]
         ExtSvc["GoogleDriveService · GoogleCalendarService\n· GoogleTasksService · GeminiService · TodayBriefing"]
     end
 
@@ -56,6 +57,7 @@ flowchart TB
     View -->|액션 호출 / 상태 구독| NC
     NC --> Domain
     NC --> Parsing
+    NC --> EditorModel
     NC --> ExtSvc
 
     NC -->|Electron IPC (preload.js)| MainProc
@@ -77,9 +79,9 @@ flowchart TB
 
 | 계층 | 경로 | 책임 |
 |---|---|---|
-| **Model** | `src/model/` | `Note` 타입/트리/정렬(`NoteComment` 스레드 모델 및 `removeCommentWithReplies` 연쇄 삭제 포함), `NoteWindowSync`(독립 창 쿼리 파싱 `parsePopoutParams`, 타임스탬프 기반 원격 노트 병합 `mergeRemoteWindowNote`, 연쇄 제거 `removeRemoteWindowNote`), `TodoService`(체크리스트 ↔ 할일 양방향 동기화, `TodoStatusLabels` 및 `CustomTodoStatus` 정규화·`localStorage` 영속화·`isBuiltinTodoStatus` 판별), `PlannerService`(근무일·공휴일 기반 기간 계산), `DailyNoteService` & `TodayBriefing`(일일 노트·AI 브리핑), `QuickCaptureParser` & `AiCaptureParser`(자연어 날짜/시각/태그 파싱), `SearchService`(제목·본문·태그·첨부·댓글 통합 검색), `FileVault`(Markdown frontmatter `comments` 포함 직렬화/역직렬화 및 에셋 변환) |
+| **Model** | `src/model/` | `Note` 타입/트리/정렬(`NoteComment` 스레드 모델 및 `removeCommentWithReplies` 연쇄 삭제 포함), `NoteWindowSync`(독립 창 쿼리 파싱 `parsePopoutParams`, 타임스탬프 기반 원격 노트 병합 `mergeRemoteWindowNote`, 연쇄 제거 `removeRemoteWindowNote`), `TodoService`(체크리스트 ↔ 할일 양방향 동기화, `TodoStatusLabels` 및 `CustomTodoStatus` 정규화·`localStorage` 영속화·`isBuiltinTodoStatus` 판별), `PlannerService`(근무일·공휴일 기반 기간 계산), `DailyNoteService` & `TodayBriefing`(일일 노트·AI 브리핑), `QuickCaptureParser` & `AiCaptureParser`(자연어 날짜/시각/태그 파싱), `SearchService`(제목·본문·태그·첨부·댓글 통합 검색), `FileVault`(Markdown frontmatter `comments` 포함 직렬화/역직렬화 및 에셋 변환), `mermaidService`(Mermaid 뷰 모드·5종 템플릿·`mermaid` 지연 로딩 및 `securityLevel: 'strict'` SVG 렌더러), `mermaidSlashMenu`(`/` 슬래시 메뉴 명령어 생성), `codeHighlight`(`createRichCodeBlock` 기반 Shiki 코드 강조 및 Mermaid 분할 에디터 NodeView) |
 | **Controller** | `src/controller/NotesController.tsx` | 앱 전역 상태 관리, 노트 CRUD 및 히스토리(최대 30개) 스냅샷, 댓글 CRUD·해결 토글(`addComment`, `updateComment`, `deleteComment`, `toggleCommentResolved`), 칸반 상태 이름 및 커스텀 상태 관리(`todoStatusLabels`, `customTodoStatuses`, `todoStatusOrder`, `renameTodoStatus`, `resetTodoStatusLabels`, `addCustomTodoStatus`, `deleteCustomTodoStatus` — 삭제 시 해당 상태 할일을 `'todo'`로 안전 이관 및 `storage` 이벤트 창 간 동기화), `openNoteInNewWindow` 및 `BroadcastChannel('bullsnote-sync-v1')` 기반 창 간 실시간 동기화(`note-upsert`/`note-delete`), 독립 창(`popout`) 모드 시 중복 알람·클라우드 백그라운드 동기화 억제, 로컬 볼트 파일 변경 감지 반영, Google Drive/Calendar/Tasks 동기화 오케스트레이션 |
-| **View** | `src/view/` | `App.tsx` 독립 창(`isPopout`) 슬림 타이틀바·단독 에디터 셸, `TodayView`(오늘 할일·일정·기간 작업·브리핑), `TodosView`(목록·칸반 보드·간트 타임라인, `TaskCard` 드래그 앤 드롭 열 간 상태 변경, 보드 열 상태 이름 인라인 편집·기본 이름 복원 및 커스텀 상태 추가·삭제), `TaskFilterBar`(사용자 지정 상태 이름 및 커스텀 상태 반영 필터 칩), `NoteEditorView`(BlockNote + Shiki 코드 강조 + 목차 + 새 창에서 편집 버튼 + 헤더 댓글 포커스 트리거 + 커스텀 상태 메뉴), `NoteCommentsView`(노트 하단 1단계 스레드형 댓글·답글 패널 및 해결됨/미해결 필터), `NoteListView`(트리 목록, 댓글 수 배지, 커스텀 상태 메뉴 및 `새 창에서 열기` 메뉴), `QuickCaptureModal`, `mobile/` 반응형 레이아웃 |
+| **View** | `src/view/` | `App.tsx` 독립 창(`isPopout`) 슬림 타이틀바·단독 에디터 셸, `TodayView`(오늘 할일·일정·기간 작업·브리핑), `TodosView`(목록·칸반 보드·간트 타임라인, `TaskCard` 드래그 앤 드롭 열 간 상태 변경, 보드 열 상태 이름 인라인 편집·기본 이름 복원 및 커스텀 상태 추가·삭제), `TaskFilterBar`(사용자 지정 상태 이름 및 커스텀 상태 반영 필터 칩), `NoteEditorView`(BlockNote + Shiki 코드 강조 + Mermaid `/` 슬래시 메뉴 통합 + 목차 + 새 창에서 편집 버튼 + 헤더 댓글 포커스 트리거 + 커스텀 상태 메뉴), `EditorToolbar`(Mermaid 다이어그램 삽입 버튼 및 `+` 메뉴 포함 빠른 서식 툴바), `NoteCommentsView`(노트 하단 1단계 스레드형 댓글·답글 패널 및 해결됨/미해결 필터), `NoteListView`(트리 목록, 댓글 수 배지, 커스텀 상태 메뉴 및 `새 창에서 열기` 메뉴), `QuickCaptureModal`, `mobile/` 반응형 레이아웃, `src/index.css`(에디터·Mermaid 분할 뷰 및 `@media print` SVG 단독 인쇄 스타일) |
 | **Electron Shell** | `electron/` | 단일 인스턴스 락, `noteWindows` Map 기반 독립 창 관리 및 `window:openNoteWindow` IPC(기존 창 재사용/포커스 또는 `?popout=1&noteId=` 새 창 생성, `preload.js`의 `window.bullsNote.openNoteWindow` 노출), 트레이 백그라운드 상주, `ipc-guard.js` 및 `app-origin.js` 기반 IPC/Origin 보안 검증, `vault-ipc.js` 파일시스템 연동, `google-auth-ipc.js` OAuth 처리 |
 | **MCP Server** | `electron/mcp/` | 외부 의존성 없는 Node.js stdio MCP 서버 (`save_note`, `list_projects`, `add_todo`, `list_today`). 데스크톱 앱과 동일한 `.md` 볼트 및 `.bullsnote.json` 포맷을 공유 |
 
@@ -133,3 +135,9 @@ sequenceDiagram
 - **창 생성 및 수명 주기 (`electron/main.js` · `electron/preload.js`):** `NoteEditorView`(헤더 버튼) 또는 `NoteListView`(`⋯` 메뉴)에서 `openNoteInNewWindow(noteId)`를 호출하면 Electron 환경에서는 `window:openNoteWindow` IPC가 `noteWindows` Map으로 `noteId`당 단일 독립 창을 보장(재사용 또는 신규 생성)하며, 웹/PWA 환경에서는 `window.open(?popout=1&noteId=..., ...)`으로 폴백합니다. 독립 창에서 내부 노트 링크를 클릭하면 메인 창을 포커스해 해당 노트를 열고, 앱 종료 시 `closeAllNoteWindows()`로 모든 독립 창을 함께 정리합니다.
 - **실시간 동기화 (`BroadcastChannel('bullsnote-sync-v1')` · `NoteWindowSync.ts`):** 각 창은 고유 `senderId`를 부여받아 자기 자신의 브로드캐스트를 무시합니다. 노트 생성·수정 시 `note-upsert`를 전파해 `mergeRemoteWindowNote()`가 `incoming.updatedAt > existing.updatedAt`인 경우에만 상태를 갱신하고, `lastWrittenRef` 유예 및 `vault-changed` 타임스탬프 비교로 불필요한 파일 감시 충돌 알림을 방지합니다. 노트 삭제 시에는 `note-delete`를 전파해 `removeRemoteWindowNote()`로 대상 및 하위 노트를 함께 제거합니다.
 - **백그라운드 작업 격리:** 독립 창(`isPopoutWindow`)에서는 중복 실행을 막기 위해 5초 주기 알람 감지, `<AlarmModal />` 렌더링, Google Drive 자동/초기 동기화, Google Tasks 폴링·업로드를 비활성화하고 메인 창에서만 수행합니다.
+
+### 4-5. Mermaid 다이어그램 에디터 및 실시간 렌더링
+- **삽입 경로 (`mermaidSlashMenu.tsx` · `EditorToolbar.tsx` · `codeHighlight.ts`):** `NoteEditorView`의 `/` 슬래시 메뉴(`getMermaidSlashMenuItems`), `EditorToolbar`의 전용 버튼/`+` 메뉴(`insertMermaidDiagram`), 또는 코드 블록 언어 선택기(`mermaid` / `mmd`)로 진입합니다. 삽입 시 `DEFAULT_MERMAID_CODE`(Flowchart 기본 스타터 코드)가 채워지며 기본 뷰 모드는 `DEFAULT_MERMAID_VIEW_MODE = 'split'`(코드 + 실시간 Drawing 분할 에디터)입니다.
+- **분할 뷰 및 템플릿 (`codeHighlight.ts` · `mermaidService.ts`):** `createRichCodeBlock` NodeView 내부에서 `split`(에디터)·`preview`(다이어그램)·`code`(코드) 모드 전환을 지원하며 블록별 상태를 `codeBlockStateCache`로 보존합니다. `preview` 모드에서 다이어그램을 더블클릭하면 `split` 모드로 전환되고, 툴바의 템플릿 드롭다운(`MERMAID_TEMPLATES`)으로 Flowchart · Sequence · ERD · Gantt · Mindmap 5종을 즉시 교체할 수 있습니다.
+- **지연 로딩 및 보안 렌더링 (`mermaidService.ts`):** `renderMermaidSvg()`가 `import('mermaid')`로 라이브러리를 지연 로딩하고 `startOnLoad: false`, `securityLevel: 'strict'`로 초기화합니다. 250ms 디바운스로 SVG를 갱신하고, `data-mantine-color-scheme` 변화 감지(`MutationObserver`)로 다크/라이트 테마를 자동 반영하며, 문법 오류 발생 시에는 마지막 정상 SVG(`lastValidSvg`)를 유지한 채 하단에 오류 메시지를 표시합니다.
+- **확대 모달 · SVG 내보내기 · 인쇄 (`codeHighlight.ts` · `index.css`):** `SVG 복사` 버튼과 `확대` 모달(25%~300% 줌, 리셋, `SVG 다운로드`)을 제공하며, `@media print` 규칙에서 `.bn-code-toolbar`, `.bn-mermaid-code-pane`, `pre`, `.bn-mermaid-error`를 숨겨 인쇄 시 렌더링된 SVG 다이어그램만 출력되도록 처리합니다.

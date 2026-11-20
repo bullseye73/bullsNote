@@ -96,6 +96,7 @@ import { getDueDateBadgeInfo, toIsoDateLocal } from '../model/PlannerService';
 import { getDateAtSuggestions, getDateSlashMenuItems } from '../model/dateSuggestions';
 import { getCombinedAtSuggestions, getNoteSlashMenuItems } from '../model/noteSuggestions';
 import { getAiSlashMenuItems } from '../model/aiSlashMenu';
+import { getMermaidSlashMenuItems } from '../model/mermaidSlashMenu';
 import { AiActionType } from '../model/GeminiService';
 import { SHORTCUTS } from '../model/shortcutUtils';
 import { NoteBacklinksView } from './NoteBacklinksView';
@@ -1286,6 +1287,7 @@ function BlockEditor({
               shouldOpen={(e) => !e.selection.$from.parent.type.isInGroup('tableContent')}
               getItems={async (query) => {
                 const aiSlashItems = getAiSlashMenuItems(editor, handleTriggerAi);
+                const mermaidSlashItems = getMermaidSlashMenuItems(editor);
                 const defaultSlashItems = getDefaultReactSlashMenuItems(editor);
                 const dateSlashItems = getDateSlashMenuItems(editor, () => handleOpenDatePicker());
                 const noteSlashItems = getNoteSlashMenuItems(
@@ -1336,6 +1338,7 @@ function BlockEditor({
                 return filterSuggestionItems(
                   [
                     ...aiSlashItems,
+                    ...mermaidSlashItems,
                     todoExportSlashItem,
                     ...noteSlashItems,
                     ...dateSlashItems,
