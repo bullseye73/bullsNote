@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="1024" height="1024">
+  <!-- BullsNote 앱 아이콘 마스터 (A안: 과녁 체크). 수정 후 `npm run icons` 로 전 플랫폼 에셋 재생성 -->
+  <rect width="120" height="120" rx="27" fill="#1F2430"/>
+  <circle cx="60" cy="60" r="36" fill="none" stroke="#3A4152" stroke-width="7"/>
+  <circle cx="60" cy="60" r="22" fill="none" stroke="#E2563B" stroke-width="7"/>
+  <circle cx="60" cy="60" r="9" fill="#E2563B"/>
+  <path d="M50 60 l7 7 l16 -18" fill="none" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

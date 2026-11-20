@@ -1,6 +1,6 @@
 // BullsNote PWA Service Worker (Network-First with Offline App Shell Fallback)
-const CACHE_NAME = 'bullsnote-pwa-v1';
-const APP_SHELL = ['./', './index.html', './manifest.webmanifest', './icon.png'];
+const CACHE_NAME = 'bullsnote-pwa-v2';
+const APP_SHELL = ['./', './index.html', './manifest.webmanifest', './icon.png', './icon-192.png', './favicon.svg'];
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();

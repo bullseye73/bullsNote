@@ -31,6 +31,8 @@ function loadTrayIcon() {
     if (size.width > 22 || size.height > 22) {
       img = img.resize({ width: 18, height: 18, quality: 'best' });
     }
+    // 단색 글리프(brand/tray.svg)이므로 템플릿으로 지정해 라이트/다크 메뉴바 색에 자동 대응
+    if (targetPath === macTrayPath) img.setTemplateImage(true);
   } else if (isWin) {
     const size = img.getSize();
     if (size.width > 32 || size.height > 32) {

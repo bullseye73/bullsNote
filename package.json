@@ -25,6 +25,7 @@
     "dist:linux": "npm run build && electron-builder --linux",
     "dist:mac": "npm run build && electron-builder --mac",
     "test": "vitest run",
+    "icons": "electron scripts/build-icons.cjs",
     "preversion": "npm test && npm run build"
   },
   "devDependencies": {
