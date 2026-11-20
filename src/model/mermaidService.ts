@@ -1,7 +1,97 @@
-// MODEL: Mermaid 다이어그램 템플릿, 뷰 모드, 지연 로딩 SVG 렌더러 및 슬래시 메뉴 스펙
+// MODEL: Mermaid 다이어그램 템플릿, 뷰 모드, 테마/모양 프리셋, 지연 로딩 SVG 렌더러 및 슬래시 메뉴 스펙
 export type MermaidViewMode = 'split' | 'preview' | 'code';
 
 export const DEFAULT_MERMAID_VIEW_MODE: MermaidViewMode = 'split';
+
+export type MermaidThemePreset = 'redux-color' | 'redux' | 'neo' | 'default' | 'forest' | 'neutral';
+export type MermaidLook = 'neo' | 'classic' | 'handDrawn';
+
+export const DEFAULT_MERMAID_THEME: MermaidThemePreset = 'redux-color';
+export const DEFAULT_MERMAID_LOOK: MermaidLook = 'neo';
+export const MERMAID_PREFS_STORAGE_KEY = 'bullsnote.mermaidPrefs.v1';
+
+export const MERMAID_THEME_OPTIONS: Array<{ value: MermaidThemePreset; label: string }> = [
+  { value: 'redux-color', label: 'Redux Color' },
+  { value: 'redux', label: 'Redux' },
+  { value: 'neo', label: 'Neo' },
+  { value: 'default', label: '기본' },
+  { value: 'forest', label: 'Forest' },
+  { value: 'neutral', label: 'Neutral' },
+];
+
+export const MERMAID_LOOK_OPTIONS: Array<{ value: MermaidLook; label: string }> = [
+  { value: 'neo', label: 'Neo' },
+  { value: 'classic', label: 'Classic' },
+  { value: 'handDrawn', label: 'Hand Drawn' },
+];
+
+export function resolveMermaidTheme(
+  preset: MermaidThemePreset,
+  isDark: boolean
+): 'redux-color' | 'redux-dark-color' | 'redux' | 'redux-dark' | 'neo' | 'neo-dark' | 'default' | 'dark' | 'forest' | 'neutral' {
+  switch (preset) {
+    case 'redux-color':
+      return isDark ? 'redux-dark-color' : 'redux-color';
+    case 'redux':
+      return isDark ? 'redux-dark' : 'redux';
+    case 'neo':
+      return isDark ? 'neo-dark' : 'neo';
+    case 'default':
+      return isDark ? 'dark' : 'default';
+    case 'forest':
+      return 'forest';
+    case 'neutral':
+      return 'neutral';
+    default:
+      return isDark ? 'redux-dark-color' : 'redux-color';
+  }
+}
+
+export interface MermaidPrefs {
+  theme: MermaidThemePreset;
+  look: MermaidLook;
+}
+
+const VALID_THEMES = new Set<string>(MERMAID_THEME_OPTIONS.map((o) => o.value));
+const VALID_LOOKS = new Set<string>(MERMAID_LOOK_OPTIONS.map((o) => o.value));
+
+export function normalizeMermaidPrefs(raw: unknown): MermaidPrefs {
+  if (!raw || typeof raw !== 'object') {
+    return { theme: DEFAULT_MERMAID_THEME, look: DEFAULT_MERMAID_LOOK };
+  }
+  const obj = raw as Record<string, unknown>;
+  const theme =
+    typeof obj.theme === 'string' && VALID_THEMES.has(obj.theme)
+      ? (obj.theme as MermaidThemePreset)
+      : DEFAULT_MERMAID_THEME;
+  const look =
+    typeof obj.look === 'string' && VALID_LOOKS.has(obj.look)
+      ? (obj.look as MermaidLook)
+      : DEFAULT_MERMAID_LOOK;
+  return { theme, look };
+}
+
+export function loadMermaidPrefs(): MermaidPrefs {
+  try {
+    if (typeof localStorage === 'undefined') {
+      return { theme: DEFAULT_MERMAID_THEME, look: DEFAULT_MERMAID_LOOK };
+    }
+    const raw = localStorage.getItem(MERMAID_PREFS_STORAGE_KEY);
+    if (!raw) return { theme: DEFAULT_MERMAID_THEME, look: DEFAULT_MERMAID_LOOK };
+    return normalizeMermaidPrefs(JSON.parse(raw));
+  } catch {
+    return { theme: DEFAULT_MERMAID_THEME, look: DEFAULT_MERMAID_LOOK };
+  }
+}
+
+export function saveMermaidPrefs(prefs: MermaidPrefs): void {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem(MERMAID_PREFS_STORAGE_KEY, JSON.stringify(normalizeMermaidPrefs(prefs)));
+  } catch {
+    /* ignore */
+  }
+}
 
 export type MermaidTemplateKey = 'flowchart' | 'sequence' | 'er' | 'gantt' | 'mindmap';
 
@@ -110,10 +200,49 @@ export function buildMermaidSlashSpecs(): MermaidSlashSpec[] {
 
 let renderSeq = 0;
 
+export type MermaidLintResult =
+  | { valid: true; diagramType?: string }
+  | { valid: false; error: string; line?: number };
+
+export function parseMermaidErrorLine(message: string): number | undefined {
+  const m = /(?:on\s+line|line)\s+(\d+)/i.exec(message);
+  if (!m) return undefined;
+  const n = Number(m[1]);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+export async function lintMermaidCode(code: string): Promise<MermaidLintResult> {
+  const trimmed = (code || '').trim();
+  if (!trimmed) {
+    return { valid: false, error: 'Mermaid 다이어그램 코드를 입력해주세요.' };
+  }
+  try {
+    const mermaid = (await import('mermaid')).default;
+    mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: 'strict',
+    });
+    const parsed = await mermaid.parse(trimmed);
+    const diagramType =
+      parsed && typeof parsed === 'object' && 'diagramType' in parsed
+        ? String((parsed as { diagramType?: string }).diagramType || '')
+        : undefined;
+    return { valid: true, ...(diagramType ? { diagramType } : {}) };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      valid: false,
+      error: message || 'Mermaid 문법 오류가 발생했습니다.',
+      line: parseMermaidErrorLine(message),
+    };
+  }
+}
+
 export async function renderMermaidSvg(
   id: string,
   code: string,
-  isDark: boolean
+  isDark: boolean,
+  options?: { theme?: MermaidThemePreset; look?: MermaidLook }
 ): Promise<{ svg: string } | { error: string }> {
   const trimmed = (code || '').trim();
   if (!trimmed) {
@@ -122,10 +251,13 @@ export async function renderMermaidSvg(
 
   try {
     const mermaid = (await import('mermaid')).default;
+    const theme = resolveMermaidTheme(options?.theme ?? DEFAULT_MERMAID_THEME, isDark);
+    const look = options?.look ?? DEFAULT_MERMAID_LOOK;
     mermaid.initialize({
       startOnLoad: false,
       securityLevel: 'strict',
-      theme: isDark ? 'dark' : 'default',
+      theme,
+      look,
     });
 
     const sanitizedId = (id || 'diagram').replace(/[^a-zA-Z0-9_-]/g, '') || 'diagram';

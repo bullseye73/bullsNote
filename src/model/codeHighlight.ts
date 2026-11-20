@@ -14,11 +14,18 @@ import { createHighlighterCore } from 'shiki/core';
 import { createJavaScriptRegexEngine } from 'shiki/engine/javascript';
 import {
   DEFAULT_MERMAID_VIEW_MODE,
+  MERMAID_LOOK_OPTIONS,
   MERMAID_TEMPLATES,
+  MERMAID_THEME_OPTIONS,
+  MermaidLook,
   MermaidTemplateKey,
+  MermaidThemePreset,
   MermaidViewMode,
   isMermaidLanguage,
+  lintMermaidCode,
+  loadMermaidPrefs,
   renderMermaidSvg,
+  saveMermaidPrefs,
 } from './mermaidService';
 
 /** 코드 블록 언어 선택 목록 (키는 Shiki 언어 id와 일치) */
@@ -69,12 +76,19 @@ const SHIKI_LANG_IMPORTS = [
   () => import('shiki/langs/rust.mjs'),
   () => import('shiki/langs/xml.mjs'),
   () => import('shiki/langs/diff.mjs'),
+  () => import('shiki/langs/mermaid.mjs'),
 ];
 
 // 블록별 접힘/라인넘버/Mermaid 뷰 모드 상태를 보존하기 위한 캐시 (에디터 내 블록 업데이트 시에도 상태 보존)
 const codeBlockStateCache = new Map<
   string,
-  { isCollapsed: boolean; showLineNumbers: boolean; mermaidMode: MermaidViewMode }
+  {
+    isCollapsed: boolean;
+    showLineNumbers: boolean;
+    mermaidMode?: MermaidViewMode;
+    mermaidTheme?: MermaidThemePreset;
+    mermaidLook?: MermaidLook;
+  }
 >();
 
 /** 리치 코드 블록 렌더러 (접기/펼치기, 언어 선택, 라인 번호 ON/OFF, 복사 버튼 + Mermaid 에디터 일체형) */
@@ -92,15 +106,24 @@ export function createRichCodeBlock(
     showLineNumbers: false,
     mermaidMode: DEFAULT_MERMAID_VIEW_MODE,
   };
+  const defaultPrefs = loadMermaidPrefs();
 
   let isCollapsed = savedState.isCollapsed;
   let showLineNumbers = savedState.showLineNumbers;
   let mermaidMode: MermaidViewMode = savedState.mermaidMode ?? DEFAULT_MERMAID_VIEW_MODE;
+  let mermaidTheme: MermaidThemePreset = savedState.mermaidTheme ?? defaultPrefs.theme;
+  let mermaidLook: MermaidLook = savedState.mermaidLook ?? defaultPrefs.look;
   const selectedLang = options?.selectedLanguage ?? block?.props?.language ?? 'javascript';
   const isMermaid = isMermaidLanguage(selectedLang);
 
   const persistState = () => {
-    codeBlockStateCache.set(blockId, { isCollapsed, showLineNumbers, mermaidMode });
+    codeBlockStateCache.set(blockId, {
+      isCollapsed,
+      showLineNumbers,
+      mermaidMode,
+      mermaidTheme,
+      mermaidLook,
+    });
   };
 
   const container = document.createElement('div');
@@ -250,6 +273,8 @@ export function createRichCodeBlock(
   let mermaidViewport: HTMLDivElement | undefined;
   let mermaidSvgWrap: HTMLDivElement | undefined;
   let mermaidErrorEl: HTMLDivElement | undefined;
+  let mermaidLintBadge: HTMLSpanElement | undefined;
+  let lintErrorLine: number | undefined;
   let previewZoom = 1;
   let panX = 0;
   let panY = 0;
@@ -262,6 +287,10 @@ export function createRichCodeBlock(
   let zoomResetBtn: HTMLButtonElement | undefined;
   let zoomInBtn: HTMLButtonElement | undefined;
   let zoomOutBtn: HTMLButtonElement | undefined;
+  let mermaidThemeSelect: HTMLSelectElement | undefined;
+  let mermaidLookSelect: HTMLSelectElement | undefined;
+  let handleMermaidThemeChange: ((e: Event) => void) | undefined;
+  let handleMermaidLookChange: ((e: Event) => void) | undefined;
   let handleZoomIn: ((e: Event) => void) | undefined;
   let handleZoomOut: ((e: Event) => void) | undefined;
   let handleZoomReset: ((e: Event) => void) | undefined;
@@ -377,9 +406,8 @@ export function createRichCodeBlock(
       });
     };
     svgCopyBtn.addEventListener('click', handleSvgCopy);
-    rightGroup.insertBefore(svgCopyBtn, copyBtn);
 
-    // 확대(모달) 버튼
+    // 확대(모달) 버튼 (미리보기 화면 컨트롤에 배치)
     expandBtn = document.createElement('button');
     expandBtn.type = 'button';
     expandBtn.tabIndex = -1;
@@ -505,7 +533,12 @@ export function createRichCodeBlock(
       activeModalOverlay = overlay;
     };
     expandBtn.addEventListener('click', handleExpand);
-    rightGroup.insertBefore(expandBtn, copyBtn);
+
+    // 코드 문법 Lint 상태 배지 (툴바 우측)
+    mermaidLintBadge = document.createElement('span');
+    mermaidLintBadge.className = 'bn-mermaid-lint-badge';
+    mermaidLintBadge.textContent = '구문 확인 중';
+    rightGroup.insertBefore(mermaidLintBadge, lineNumbersBtn);
 
     // Mermaid 본문 래퍼: .bn-mermaid-body > (.bn-mermaid-code-pane(gutter + pre) + .bn-mermaid-preview)
     mermaidBody = document.createElement('div');
@@ -520,9 +553,49 @@ export function createRichCodeBlock(
     mermaidPreview.className = 'bn-mermaid-preview';
     mermaidPreview.contentEditable = 'false';
 
-    // 인라인 확대/축소/100% 리셋 컨트롤
+    // 인라인 테마 / 모양 / 확대·축소 / 100% 리셋 / SVG 복사 / 확대 모달 컨트롤
     const previewControls = document.createElement('div');
     previewControls.className = 'bn-mermaid-preview-controls';
+
+    mermaidThemeSelect = document.createElement('select');
+    mermaidThemeSelect.className = 'bn-code-lang-select';
+    mermaidThemeSelect.tabIndex = -1;
+    mermaidThemeSelect.title = '다이어그램 테마 선택';
+    MERMAID_THEME_OPTIONS.forEach((opt) => {
+      const el = document.createElement('option');
+      el.value = opt.value;
+      el.text = opt.label;
+      mermaidThemeSelect!.appendChild(el);
+    });
+    mermaidThemeSelect.value = mermaidTheme;
+    handleMermaidThemeChange = (e: Event) => {
+      mermaidTheme = (e.target as HTMLSelectElement).value as MermaidThemePreset;
+      persistState();
+      saveMermaidPrefs({ theme: mermaidTheme, look: mermaidLook });
+      void renderCurrentMermaid();
+    };
+    mermaidThemeSelect.addEventListener('change', handleMermaidThemeChange);
+    mermaidThemeSelect.addEventListener('click', (e) => e.stopPropagation());
+
+    mermaidLookSelect = document.createElement('select');
+    mermaidLookSelect.className = 'bn-code-lang-select';
+    mermaidLookSelect.tabIndex = -1;
+    mermaidLookSelect.title = '다이어그램 모양(Look) 선택';
+    MERMAID_LOOK_OPTIONS.forEach((opt) => {
+      const el = document.createElement('option');
+      el.value = opt.value;
+      el.text = opt.label;
+      mermaidLookSelect!.appendChild(el);
+    });
+    mermaidLookSelect.value = mermaidLook;
+    handleMermaidLookChange = (e: Event) => {
+      mermaidLook = (e.target as HTMLSelectElement).value as MermaidLook;
+      persistState();
+      saveMermaidPrefs({ theme: mermaidTheme, look: mermaidLook });
+      void renderCurrentMermaid();
+    };
+    mermaidLookSelect.addEventListener('change', handleMermaidLookChange);
+    mermaidLookSelect.addEventListener('click', (e) => e.stopPropagation());
 
     zoomOutBtn = document.createElement('button');
     zoomOutBtn.type = 'button';
@@ -545,9 +618,13 @@ export function createRichCodeBlock(
     zoomInBtn.title = '확대 (Ctrl/⌘ + 휠)';
     zoomInBtn.textContent = '+';
 
+    previewControls.appendChild(mermaidThemeSelect);
+    previewControls.appendChild(mermaidLookSelect);
     previewControls.appendChild(zoomOutBtn);
     previewControls.appendChild(zoomResetBtn);
     previewControls.appendChild(zoomInBtn);
+    if (svgCopyBtn) previewControls.appendChild(svgCopyBtn);
+    if (expandBtn) previewControls.appendChild(expandBtn);
 
     mermaidViewport = document.createElement('div');
     mermaidViewport.className = 'bn-mermaid-viewport';
@@ -598,7 +675,8 @@ export function createRichCodeBlock(
     const count = getLineCount();
     let spans = '';
     for (let i = 1; i <= count; i++) {
-      spans += `<span>${i}</span>`;
+      const errCls = lintErrorLine === i ? ' class="is-error-line"' : '';
+      spans += `<span${errCls}>${i}</span>`;
     }
     gutter.innerHTML = spans;
   };
@@ -753,7 +831,7 @@ export function createRichCodeBlock(
     mermaidViewport.addEventListener('wheel', handleViewportWheel, { passive: false });
   }
 
-  // Mermaid 실시간 SVG 렌더링 (250ms 디바운스 + 마지막 유효 SVG 보존 + 100% 원본 크기 고정)
+  // Mermaid 실시간 문법 Lint + SVG 렌더링 (250ms 디바운스 + 마지막 유효 SVG 보존 + 100% 원본 크기 고정)
   const renderCurrentMermaid = async () => {
     if (!isMermaid || isDestroyed || !mermaidSvgWrap || !mermaidErrorEl) return;
     const rawCode = code.innerText || code.textContent || '';
@@ -761,7 +839,35 @@ export function createRichCodeBlock(
       typeof document !== 'undefined' &&
       document.documentElement.getAttribute('data-mantine-color-scheme') === 'dark';
     const token = ++mermaidRenderToken;
-    const res = await renderMermaidSvg(blockId, rawCode, isDark);
+
+    const lintRes = await lintMermaidCode(rawCode);
+    if (isDestroyed || token !== mermaidRenderToken) return;
+
+    if (!lintRes.valid) {
+      lintErrorLine = lintRes.line;
+      if (showLineNumbers) updateLineNumbers();
+      if (mermaidLintBadge) {
+        mermaidLintBadge.className = 'bn-mermaid-lint-badge is-error';
+        mermaidLintBadge.textContent = lintRes.line ? `⚠ ${lintRes.line}행 오류` : '⚠ 구문 오류';
+        mermaidLintBadge.title = lintRes.error;
+      }
+      mermaidErrorEl.textContent = lintRes.line ? `[${lintRes.line}행] ${lintRes.error}` : lintRes.error;
+      mermaidErrorEl.style.display = 'block';
+      return;
+    }
+
+    lintErrorLine = undefined;
+    if (showLineNumbers) updateLineNumbers();
+    if (mermaidLintBadge) {
+      mermaidLintBadge.className = 'bn-mermaid-lint-badge is-valid';
+      mermaidLintBadge.textContent = '✓ 구문 정상';
+      mermaidLintBadge.title = lintRes.diagramType ? `감지된 다이어그램: ${lintRes.diagramType}` : 'Mermaid 문법 정상';
+    }
+
+    const res = await renderMermaidSvg(blockId, rawCode, isDark, {
+      theme: mermaidTheme,
+      look: mermaidLook,
+    });
     if (isDestroyed || token !== mermaidRenderToken) return;
 
     if ('svg' in res) {
@@ -960,6 +1066,12 @@ export function createRichCodeBlock(
         }
         if (handleViewportWheel) mermaidViewport.removeEventListener('wheel', handleViewportWheel);
       }
+      if (mermaidThemeSelect && handleMermaidThemeChange) {
+        mermaidThemeSelect.removeEventListener('change', handleMermaidThemeChange);
+      }
+      if (mermaidLookSelect && handleMermaidLookChange) {
+        mermaidLookSelect.removeEventListener('change', handleMermaidLookChange);
+      }
       if (zoomInBtn && handleZoomIn) zoomInBtn.removeEventListener('click', handleZoomIn);
       if (zoomOutBtn && handleZoomOut) zoomOutBtn.removeEventListener('click', handleZoomOut);
       if (zoomResetBtn && handleZoomReset) zoomResetBtn.removeEventListener('click', handleZoomReset);
@@ -995,7 +1107,7 @@ export const createRichCodeBlockSpec = (createBlockSpec as any)(
           typeof block?.props === 'string'
             ? block.props
             : block?.props?.language ?? block?.attrs?.language;
-        if (isMermaidLanguage(raw)) return 'text';
+        if (isMermaidLanguage(raw)) return 'mermaid';
         return raw || 'javascript';
       },
     },

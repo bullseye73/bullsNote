@@ -1,11 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_MERMAID_CODE,
+  DEFAULT_MERMAID_LOOK,
+  DEFAULT_MERMAID_THEME,
   DEFAULT_MERMAID_VIEW_MODE,
   MERMAID_TEMPLATES,
   buildMermaidSlashSpecs,
   isMermaidLanguage,
+  lintMermaidCode,
+  loadMermaidPrefs,
+  normalizeMermaidPrefs,
+  parseMermaidErrorLine,
   renderMermaidSvg,
+  resolveMermaidTheme,
+  saveMermaidPrefs,
 } from '../mermaidService';
 import { CODE_LANGUAGES, getHighlighter } from '../codeHighlight';
 import { resolveCodeLanguage } from '../editorExtensions';
@@ -68,13 +76,49 @@ describe('mermaidService', () => {
     expect('error' in blankRes).toBe(true);
   });
 
-  it('getHighlighter는 mermaid 블록용 text 폴백 하이라이팅을 정상 초기화한다', async () => {
+  it('getHighlighter는 mermaid 언어 문법 하이라이팅(라이트/다크 테마)을 정상 지원한다', async () => {
     const highlighter = await getHighlighter();
     expect(highlighter).toBeDefined();
     const tokens = highlighter.codeToTokens(DEFAULT_MERMAID_CODE, {
-      lang: 'text',
+      lang: 'mermaid',
       themes: { light: 'github-light', dark: 'github-dark' },
     });
     expect(tokens.tokens.length).toBeGreaterThan(0);
+  });
+
+  it('parseMermaidErrorLine과 lintMermaidCode는 문법 오류 행 번호와 빈 입력을 감지한다', async () => {
+    expect(parseMermaidErrorLine('Parse error on line 3: Expecting ...')).toBe(3);
+    expect(parseMermaidErrorLine('Syntax error in text')).toBeUndefined();
+
+    const emptyLint = await lintMermaidCode('   ');
+    expect(emptyLint.valid).toBe(false);
+  });
+
+  it('기본 테마는 redux-color, 기본 모양은 neo이며 다크/라이트 쌍과 설정 영속화를 지원한다', () => {
+    expect(DEFAULT_MERMAID_THEME).toBe('redux-color');
+    expect(DEFAULT_MERMAID_LOOK).toBe('neo');
+
+    expect(resolveMermaidTheme('redux-color', false)).toBe('redux-color');
+    expect(resolveMermaidTheme('redux-color', true)).toBe('redux-dark-color');
+    expect(resolveMermaidTheme('neo', true)).toBe('neo-dark');
+    expect(resolveMermaidTheme('forest', true)).toBe('forest');
+
+    expect(normalizeMermaidPrefs({ theme: 'invalid', look: 'handDrawn' })).toEqual({
+      theme: 'redux-color',
+      look: 'handDrawn',
+    });
+
+    const store = new Map<string, string>();
+    Object.defineProperty(globalThis, 'localStorage', {
+      value: {
+        getItem: (k: string) => store.get(k) ?? null,
+        setItem: (k: string, v: string) => {
+          store.set(k, v);
+        },
+      },
+      configurable: true,
+    });
+    saveMermaidPrefs({ theme: 'redux-color', look: 'neo' });
+    expect(loadMermaidPrefs()).toEqual({ theme: 'redux-color', look: 'neo' });
   });
 });
