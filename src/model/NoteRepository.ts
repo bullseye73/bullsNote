@@ -4,6 +4,78 @@ import { GROUP_ID_TO_STATUS } from './TodoService';
 
 const STORAGE_KEY = 'bullsnote.notes.v1';
 const PROJECTS_STORAGE_KEY = 'bullsnote.projects.v1';
+const IDB_NAME = 'bullsnote.db';
+const IDB_VERSION = 1;
+const IDB_STORE = 'kv';
+const IDB_NOTES_KEY = 'notes';
+const IDB_PROJECTS_KEY = 'projects';
+
+let idbCachedNotes: Note[] | null = null;
+let idbCachedProjects: Project[] | null = null;
+let idbPersistenceRequested = false;
+
+function hasIndexedDb(): boolean {
+  return typeof indexedDB !== 'undefined';
+}
+
+function requestPersistentStorageOnce(): void {
+  if (idbPersistenceRequested) return;
+  idbPersistenceRequested = true;
+  try {
+    const nav = typeof navigator !== 'undefined' ? navigator : undefined;
+    if (nav?.storage?.persist) {
+      void nav.storage.persist().catch(() => {
+        /* ignore */
+      });
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+function openIdb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(IDB_NAME, IDB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(IDB_STORE)) {
+        db.createObjectStore(IDB_STORE);
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error ?? new Error('IndexedDB 열기 실패'));
+  });
+}
+
+async function idbGet<T>(key: string): Promise<T | undefined> {
+  const db = await openIdb();
+  try {
+    return await new Promise<T | undefined>((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readonly');
+      const store = tx.objectStore(IDB_STORE);
+      const req = store.get(key);
+      req.onsuccess = () => resolve(req.result as T | undefined);
+      req.onerror = () => reject(req.error ?? new Error('IndexedDB 읽기 실패'));
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function idbSet<T>(key: string, value: T): Promise<void> {
+  const db = await openIdb();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      const store = tx.objectStore(IDB_STORE);
+      const req = store.put(value, key);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error ?? new Error('IndexedDB 쓰기 실패'));
+    });
+  } finally {
+    db.close();
+  }
+}
 
 function decodeEntities(s: string): string {
   return s
@@ -133,10 +205,78 @@ export interface SaveResult {
 }
 
 export const NoteRepository = {
+  async initAsync(): Promise<{ notes: Note[]; projects: Project[]; migratedFromLocalStorage: boolean }> {
+    requestPersistentStorageOnce();
+
+    if (!hasIndexedDb()) {
+      const notes = safeParse(localStorage.getItem(STORAGE_KEY));
+      const projects = safeParseProjects(localStorage.getItem(PROJECTS_STORAGE_KEY));
+      idbCachedNotes = notes;
+      idbCachedProjects = projects;
+      return { notes, projects, migratedFromLocalStorage: false };
+    }
+
+    try {
+      const [rawIdbNotes, rawIdbProjects] = await Promise.all([
+        idbGet<unknown>(IDB_NOTES_KEY),
+        idbGet<unknown>(IDB_PROJECTS_KEY),
+      ]);
+
+      let migratedFromLocalStorage = false;
+      let notes: Note[];
+      if (Array.isArray(rawIdbNotes)) {
+        notes = migrate(rawIdbNotes);
+      } else {
+        const lsRaw = localStorage.getItem(STORAGE_KEY);
+        notes = safeParse(lsRaw);
+        if (lsRaw !== null) {
+          await idbSet(IDB_NOTES_KEY, notes);
+          try {
+            localStorage.removeItem(STORAGE_KEY);
+          } catch {
+            /* ignore */
+          }
+          migratedFromLocalStorage = true;
+        }
+      }
+
+      let projects: Project[];
+      if (Array.isArray(rawIdbProjects)) {
+        const valid = rawIdbProjects.filter(
+          (p): p is Project => Boolean(p) && typeof p.id === 'string' && typeof p.name === 'string',
+        );
+        projects = valid.length > 0 ? valid : DEFAULT_PROJECTS;
+      } else {
+        const lsProjectsRaw = localStorage.getItem(PROJECTS_STORAGE_KEY);
+        projects = safeParseProjects(lsProjectsRaw);
+        if (lsProjectsRaw !== null) {
+          await idbSet(IDB_PROJECTS_KEY, projects);
+          try {
+            localStorage.removeItem(PROJECTS_STORAGE_KEY);
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+
+      idbCachedNotes = notes;
+      idbCachedProjects = projects;
+      return { notes, projects, migratedFromLocalStorage };
+    } catch (e) {
+      console.warn('IndexedDB 초기화 실패, localStorage로 폴백합니다:', e);
+      const notes = safeParse(localStorage.getItem(STORAGE_KEY));
+      const projects = safeParseProjects(localStorage.getItem(PROJECTS_STORAGE_KEY));
+      idbCachedNotes = notes;
+      idbCachedProjects = projects;
+      return { notes, projects, migratedFromLocalStorage: false };
+    }
+  },
   load(): Note[] {
+    if (idbCachedNotes !== null) return idbCachedNotes;
     return safeParse(localStorage.getItem(STORAGE_KEY));
   },
   save(notes: Note[]): SaveResult {
+    idbCachedNotes = notes;
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(notes));
       return { success: true };
@@ -154,11 +294,67 @@ export const NoteRepository = {
       return { success: false, error: msg };
     }
   },
+  async saveAsync(notes: Note[]): Promise<SaveResult> {
+    idbCachedNotes = notes;
+    if (!hasIndexedDb()) {
+      return this.save(notes);
+    }
+    try {
+      await idbSet(IDB_NOTES_KEY, notes);
+      // IndexedDB 저장이 성공하면 구버전 localStorage 캐시는 비워 5MB 한도를 확보
+      try {
+        if (localStorage.getItem(STORAGE_KEY) !== null) {
+          localStorage.removeItem(STORAGE_KEY);
+        }
+      } catch {
+        /* ignore */
+      }
+      return { success: true };
+    } catch (e: unknown) {
+      const isQuota =
+        e instanceof DOMException &&
+        (e.name === 'QuotaExceededError' ||
+          e.name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
+          e.code === 22 ||
+          e.code === 1014);
+      const msg = isQuota
+        ? '저장 실패: 브라우저 저장소(IndexedDB) 용량이 부족합니다. 기기 저장 공간을 확보하거나 불필요한 이미지를 정리해주세요.'
+        : `저장 실패: ${e instanceof Error ? e.message : String(e)}`;
+      console.error(msg, e);
+      return { success: false, error: msg };
+    }
+  },
   loadProjects(): Project[] {
+    if (idbCachedProjects !== null) return idbCachedProjects;
     return safeParseProjects(localStorage.getItem(PROJECTS_STORAGE_KEY));
   },
   saveProjects(projects: Project[]): void {
+    idbCachedProjects = projects;
     localStorage.setItem(PROJECTS_STORAGE_KEY, JSON.stringify(projects));
+  },
+  async saveProjectsAsync(projects: Project[]): Promise<void> {
+    idbCachedProjects = projects;
+    if (!hasIndexedDb()) {
+      this.saveProjects(projects);
+      return;
+    }
+    try {
+      await idbSet(IDB_PROJECTS_KEY, projects);
+      try {
+        if (localStorage.getItem(PROJECTS_STORAGE_KEY) !== null) {
+          localStorage.removeItem(PROJECTS_STORAGE_KEY);
+        }
+      } catch {
+        /* ignore */
+      }
+    } catch (e) {
+      console.warn('IndexedDB 프로젝트 저장 실패, localStorage로 폴백합니다:', e);
+      try {
+        this.saveProjects(projects);
+      } catch {
+        /* ignore */
+      }
+    }
   },
   exportJson(notes: Note[], projects: Project[] = DEFAULT_PROJECTS): string {
     return JSON.stringify({ app: 'BullsNote', version: 3, projects, notes }, null, 2);

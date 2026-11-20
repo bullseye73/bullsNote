@@ -357,12 +357,23 @@ function sortNotes(a: Note, b: Note): number {
   return b.updatedAt - a.updatedAt;
 }
 
+/** 히스토리 스냅샷에서 대용량 인라인 Base64 이미지를 제거해 저장 용량 폭증을 방지 */
+function stripInlineDataImagesForHistory(content: string): string {
+  if (!content || !content.includes('data:image/')) return content;
+  return content.replace(/data:image\/[a-zA-Z0-9+.-]+;base64,[A-Za-z0-9+/=]+/g, '[inline-image]');
+}
+
 /** 변경 전 상태를 히스토리에 push (스로틀 + 상한) */
 function withHistory(note: Note, force = false): Note {
   const now = Date.now();
   const last = note.history[0];
   if (!force && last && now - last.savedAt < HISTORY_INTERVAL_MS) return note;
-  const snap: NoteSnapshot = { title: note.title, content: note.content, tags: note.tags, savedAt: now };
+  const snap: NoteSnapshot = {
+    title: note.title,
+    content: stripInlineDataImagesForHistory(note.content),
+    tags: note.tags,
+    savedAt: now,
+  };
   return { ...note, history: [snap, ...note.history].slice(0, MAX_HISTORY) };
 }
 
@@ -765,7 +776,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     async (currentNotes: Note[], seq: number) => {
       isLocalSavePendingRef.current = false;
       try {
-        const res = NoteRepository.save(currentNotes);
+        const res = await NoteRepository.saveAsync(currentNotes);
         if (seq === localSaveSeqRef.current) {
           if (res.success) {
             setStorageError('');
@@ -783,9 +794,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     [],
   );
 
-  // localStorage 모드: 디바운스(400ms) 및 순번 토큰을 적용하여 영속화
+  // 브라우저 저장소(IndexedDB) 모드: 디바운스(800ms) 및 순번 토큰을 적용하여 영속화
   useEffect(() => {
-    if (vaultMode) return;
+    if (vaultMode || !ready) return;
 
     localSaveSeqRef.current += 1;
     const currentSeq = localSaveSeqRef.current;
@@ -797,8 +808,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     if (localSaveTimerRef.current) {
       clearTimeout(localSaveTimerRef.current);
     }
-    // 전체 노트 JSON 직렬화 + localStorage 동기 기록은 메인 스레드를 점유하므로
-    // 입력이 잠잠해진 뒤(800ms) 브라우저 유휴 시간에 실행해 타이핑 중 끊김(ANR)을 줄임
+    // 전체 노트 JSON 직렬화 + 비동기 IndexedDB 기록을 입력이 잠잠해진 뒤(800ms) 유휴 시간에 실행해 타이핑 중 끊김(ANR)을 줄임
     let cancelIdle: (() => void) | null = null;
     localSaveTimerRef.current = setTimeout(() => {
       cancelIdle = runWhenIdle(() => void runSave(), 2000);
@@ -810,46 +820,58 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       }
       if (cancelIdle) cancelIdle();
     };
-  }, [notes, vaultMode, doLocalSave]);
+  }, [notes, vaultMode, ready, doLocalSave]);
 
   useEffect(() => {
-    if (vaultMode) return;
-    NoteRepository.saveProjects(projects);
-  }, [projects, vaultMode]);
+    if (vaultMode || !ready) return;
+    void NoteRepository.saveProjectsAsync(projects);
+  }, [projects, vaultMode, ready]);
 
-  // localStorage 모드: 레거시 마이그레이션 (암호문은 복구 전까지 JSON 블록으로 감싸지 않도록 보존)
+  // 브라우저 저장소(IndexedDB) 모드: 초기 로드 + localStorage 마이그레이션 + 레거시 HTML->블록 마이그레이션
   const migratedRef = useRef(false);
   useEffect(() => {
     if (vaultMode || migratedRef.current) return;
     migratedRef.current = true;
     (async () => {
       try {
-        const current = NoteRepository.load();
-        const needsMigration = current.some(
+        const { notes: idbNotes, projects: idbProjects } = await NoteRepository.initAsync();
+        const baseNotes = idbNotes.length > 0 ? idbNotes : seedNotes();
+        const { projects: ensuredProjects, notes: ensuredNotes } = ensureTodoProjectAndGroups(idbProjects, baseNotes);
+        setProjects(ensuredProjects);
+
+        const needsMigration = ensuredNotes.some(
           (n) => !isBlocksJson(n.content) && !hasLegacyEncryptedText(n.content),
         );
-        if (!needsMigration) return;
-        const headless = await getHeadless();
-        const converted = await Promise.all(
-          current.map(async (n) => {
-            if (isBlocksJson(n.content) || hasLegacyEncryptedText(n.content)) return n;
-            const blocks = await headless.toBlocks(n.content);
-            const content = JSON.stringify(blocks);
-            return { ...n, content, tags: extractHashtags(n.title, content) };
-          }),
-        );
-        NoteRepository.save(converted);
-        const sortedConverted = converted.sort(sortNotes);
-        setNotes(sortedConverted);
+        let finalNotes = ensuredNotes;
+        if (needsMigration) {
+          const headless = await getHeadless();
+          finalNotes = await Promise.all(
+            ensuredNotes.map(async (n) => {
+              if (isBlocksJson(n.content) || hasLegacyEncryptedText(n.content)) return n;
+              const blocks = await headless.toBlocks(n.content);
+              const content = JSON.stringify(blocks);
+              return { ...n, content, tags: extractHashtags(n.title, content) };
+            }),
+          );
+          await NoteRepository.saveAsync(finalNotes);
+        }
+
+        const sortedNotes = finalNotes.sort(sortNotes);
+        setNotes(sortedNotes);
+        setSelectedProjectId((prevProj) => {
+          if (ensuredProjects.some((p) => p.id === prevProj)) return prevProj;
+          const regular = ensuredProjects.filter((p) => p.id !== TODO_PROJECT_ID);
+          return regular[0]?.id ?? ensuredProjects[0]?.id ?? DEFAULT_PROJECT_ID;
+        });
         setSelectedId((prev) => {
-          if (prev && !isSystemGroupNote(prev)) return prev;
-          const projNotes = sortedConverted.filter(
+          if (prev && !isSystemGroupNote(prev) && sortedNotes.some((n) => n.id === prev)) return prev;
+          const projNotes = sortedNotes.filter(
             (n) => !isSystemGroupNote(n) && (n.projectId || DEFAULT_PROJECT_ID) === selectedProjectIdRef.current,
           );
           return projNotes[0]?.id ?? null;
         });
       } catch {
-        /* 파서 실패 시 기존 포맷 유지 */
+        /* 파서/초기화 실패 시 기존 상태 유지 */
       } finally {
         setReady(true);
       }

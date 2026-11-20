@@ -126,15 +126,49 @@ import {
 
 type AnyEditor = BlockNoteEditor<any, any, any>;
 
-/** 이미지 붙여넣기/드롭 -> dataURL로 인라인 저장 (로컬 폴백용) */
+/** 이미지 붙여넣기/드롭 -> 대용량 래스터 이미지는 리사이즈/압축 후 dataURL로 인라인 저장 (로컬 폴백용) */
 async function uploadFileAsDataUrl(file: File): Promise<string> {
-  const dataUrl = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = () => reject(new Error('파일 읽기 실패'));
-    reader.readAsDataURL(file);
-  });
-  return dataUrl;
+  const readRaw = () =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(new Error('파일 읽기 실패'));
+      reader.readAsDataURL(file);
+    });
+
+  const compressibleTypes = ['image/jpeg', 'image/png', 'image/webp'];
+  const MAX_RAW_BYTES = 300 * 1024;
+  const MAX_DIM = 1600;
+
+  if (!compressibleTypes.includes(file.type) || file.size <= MAX_RAW_BYTES || typeof document === 'undefined') {
+    return readRaw();
+  }
+
+  try {
+    const rawDataUrl = await readRaw();
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error('이미지 디코딩 실패'));
+      el.src = rawDataUrl;
+    });
+
+    const scale = Math.min(1, MAX_DIM / Math.max(img.width || 1, img.height || 1));
+    const width = Math.max(1, Math.round(img.width * scale));
+    const height = Math.max(1, Math.round(img.height * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return rawDataUrl;
+
+    ctx.drawImage(img, 0, 0, width, height);
+    const outType = file.type === 'image/png' ? 'image/webp' : file.type;
+    const compressed = canvas.toDataURL(outType, 0.82);
+    return compressed.length < rawDataUrl.length ? compressed : rawDataUrl;
+  } catch {
+    return readRaw();
+  }
 }
 
 function BlockEditor({
