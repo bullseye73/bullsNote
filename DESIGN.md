@@ -60,7 +60,7 @@ flowchart TB
     NC --> EditorModel
     NC --> ExtSvc
 
-    NC -->|Electron IPC (preload.js)| MainProc
+    NC -->|Electron IPC_preload.js_| MainProc
     MainProc --> VaultIPC
     MainProc --> AuthIPC
     MainProc --> MCP
