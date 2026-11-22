@@ -380,6 +380,8 @@ export interface Note {
   todoMeta?: TodoMeta;
   /** 시스템 관리 상위 그룹 여부 ('todo' | 'doing' | 'done' | 'drop') */
   systemGroupType?: TodoStatus;
+  /** 웹 클리퍼로 저장된 원본 URL (중복 업데이트 매칭용) */
+  clipUrl?: string;
   /** 마지막으로 Google Drive 클라우드와 동기화 완료된 시점의 updatedAt 타임스탬프 */
   syncedAt?: number;
   createdAt: number;

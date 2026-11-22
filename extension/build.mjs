@@ -1,0 +1,38 @@
+import esbuild from 'esbuild';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const distDir = path.join(__dirname, 'dist');
+const iconsDistDir = path.join(distDir, 'icons');
+
+fs.rmSync(distDir, { recursive: true, force: true });
+fs.mkdirSync(iconsDistDir, { recursive: true });
+
+await esbuild.build({
+  entryPoints: [
+    path.join(__dirname, 'src', 'background.ts'),
+    path.join(__dirname, 'src', 'popup.ts'),
+    path.join(__dirname, 'src', 'sidepanel.ts'),
+  ],
+  outdir: distDir,
+  bundle: true,
+  format: 'esm',
+  platform: 'browser',
+  target: ['chrome120'],
+  sourcemap: false,
+  minify: false,
+  logLevel: 'info',
+});
+
+fs.copyFileSync(path.join(__dirname, 'manifest.json'), path.join(distDir, 'manifest.json'));
+fs.copyFileSync(path.join(__dirname, 'src', 'popup.html'), path.join(distDir, 'popup.html'));
+fs.copyFileSync(path.join(__dirname, 'src', 'sidepanel.html'), path.join(distDir, 'sidepanel.html'));
+
+const publicIcon = path.join(__dirname, 'public', 'icons', 'icon128.png');
+const fallbackIcon = path.join(__dirname, '..', 'electron', 'assets', 'icon.png');
+const iconSrc = fs.existsSync(publicIcon) ? publicIcon : fallbackIcon;
+fs.copyFileSync(iconSrc, path.join(iconsDistDir, 'icon128.png'));
+
+console.log('[extension] Built MV3 bundle ->', distDir);

@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "name": "BullsNote Clipper & Sidekick",
+  "version": "0.1.0",
+  "description": "웹 페이지, 선택 영역, AI 요약을 로컬 BullsNote 앱에 노트·할일·Daily Note로 즉시 저장합니다.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "contextMenus",
+    "storage",
+    "sidePanel"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1/*"
+  ],
+  "icons": {
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "BullsNote Clipper",
+    "default_icon": {
+      "128": "icons/icon128.png"
+    }
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+B",
+        "mac": "Command+Shift+B"
+      },
+      "description": "BullsNote Clipper 열기"
+    }
+  }
+}

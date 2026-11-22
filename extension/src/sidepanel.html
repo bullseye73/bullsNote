@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BullsNote Sidekick</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #ffffff;
+        --surface: #f4f4f5;
+        --border: #e4e4e7;
+        --text: #18181b;
+        --muted: #71717a;
+        --accent: #2563eb;
+        --accent-hover: #1d4ed8;
+        --ok: #16a34a;
+        --ok-bg: rgba(22, 163, 74, 0.12);
+        --warn: #d97706;
+        --warn-bg: rgba(217, 119, 6, 0.12);
+        --err: #dc2626;
+        --err-bg: rgba(220, 38, 38, 0.12);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #121214;
+          --surface: #1e1e22;
+          --border: #2e2e34;
+          --text: #f4f4f5;
+          --muted: #a1a1aa;
+          --accent: #3b82f6;
+          --accent-hover: #2563eb;
+          --ok: #22c55e;
+          --ok-bg: rgba(34, 197, 94, 0.14);
+          --warn: #f59e0b;
+          --warn-bg: rgba(245, 158, 11, 0.14);
+          --err: #ef4444;
+          --err-bg: rgba(239, 68, 68, 0.14);
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        font-size: 13px;
+      }
+      .wrap {
+        padding: 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        font-weight: 700;
+        font-size: 15px;
+      }
+      .brand img {
+        width: 20px;
+        height: 20px;
+        border-radius: 4px;
+      }
+      .status {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 11px;
+        color: var(--muted);
+        padding: 3px 8px;
+        border-radius: 999px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        white-space: nowrap;
+      }
+      .status.online {
+        color: var(--ok);
+        border-color: rgba(22, 163, 74, 0.35);
+      }
+      .tabs {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 4px;
+        background: var(--surface);
+        padding: 3px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+      }
+      .tab-btn {
+        border: none;
+        background: transparent;
+        color: var(--muted);
+        padding: 6px 8px;
+        border-radius: 6px;
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .tab-btn.active {
+        background: var(--bg);
+        color: var(--text);
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+      }
+      .meta-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .target-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 11px;
+        font-weight: 600;
+        padding: 3px 8px;
+        border-radius: 6px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        color: var(--text);
+      }
+      .checkbox-label {
+        display: inline-flex;
+        flex-direction: row;
+        align-items: center;
+        gap: 5px;
+        font-size: 11.5px;
+        font-weight: 500;
+        color: var(--muted);
+        cursor: pointer;
+        user-select: none;
+      }
+      .checkbox-label input[type='checkbox'] {
+        width: auto;
+        margin: 0;
+        cursor: pointer;
+      }
+      .row {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+      .btn {
+        border: 1px solid var(--border);
+        background: var(--surface);
+        color: var(--text);
+        padding: 7px 10px;
+        border-radius: 7px;
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .btn:hover {
+        filter: brightness(0.96);
+      }
+      .btn-primary {
+        flex: 1;
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #ffffff;
+      }
+      .btn-primary:hover {
+        background: var(--accent-hover);
+      }
+      .btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      label.field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        font-size: 11px;
+        color: var(--muted);
+        font-weight: 600;
+      }
+      input[type='text'],
+      textarea {
+        width: 100%;
+        padding: 8px 10px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: var(--surface);
+        color: var(--text);
+        font-family: inherit;
+        font-size: 12.5px;
+        outline: none;
+      }
+      input[type='text']:focus,
+      textarea:focus {
+        border-color: var(--accent);
+      }
+      textarea {
+        resize: vertical;
+        min-height: 170px;
+        line-height: 1.5;
+      }
+      .btn-ai {
+        width: 100%;
+        background: var(--surface);
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+      .btn-ai:hover {
+        background: rgba(37, 99, 235, 0.08);
+      }
+      .field-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .preview-toggle {
+        display: inline-flex;
+        gap: 2px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 2px;
+      }
+      .preview-toggle-btn {
+        border: none;
+        background: transparent;
+        color: var(--muted);
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .preview-toggle-btn.active {
+        background: var(--bg);
+        color: var(--text);
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+      }
+      .markdown-preview {
+        width: 100%;
+        min-height: 170px;
+        max-height: 360px;
+        overflow-y: auto;
+        padding: 10px 12px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: var(--surface);
+        color: var(--text);
+        font-size: 12.5px;
+        line-height: 1.55;
+      }
+      .markdown-preview h1,
+      .markdown-preview h2,
+      .markdown-preview h3 {
+        margin: 8px 0 4px;
+        font-size: 13.5px;
+        font-weight: 700;
+        color: var(--text);
+      }
+      .markdown-preview h1:first-child,
+      .markdown-preview h2:first-child,
+      .markdown-preview h3:first-child {
+        margin-top: 0;
+      }
+      .markdown-preview p {
+        margin: 4px 0;
+      }
+      .markdown-preview ul {
+        margin: 4px 0;
+        padding-left: 18px;
+      }
+      .markdown-preview li {
+        margin: 2px 0;
+      }
+      .markdown-preview code {
+        padding: 1px 4px;
+        border-radius: 4px;
+        background: rgba(127, 127, 127, 0.16);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 11.5px;
+      }
+      .markdown-preview a {
+        color: var(--accent);
+        text-decoration: underline;
+      }
+      .markdown-preview-empty {
+        color: var(--muted);
+      }
+      .ai-meta {
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .status-banner {
+        display: none;
+        padding: 8px 10px;
+        border-radius: 7px;
+        font-size: 12px;
+        font-weight: 600;
+        border: 1px solid var(--border);
+        background: var(--surface);
+        color: var(--muted);
+      }
+      .status-banner.visible {
+        display: block;
+      }
+      .status-banner.saving {
+        color: var(--accent);
+        border-color: rgba(37, 99, 235, 0.35);
+      }
+      .status-banner.success {
+        color: var(--ok);
+        background: var(--ok-bg);
+        border-color: rgba(22, 163, 74, 0.35);
+      }
+      .status-banner.queued {
+        color: var(--warn);
+        background: var(--warn-bg);
+        border-color: rgba(217, 119, 6, 0.35);
+      }
+      .status-banner.error {
+        color: var(--err);
+        background: var(--err-bg);
+        border-color: rgba(220, 38, 38, 0.35);
+      }
+      .section-title {
+        font-size: 12px;
+        font-weight: 700;
+        margin-top: 4px;
+      }
+      .recent-list {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .recent-item {
+        padding: 8px 10px;
+        border-radius: 7px;
+        border: 1px solid var(--border);
+        background: var(--surface);
+        cursor: pointer;
+      }
+      .recent-item-title {
+        font-weight: 600;
+        font-size: 12.5px;
+        margin-bottom: 2px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .recent-item-meta {
+        font-size: 11px;
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="header">
+        <div class="brand">
+          <img src="icons/icon128.png" alt="BullsNote" />
+          <span>BullsNote Sidekick</span>
+        </div>
+        <div class="status" id="statusBadge" title="로컬 BullsNote 연결 상태">
+          <span id="statusText">○ 확인 중...</span>
+        </div>
+      </div>
+
+      <div class="tabs" role="tablist">
+        <button class="tab-btn active" data-mode="note" type="button">노트</button>
+        <button class="tab-btn" data-mode="todo" type="button">할일</button>
+        <button class="tab-btn" data-mode="daily" type="button">오늘 메모</button>
+      </div>
+
+      <div class="meta-row">
+        <span class="target-badge" id="targetLocationBadge">저장 위치: 📁 03_Resources</span>
+        <label class="checkbox-label">
+          <input id="updateExistingInput" type="checkbox" checked />
+          <span>같은 URL 노트가 있으면 업데이트</span>
+        </label>
+      </div>
+
+      <div class="row">
+        <button class="btn btn-ai" id="aiSummaryBtn" type="button">현재 페이지 AI 요약</button>
+      </div>
+      <div class="ai-meta" id="aiMeta"></div>
+
+      <label class="field">
+        제목
+        <input id="titleInput" type="text" placeholder="페이지 제목" />
+      </label>
+
+      <label class="field">
+        URL
+        <input id="urlInput" type="text" placeholder="https://..." />
+      </label>
+
+      <label class="field">
+        태그
+        <input id="tagsInput" type="text" placeholder="#web-clip, #요약" />
+      </label>
+
+      <div class="field">
+        <div class="field-header">
+          <span>편집 미리보기</span>
+          <div class="preview-toggle" role="tablist">
+            <button class="preview-toggle-btn active" id="previewModeEditBtn" type="button">편집</button>
+            <button class="preview-toggle-btn" id="previewModeViewBtn" type="button">미리보기</button>
+          </div>
+        </div>
+        <textarea id="previewInput" placeholder="추출된 본문 또는 AI 요약 결과가 여기에 표시됩니다."></textarea>
+        <div class="markdown-preview" id="markdownPreview" hidden></div>
+      </div>
+
+      <div class="row">
+        <button class="btn btn-primary" id="savePrimaryBtn" type="button">BullsNote에 저장</button>
+      </div>
+
+      <div class="status-banner" id="statusBanner"></div>
+
+      <div class="section-title">최근 저장한 클립</div>
+      <div class="recent-list" id="recentList"></div>
+    </div>
+    <script type="module" src="sidepanel.js"></script>
+  </body>
+</html>

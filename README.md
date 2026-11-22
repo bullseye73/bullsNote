@@ -22,6 +22,7 @@ Windows · macOS · Linux 데스크톱 앱과 iPhone · iPad · Android에서 �
 - [빌드 가이드](#빌드-가이드)
 - [모바일에서 쓰기 (PWA)](#모바일에서-쓰기-pwa)
 - [AI 연결 (Gemini · MCP)](#ai-연결-gemini--mcp)
+- [웹 클리퍼 (Chrome 확장프로그램)](#웹-클리퍼-chrome-확장프로그램)
 - [프로젝트 구조](#프로젝트-구조)
 - [문제 해결](#문제-해결)
 - [라이선스](#라이선스)
@@ -275,15 +276,33 @@ AI는 버튼을 누를 때만 호출됩니다.
 
 ---
 
+## 웹 클리퍼 (Chrome 확장프로그램)
+
+브라우저에서 보고 있는 웹 페이지나 선택한 텍스트를 로컬 BullsNote 데스크톱 앱으로 바로 보내는 **BullsNote Clipper & Sidekick** Chrome 확장프로그램(Manifest V3, `extension/`)과 Electron 로컬 브리지(`electron/clipper-bridge.js`, `127.0.0.1:41905`)를 제공합니다.
+
+- **Popup & Side Panel 실시간 동기화:** `chrome.storage.local`을 통해 초안과 저장 상태를 공유하므로 팝업과 사이드 패널을 오가도 입력 내용이 그대로 유지됩니다.
+- **기본 폴더(`03_Resources`) 및 동일 URL 업데이트:** `노트` 모드는 기본적으로 `03_Resources` 폴더에 저장되며(`할일관리` · `Daily Note` 모드도 지원), 같은 URL을 다시 클립하면 중복 생성 대신 기존 노트를 업데이트합니다.
+- **Markdown → BlockNote 변환:** 클립된 마크다운 본문은 `NotesController`에서 BlockNote 블록 JSON으로 변환되어 에디터 서식 그대로 저장됩니다.
+- **AI 마크다운 요약 & 자동 키워드 태그:** Chrome 내장 AI(`Summarizer` / `LanguageModel`) 또는 로컬 규칙 기반 폴백으로 본문을 마크다운 요약하고, 제목·본문에서 핵심 키워드 태그를 자동 추출합니다(외부 서버 전송 없음).
+- **오프라인 대기열:** 데스크톱 앱이 꺼져 있으면 `chrome.storage.local` 대기열(최대 100건)에 임시 저장했다가 앱 연결 시 자동으로 일괄 전송합니다.
+- **스토어 등록 & 개인정보 보호:** 권한 근거와 Local-First 개인정보 처리방침은 [`extension/CHROMEWEBSTORE.md`](extension/CHROMEWEBSTORE.md)를 참고하세요.
+
+---
+
 ## 프로젝트 구조
 
 MVC 구조입니다. 규칙(model)은 화면과 분리된 순수 함수로 두고, 단위 테스트로 검증합니다.
 
 ```mermaid
 flowchart LR
-    subgraph Runtime["클라이언트 런타임"]
+    subgraph Runtime["클라이언트 런타임 & 확장"]
         Desktop["Desktop App (Electron 44)"]
         PWA["Web / Mobile PWA"]
+        Clipper["Chrome Extension\n(BullsNote Clipper · MV3)"]
+    end
+
+    subgraph BridgeLayer["Electron 로컬 브리지"]
+        Bridge["clipper-bridge.js\n(127.0.0.1:41905 HTTP)"]
     end
 
     subgraph App["BullsNote MVC (src/)"]
@@ -300,6 +319,8 @@ flowchart LR
 
     Desktop --> View
     PWA --> View
+    Clipper <-->|GET /health · POST /clip| Bridge
+    Bridge -->|IPC clipper:incoming| Ctrl
     View <--> Ctrl
     Ctrl --> Model
     Model --> Vault
@@ -316,8 +337,11 @@ src/
   controller/   NotesController.tsx — 앱 상태와 동작 (useNotes 컨텍스트)
   view/         화면 — 오늘, 할일(목록·보드·타임라인), 노트 에디터(NoteEditorView · EditorToolbar)·댓글(NoteCommentsView),
                 사이드바, 모바일 화면
-electron/       데스크톱 셸 — 메인·독립 창, 트레이, 저장 폴더, Google 로그인, MCP 등록
+electron/       데스크톱 셸 — 메인·독립 창, 트레이, 저장 폴더, Google 로그인, MCP 등록,
+                로컬 클리퍼 브리지(clipper-bridge.js)
   mcp/          MCP 서버 (의존성 없는 stdio 서버)
+extension/      BullsNote Clipper & Sidekick Chrome MV3 확장프로그램 (Popup · SidePanel · AI 요약 · 오프라인 큐)
+  CHROMEWEBSTORE.md  Chrome Web Store 등록 정보 및 Local-First 개인정보 처리방침
 public/         PWA 매니페스트, 서비스 워커, 아이콘
 docs/           설계 스펙과 README 이미지
 DESIGN.md       전체 시스템 아키텍처 및 구성도

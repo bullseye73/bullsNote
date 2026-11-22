@@ -72,6 +72,31 @@ export interface McpApi {
   disconnect(id: string): Promise<McpStatus>;
 }
 
+export interface ClipperPayload {
+  mode: 'note' | 'todo' | 'daily';
+  title?: string;
+  content?: string;
+  url?: string;
+  tags?: string[];
+  quickCaptureText?: string;
+  updateExisting?: boolean;
+  projectId?: string;
+  clippedAt?: number;
+}
+
+export interface ClipperInfo {
+  running: boolean;
+  port: number | null;
+  url: string | null;
+  token: string | null;
+  version: string;
+}
+
+export interface ClipperApi {
+  getInfo(): Promise<ClipperInfo>;
+  onClip(callback: (payload: ClipperPayload) => void): () => void;
+}
+
 declare global {
   interface Window {
     bullsNote?: {
@@ -84,6 +109,7 @@ declare global {
       print?: PrintApi;
       googleAuth?: GoogleAuthApi;
       mcp?: McpApi;
+      clipper?: ClipperApi;
     };
   }
 }

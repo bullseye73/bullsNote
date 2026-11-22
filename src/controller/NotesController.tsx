@@ -76,6 +76,7 @@ import { parseSearchQuery, searchNotes } from '../model/SearchService';
 import { formatDateIso } from '../model/dateUtils';
 import { GeminiService } from '../model/GeminiService';
 import { appendToDailyMemo, buildDailyNoteBlocks, isDailyNoteProject, writeDailyBriefing } from '../model/DailyNoteService';
+import { parseQuickCapture, toTaskParams } from '../model/QuickCaptureParser';
 import { buildTaskItems, getTodayBoard } from '../model/TaskQueryService';
 import {
   CustomHoliday,
@@ -128,6 +129,23 @@ function runWhenIdle(cb: () => void, timeout = 2000): () => void {
 /** 긴 비동기 루프 중간에 이벤트 루프를 양보해 입력·렌더링이 밀리지 않도록 함 */
 function yieldToMain(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function normalizeClipUrl(rawUrl?: string | null): string {
+  const trimmed = (rawUrl || '').trim();
+  if (!trimmed) return '';
+  try {
+    const u = new URL(trimmed);
+    u.hash = '';
+    let out = u.toString();
+    if (u.pathname !== '/' && out.endsWith('/')) {
+      out = out.slice(0, -1);
+    }
+    return out;
+  } catch {
+    const noHash = trimmed.split('#')[0];
+    return noHash.length > 1 && noHash.endsWith('/') ? noHash.slice(0, -1) : noHash;
+  }
 }
 
 async function getHeadless(): Promise<Headless> {
@@ -3145,6 +3163,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       reminderAt?: number | null;
       memo?: string;
       tags?: string[];
+      clipUrl?: string;
       withoutSchedule?: boolean;
       select?: boolean;
     }): string => {
@@ -3182,6 +3201,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
           ? { targetAt: params.reminderAt, repeat: 'none' as const, dismissed: false, syncToCalendar: true }
           : buildDueDateMorningReminder(resolved.dueDate, null, status);
 
+      const rawMemo = params.memo ?? '';
       const newNote = createEmptyNote({
         ...(params.id ? { id: params.id } : {}),
         title: params.title.trim() || '새 일정 작업',
@@ -3189,6 +3209,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         parentId,
         color: taskColor,
         tags: Array.from(new Set(['일정', status, ...(params.tags ?? [])])),
+        ...(params.clipUrl ? { clipUrl: params.clipUrl } : {}),
         reminder,
         todoMeta: params.withoutSchedule
           ? { status, progress: 0 }
@@ -3203,7 +3224,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         content: JSON.stringify([
           {
             type: 'paragraph',
-            content: params.memo ?? '',
+            content: rawMemo,
           },
         ]),
       });
@@ -3213,6 +3234,25 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       queueNoteSync(newNote);
       broadcastNoteUpsert(newNote);
       syncNoteReminderWithCalendar(newNote, null);
+
+      if (rawMemo && /(\n|(?:^|\s)-\s|\[[^\]]+\]\([^)]+\)|^#)/m.test(rawMemo)) {
+        void getHeadless()
+          .then((headless) => headless.toBlocks(rawMemo))
+          .then((blocks) => {
+            const richJson = JSON.stringify(blocks);
+            const updatedAt = Date.now();
+            setNotes((prev) =>
+              prev.map((n) => (n.id === newNote.id ? { ...n, content: richJson, updatedAt } : n))
+            );
+            const updatedNote: Note = { ...newNote, content: richJson, updatedAt };
+            queueNoteSync(updatedNote);
+            broadcastNoteUpsert(updatedNote);
+          })
+          .catch(() => {
+            /* fallback paragraph already saved */
+          });
+      }
+
       return newNote.id;
     },
     [queueNoteSync, syncNoteReminderWithCalendar, broadcastNoteUpsert]
@@ -3362,6 +3402,165 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     (dateStr: string, lines: string[]): string => upsertDailyNote(dateStr, (c) => writeDailyBriefing(c, lines)).id,
     [upsertDailyNote]
   );
+
+  // Chrome Clipper Extension에서 전달된 클립 수신
+  useEffect(() => {
+    if (isPopoutWindow) return;
+    const clipper = window.bullsNote?.clipper;
+    if (!clipper?.onClip) return;
+
+    const unsubscribe = clipper.onClip(async (payload) => {
+      if (!payload || typeof payload !== 'object') return;
+      const normalizedTags = Array.isArray(payload.tags)
+        ? Array.from(new Set(payload.tags.map((t) => String(t).trim().replace(/^#/, '')).filter(Boolean)))
+        : [];
+      const rawUrl = payload.url?.trim() || '';
+      const normalizedUrl = normalizeClipUrl(rawUrl);
+
+      if (payload.mode === 'todo') {
+        const parsed = parseQuickCapture(payload.quickCaptureText || payload.title || '웹 할일', new Date());
+        const params = toTaskParams(parsed);
+        const mergedTags = Array.from(new Set([...params.tags, ...normalizedTags]));
+        const memoParts = [
+          params.memo,
+          rawUrl ? `[출처](${rawUrl})` : '',
+          payload.content?.trim() || '',
+        ].filter(Boolean);
+        const memoMarkdown = memoParts.join('\n\n');
+
+        if (payload.updateExisting !== false && normalizedUrl) {
+          const existingTodo = notesRef.current.find(
+            (n) =>
+              n.projectId === TODO_PROJECT_ID &&
+              !isSystemGroupNote(n) &&
+              (n.clipUrl === normalizedUrl || (n.content || '').includes(normalizedUrl))
+          );
+          if (existingTodo) {
+            let todoContentJson = JSON.stringify([{ type: 'paragraph', content: memoMarkdown }]);
+            try {
+              const headless = await getHeadless();
+              const blocks = await headless.toBlocks(memoMarkdown);
+              todoContentJson = JSON.stringify(blocks);
+            } catch {
+              /* fallback paragraph */
+            }
+            const updatedTodo: Note = {
+              ...existingTodo,
+              title: params.title || existingTodo.title,
+              content: todoContentJson,
+              tags: Array.from(new Set([...(existingTodo.tags || []), ...mergedTags])),
+              clipUrl: normalizedUrl,
+              updatedAt: Date.now(),
+            };
+            setNotes((prev) => prev.map((n) => (n.id === existingTodo.id ? updatedTodo : n)));
+            queueNoteSync(updatedTodo);
+            broadcastNoteUpsert(updatedTodo);
+            return;
+          }
+        }
+
+        createPlannerTask({
+          ...params,
+          tags: mergedTags,
+          memo: memoMarkdown,
+          clipUrl: normalizedUrl || undefined,
+          select: false,
+        });
+        return;
+      }
+
+      if (payload.mode === 'daily') {
+        const title = payload.title?.trim() || '';
+        const headerLine = title && rawUrl ? `[${title}](${rawUrl})` : title || rawUrl || '웹 클립';
+        const contentLines = (payload.content || '')
+          .split(/\r?\n/)
+          .map((l) => l.trim())
+          .filter(Boolean);
+        const tagLine = normalizedTags.length > 0 ? normalizedTags.map((t) => `#${t}`).join(' ') : '';
+        const lines = [headerLine, ...contentLines, ...(tagLine ? [tagLine] : [])];
+        appendToDailyNote(lines);
+        return;
+      }
+
+      if (payload.mode === 'note') {
+        const title = payload.title?.trim() || '웹 클립';
+        const bodyText = (payload.content || '').trim();
+        const mdParts: string[] = [];
+        if (rawUrl) {
+          mdParts.push(`> 출처: [${title || rawUrl}](${rawUrl})`);
+        }
+        if (bodyText) {
+          mdParts.push(bodyText);
+        }
+        if (normalizedTags.length > 0) {
+          mdParts.push(normalizedTags.map((t) => `#${t}`).join(' '));
+        }
+        const markdown = mdParts.join('\n\n');
+
+        let contentJson: string;
+        try {
+          const headless = await getHeadless();
+          const blocks = await headless.toBlocks(markdown);
+          contentJson = JSON.stringify(blocks);
+        } catch {
+          const fallbackBlocks = markdown
+            ? markdown
+                .split(/\r?\n/)
+                .filter((l) => l.trim())
+                .map((l) => ({ type: 'paragraph', content: l }))
+            : [{ type: 'paragraph', content: '' }];
+          contentJson = JSON.stringify(
+            fallbackBlocks.length > 0 ? fallbackBlocks : [{ type: 'paragraph', content: '' }]
+          );
+        }
+
+        if (payload.updateExisting !== false && normalizedUrl) {
+          const existingNote = notesRef.current.find(
+            (n) =>
+              !isSystemGroupNote(n) &&
+              n.projectId !== TODO_PROJECT_ID &&
+              (n.clipUrl === normalizedUrl || (n.content || '').includes(normalizedUrl))
+          );
+          if (existingNote) {
+            const mergedTags = Array.from(new Set([...(existingNote.tags || []), ...normalizedTags]));
+            const updatedNote: Note = {
+              ...existingNote,
+              title,
+              content: contentJson,
+              tags: mergedTags,
+              clipUrl: normalizedUrl,
+              updatedAt: Date.now(),
+            };
+            setNotes((prev) => prev.map((n) => (n.id === existingNote.id ? updatedNote : n)));
+            queueNoteSync(updatedNote);
+            broadcastNoteUpsert(updatedNote);
+            return;
+          }
+        }
+
+        const explicitProject = payload.projectId
+          ? projectsRef.current.find((p) => p.id === payload.projectId)
+          : undefined;
+        const resourcesProject = projectsRef.current.find((p) =>
+          /03_Resources|Resources|자료|리소스/i.test(p.name)
+        );
+        const targetProjectId = explicitProject?.id || resourcesProject?.id || DEFAULT_PROJECT_ID;
+
+        const newNote = createEmptyNote({
+          title,
+          projectId: targetProjectId,
+          content: contentJson,
+          tags: normalizedTags,
+          ...(normalizedUrl ? { clipUrl: normalizedUrl } : {}),
+        });
+        setNotes((prev) => [newNote, ...prev]);
+        queueNoteSync(newNote);
+        broadcastNoteUpsert(newNote);
+      }
+    });
+
+    return unsubscribe;
+  }, [isPopoutWindow, createPlannerTask, appendToDailyNote, queueNoteSync, broadcastNoteUpsert]);
 
   const hasEncryptedNotes = useMemo(() => hasAnyEncryptedNotes(notes), [notes]);
 

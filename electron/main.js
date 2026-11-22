@@ -9,6 +9,7 @@ const { registerPrintIpc } = require('./print-ipc');
 const { setupTray } = require('./tray');
 const { isAppUrl } = require('./app-origin');
 const { secureHandle } = require('./ipc-guard');
+const { startClipperBridge, stopClipperBridge, getClipperInfo } = require('./clipper-bridge');
 
 const isDev = !app.isPackaged;
 app.name = 'BullsNote';
@@ -419,6 +420,11 @@ app.whenReady().then(() => {
 
   registerPrintIpc();
 
+  secureHandle('clipper:getInfo', () => getClipperInfo());
+  startClipperBridge(() => mainWindow).catch((err) => {
+    console.warn('[BullsNote] Clipper bridge start failed:', err);
+  });
+
   trayCtl = setupTray({ app }, () => mainWindow);
   createWindow();
   app.on('activate', () => {
@@ -437,6 +443,7 @@ app.on('before-quit', () => {
   if (trayCtl && typeof trayCtl.markQuitting === 'function') {
     trayCtl.markQuitting();
   }
+  stopClipperBridge().catch(() => {});
   closeAllNoteWindows();
 });
 

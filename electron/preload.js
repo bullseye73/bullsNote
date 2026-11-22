@@ -53,4 +53,12 @@ contextBridge.exposeInMainWorld('bullsNote', {
     startLogin: (opts) => ipcRenderer.invoke('googleAuth:startLogin', opts),
     refreshToken: (opts) => ipcRenderer.invoke('googleAuth:refreshToken', opts),
   },
+  clipper: {
+    getInfo: () => ipcRenderer.invoke('clipper:getInfo'),
+    onClip: (callback) => {
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on('clipper:incoming', handler);
+      return () => ipcRenderer.removeListener('clipper:incoming', handler);
+    },
+  },
 });
