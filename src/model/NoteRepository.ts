@@ -372,6 +372,59 @@ export const NoteRepository = {
   },
 };
 
+export const SEED_NOTE_IDS = new Set([
+  'seed-1',
+  'seed-1-1',
+  'seed-2',
+  'seed-todo-1',
+  'seed-todo-2',
+  'seed-todo-3',
+]);
+
+export const SEED_TODO_TITLES = new Set([
+  '빠른 입력(⌘N)으로 할일 하나 추가해 보기',
+  '할일 화면에서 목록·보드·타임라인 바꿔 보기',
+  '노트 체크리스트를 할일로 연결해 보기',
+]);
+
+/**
+ * 과거 동기화로 인해 랜덤 ID로 중복 생성된 초기 샘플 할일 노트를 제목 기준으로 1개만 남기고 정리
+ */
+export function dedupeSeedTodos(notes: Note[]): { notes: Note[]; removedIds: string[] } {
+  const groups = new Map<string, Note[]>();
+  for (const n of notes) {
+    if (n.systemGroupType) continue;
+    const title = (n.title || '').trim();
+    if (!SEED_TODO_TITLES.has(title)) continue;
+    const list = groups.get(title) || [];
+    list.push(n);
+    groups.set(title, list);
+  }
+
+  const removeSet = new Set<string>();
+  for (const list of groups.values()) {
+    if (list.length <= 1) continue;
+    // 고정 시드 ID('seed-todo-*') 또는 가장 먼저 생성된 노트를 남기고 나머지 중복 제거
+    const sorted = [...list].sort((a, b) => {
+      const aFixed = a.id.startsWith('seed-todo-') ? 0 : 1;
+      const bFixed = b.id.startsWith('seed-todo-') ? 0 : 1;
+      if (aFixed !== bFixed) return aFixed - bFixed;
+      return (a.createdAt || 0) - (b.createdAt || 0);
+    });
+    for (let i = 1; i < sorted.length; i++) {
+      removeSet.add(sorted[i].id);
+    }
+  }
+
+  if (removeSet.size === 0) {
+    return { notes, removedIds: [] };
+  }
+  return {
+    notes: notes.filter((n) => !removeSet.has(n.id)),
+    removedIds: Array.from(removeSet),
+  };
+}
+
 export function seedNotes(): Note[] {
   const now = 1700000000000;
   return [

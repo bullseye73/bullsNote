@@ -56,7 +56,7 @@ import {
   getEffectiveTodoStatus,
 } from '../model/TodoService';
 import { playChimeSound } from '../model/sound';
-import { NoteRepository, seedNotes } from '../model/NoteRepository';
+import { NoteRepository, dedupeSeedTodos, seedNotes } from '../model/NoteRepository';
 import { mergeRemoteWindowNote, parsePopoutParams, removeRemoteWindowNote } from '../model/NoteWindowSync';
 import { extractHashtags, extractHashtagsFromText, isBlocksJson, noteBodyText, parseBlocks } from '../model/HashtagService';
 import {
@@ -326,6 +326,7 @@ export interface NotesActions {
     options?: { autoReminder?: boolean }
   ): void;
   createPlannerTask(params: {
+    id?: string;
     title: string;
     parentId?: string | null;
     status?: TodoStatus;
@@ -835,7 +836,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     (async () => {
       try {
         const { notes: idbNotes, projects: idbProjects } = await NoteRepository.initAsync();
-        const baseNotes = idbNotes.length > 0 ? idbNotes : seedNotes();
+        const baseNotes = dedupeSeedTodos(idbNotes.length > 0 ? idbNotes : seedNotes()).notes;
         const { projects: ensuredProjects, notes: ensuredNotes } = ensureTodoProjectAndGroups(idbProjects, baseNotes);
         setProjects(ensuredProjects);
 
@@ -3132,6 +3133,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
    */
   const createPlannerTask = useCallback(
     (params: {
+      id?: string;
       title: string;
       parentId?: string | null;
       status?: TodoStatus;
@@ -3146,6 +3148,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       withoutSchedule?: boolean;
       select?: boolean;
     }): string => {
+      if (params.id && notesRef.current.some((n) => n.id === params.id)) {
+        return params.id;
+      }
       const status: TodoStatus = params.status || 'todo';
       const parentId =
         params.parentId && !isSystemGroupNote(params.parentId)
@@ -3178,6 +3183,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
           : buildDueDateMorningReminder(resolved.dueDate, null, status);
 
       const newNote = createEmptyNote({
+        ...(params.id ? { id: params.id } : {}),
         title: params.title.trim() || '새 일정 작업',
         projectId: TODO_PROJECT_ID,
         parentId,
@@ -3223,6 +3229,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     if (hasTodos) return;
     const today = getTodayIsoStr();
     createPlannerTask({
+      id: 'seed-todo-1',
       title: '빠른 입력(⌘N)으로 할일 하나 추가해 보기',
       startDate: today,
       dueDate: today,
@@ -3230,6 +3237,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       memo: '"내일 3시 보고서 #업무"처럼 쓰면 날짜·시각·태그를 알아서 읽어요.',
     });
     createPlannerTask({
+      id: 'seed-todo-2',
       title: '할일 화면에서 목록·보드·타임라인 바꿔 보기',
       startDate: addCalendarDays(today, 1),
       dueDate: addCalendarDays(today, 1),
@@ -3237,6 +3245,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       memo: '사이드바의 "할일"을 누르고 오른쪽 위에서 보기를 바꿔요.',
     });
     createPlannerTask({
+      id: 'seed-todo-3',
       title: '노트 체크리스트를 할일로 연결해 보기',
       startDate: today,
       dueDate: addCalendarDays(today, 5),

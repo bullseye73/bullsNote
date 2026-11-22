@@ -1,5 +1,7 @@
 // MODEL: Google Drive 클라우드 동기화 및 스토리지 서비스 (대안 2: index.json + notes/ 개별 노트 증분 동기화 + attachments/ 분리)
 import { createNoteId, Note, NoteAttachment, Project } from './Note';
+import { SEED_NOTE_IDS, dedupeSeedTodos } from './NoteRepository';
+import { isSystemGroupNote } from './TodoService';
 import { BUILTIN_OAUTH_ENV, resolveOAuthClient } from './oauthClient';
 
 const CONFIG_STORAGE_KEY = 'bullsnote.googledrive.config.v1';
@@ -1284,7 +1286,6 @@ class GoogleDriveServiceImpl {
       }
 
       // --- 2. 프로젝트 3-Way 병합 (Google Drive 스토리지 데이터 우선 정책) ---
-      const SEED_NOTE_IDS = new Set(['seed-1', 'seed-1-1', 'seed-2']);
       const isInitialLocalSync =
         !this.getConfig().lastSyncedAt && Object.keys(syncedMap).length === 0;
       const isDefaultPlaceholderProject = (p: Project) =>
@@ -1393,7 +1394,7 @@ class GoogleDriveServiceImpl {
       }
 
       const remoteHasRealNotes = Object.keys(remoteIndex.noteIndex || {}).some(
-        (id) => !SEED_NOTE_IDS.has(id),
+        (id) => !SEED_NOTE_IDS.has(id) && !isSystemGroupNote(id),
       );
 
       const finalNotesMap = new Map<string, Note>();
@@ -1505,6 +1506,32 @@ class GoogleDriveServiceImpl {
             hasRemoteChanges = true;
           }
         });
+      }
+
+        // 원격에서 중복 생성된 초기 샘플 할일 정리
+      const deduped = dedupeSeedTodos(Array.from(finalNotesMap.values()));
+      if (deduped.removedIds.length > 0) {
+        hasRemoteChanges = true;
+        shouldUpdateIndex = true;
+        for (const dupId of deduped.removedIds) {
+          finalNotesMap.delete(dupId);
+          const dupEntry = nextNoteIndex[dupId];
+          if (dupEntry?.fileId) {
+            toDeleteRemoteFileIds.push(dupEntry.fileId);
+          }
+          delete nextNoteIndex[dupId];
+          delete syncedMap[dupId];
+          this.recordDeletedNote(dupId);
+        }
+        if (toDeleteRemoteFileIds.length > 0) {
+          await runWithConcurrency(toDeleteRemoteFileIds.splice(0), 4, async (fid) => {
+            try {
+              await this.driveFetch(`/files/${fid}`, { method: 'DELETE' });
+            } catch {
+              /* ignore */
+            }
+          });
+        }
       }
 
       // 3-5. 변경된(미동기화) 로컬 노트만 병렬 업로드
