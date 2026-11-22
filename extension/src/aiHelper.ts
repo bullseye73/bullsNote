@@ -22,11 +22,11 @@ interface ChromeLanguageModelInstance {
 
 interface BuiltinAiGlobal {
   Summarizer?: {
-    availability?: () => Promise<string>;
+    availability?: (options?: Record<string, unknown>) => Promise<string>;
     create?: (options?: Record<string, unknown>) => Promise<ChromeSummarizerInstance>;
   };
   LanguageModel?: {
-    availability?: () => Promise<string>;
+    availability?: (options?: Record<string, unknown>) => Promise<string>;
     create?: (options?: Record<string, unknown>) => Promise<ChromeLanguageModelInstance>;
   };
   ai?: {
@@ -289,16 +289,20 @@ function fallbackExtractActions(text: string): AiSummaryResult {
 async function tryChromeSummarizer(text: string): Promise<string | null> {
   const g = globalThis as unknown as BuiltinAiGlobal;
   const input = text.slice(0, 8000);
+  const summarizerOptions = {
+    type: 'key-points',
+    format: 'markdown',
+    length: 'short',
+    outputLanguage: 'en',
+  };
 
   if (g.Summarizer?.create) {
     try {
-      const availability = g.Summarizer.availability ? await g.Summarizer.availability() : 'available';
+      const availability = g.Summarizer.availability
+        ? await g.Summarizer.availability(summarizerOptions)
+        : 'available';
       if (availability !== 'unavailable') {
-        const summarizer = await g.Summarizer.create({
-          type: 'key-points',
-          format: 'markdown',
-          length: 'short',
-        });
+        const summarizer = await g.Summarizer.create(summarizerOptions);
         try {
           return await summarizer.summarize(input);
         } finally {
@@ -314,11 +318,7 @@ async function tryChromeSummarizer(text: string): Promise<string | null> {
     try {
       const caps = g.ai.summarizer.capabilities ? await g.ai.summarizer.capabilities() : { available: 'readily' };
       if (caps?.available && caps.available !== 'no') {
-        const summarizer = await g.ai.summarizer.create({
-          type: 'key-points',
-          format: 'markdown',
-          length: 'short',
-        });
+        const summarizer = await g.ai.summarizer.create(summarizerOptions);
         try {
           return await summarizer.summarize(input);
         } finally {
@@ -335,12 +335,17 @@ async function tryChromeSummarizer(text: string): Promise<string | null> {
 
 async function tryChromeLanguageModel(prompt: string): Promise<string | null> {
   const g = globalThis as unknown as BuiltinAiGlobal;
+  const lmOptions = {
+    expectedOutputs: [{ type: 'text', languages: ['en'] }],
+  };
 
   if (g.LanguageModel?.create) {
     try {
-      const availability = g.LanguageModel.availability ? await g.LanguageModel.availability() : 'available';
+      const availability = g.LanguageModel.availability
+        ? await g.LanguageModel.availability(lmOptions)
+        : 'available';
       if (availability !== 'unavailable') {
-        const session = await g.LanguageModel.create();
+        const session = await g.LanguageModel.create(lmOptions);
         try {
           return await session.prompt(prompt);
         } finally {
@@ -356,7 +361,7 @@ async function tryChromeLanguageModel(prompt: string): Promise<string | null> {
     try {
       const caps = g.ai.languageModel.capabilities ? await g.ai.languageModel.capabilities() : { available: 'readily' };
       if (caps?.available && caps.available !== 'no') {
-        const session = await g.ai.languageModel.create();
+        const session = await g.ai.languageModel.create(lmOptions);
         try {
           return await session.prompt(prompt);
         } finally {
