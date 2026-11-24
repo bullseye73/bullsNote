@@ -1,0 +1,36 @@
+# [코드리뷰][bullsNote] fix(ci): deploy-pages 아티팩트 조회 실패 시 GitHub Pages REST API 폴백 배포 추가 (1111164)
+
+- **저장소**: `bullsNote`
+- **커밋**: `1111164`
+- **작성자**: Jeong Chang-Hun
+- **일시**: 2026-11-24 15:53:40
+
+---
+
+### 1. 변경 요약
+GitHub Pages 배포 시 `actions/deploy-pages@v5` 액션이 간헐적인 아티팩트 조회 오류 등으로 실패할 경우에 대비하여 `continue-on-error: true` 및 GitHub Pages REST API를 직접 호출하는 폴백(Fallback) 스텝을 추가했습니다. 아티팩트 조회를 위해 워크플로우 권한에 `actions: read`를 추가하고, REST API를 통해 아티팩트 ID 확인, OIDC 토큰 획득, 배포 생성 및 상태 폴링(최대 150초)을 직접 수행하도록 구현했습니다.
+
+---
+
+### 2. 모범 사례 / 장점
+- **배포 복원력(Resilience) 확보**: 공식 액션 내부의 일시적인 조회 실패나 타이밍 이슈 발생 시, 워크플로우 전체가 실패하지 않고 즉시 REST API로 자동 복구(Fallback) 배포를 시도하도록 설계되어 파이프라인의 안정성이 향상되었습니다.
+- **최소 권한 원칙 준수**: 아티팩트 REST API 조회를 위해 필요한 `actions: read` 권한만 정확히 추가하여 불필요한 권한 확장을 방지했습니다.
+- **배포 라이프사이클 상태 검증**: 단순히 배포 요청 API만 트리거하고 종료하는 것이 아니라, 30회 폴링(5초 간격)을 통해 최종 상태(`succeed` 또는 실패 상태)를 확인하고 에러 발생 시 명확히 파이프라인을 실패 처리(`exit 1`)하도록 구성했습니다.
+- **엄격한 셸 환경 설정**: `set -euo pipefail` 및 GitHub Actions의 `::error::` 워크플로우 명령어를 적절히 사용하여 실패 감지와 로그 가독성을 높였습니다.
+
+---
+
+### 3. 개선 제안 / 주의점
+- **OIDC 토큰 추출 로직 단순화 (`jq` 활용)**:
+  - 현재 `node -e "const d=JSON.parse(...)"`를 사용하여 JSON을 파싱하고 있습니다. 이미 스크립트 전반에서 `gh api ... --jq`를 사용하고 있고 러너 환경에 `jq`가 기본 제공되므로, `curl -fsS ... | jq -r '.value // empty'` 형태로 통일하면 코드가 더 간결해지고 런타임 오버헤드를 줄일 수 있습니다.
+- **`curl` 실패 감지 (`-f` 플래그 추가)**:
+  - `curl -sS`는 HTTP 4xx/5xx 응답을 받아도 비정상 종료(non-zero exit)되지 않아 JSON 파싱 단계에서 비정상 에러가 발생할 수 있습니다. `curl -fsS` 플래그를 사용하여 HTTP 레벨의 오류도 즉시 trap되도록 보완하는 것을 권장합니다.
+- **아티팩트 조회 재시도(Retry) 고려**:
+  - `actions/deploy-pages`가 아티팩트 조회를 실패한 원인이 아티팩트 API의 전파 지연(propagation delay)일 경우, 폴백 스텝 첫 줄의 `gh api .../artifacts` 호출 역시 즉시 빈 값을 반환할 가능성이 있습니다. 아티팩트 ID를 조회할 때 1~2회 짧은 retry/sleep을 두면 폴백 성공률이 더 높아집니다.
+- **성공 시 Page URL 출력 누락**:
+  - 기존 액션은 배포 완료 후 결과 URL을 스텝 summary나 output에 제공합니다. 폴백 성공 시 `gh api "repos/${{ github.repository }}/pages" --jq '.html_url'`을 로그나 `$GITHUB_STEP_SUMMARY`에 남겨주면 배포 확인이 훨씬 수월해집니다.
+
+---
+
+### 4. 한 줄 총평
+배포 액션의 간헐적 오류를 직접 API 호출로 우회하여 CI/CD 신뢰성을 효과적으로 높인 훌륭한 폴백 구현이며, 토큰 파싱 간소화 및 curl 플래그 보완을 더하면 더욱 견고해질 것입니다.
