@@ -8,7 +8,6 @@ on:
 
 permissions:
   contents: read
-  actions: read
   pages: write
   id-token: write
 
@@ -44,25 +43,11 @@ jobs:
         uses: actions/configure-pages@v5
 
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: './dist'
 
-      - name: Wait for artifact propagation
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          for i in 1 2 3 4 5 6; do
-            count=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts?name=github-pages" --jq '.total_count' 2>/dev/null || echo 0)
-            if [ "${count:-0}" -ge 1 ]; then
-              echo "Artifact github-pages is ready (count=$count)."
-              exit 0
-            fi
-            echo "Waiting for artifact metadata propagation (attempt $i/6)..."
-            sleep 5
-          done
-
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
 
