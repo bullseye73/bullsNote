@@ -27,6 +27,7 @@ let currentWindowId: number | undefined;
 
 const statusBadge = document.getElementById('statusBadge') as HTMLDivElement;
 const statusText = document.getElementById('statusText') as HTMLSpanElement;
+const versionBadge = document.getElementById('versionBadge') as HTMLSpanElement;
 const targetLocationBadge = document.getElementById('targetLocationBadge') as HTMLSpanElement;
 const updateExistingInput = document.getElementById('updateExistingInput') as HTMLInputElement;
 const titleInput = document.getElementById('titleInput') as HTMLInputElement;
@@ -300,5 +301,10 @@ onClipperStorageChange((changes) => {
     applyStatusToUi(changes.status);
   }
 });
+
+const extensionVersion = chrome.runtime?.getManifest?.().version ?? '0.2.0';
+if (versionBadge) {
+  versionBadge.textContent = `v${extensionVersion}`;
+}
 
 void Promise.all([initializeFromDraftAndTab(), refreshConnectionAndQueue()]);

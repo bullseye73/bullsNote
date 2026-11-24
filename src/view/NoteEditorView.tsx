@@ -105,6 +105,7 @@ import { NoteCommentsView } from './NoteCommentsView';
 import { GoogleDriveService } from '../model/GoogleDriveService';
 import { createSyntaxExtension, getAppSchema } from '../model/codeHighlight';
 import {
+  buildPrintableFallbackHtml,
   canNativeShare,
   copyHtmlToClipboard,
   copyPlainTextToClipboard,
@@ -1500,10 +1501,27 @@ export function NoteEditorView({
     setTimeout(() => setCopyFeedback(null), 2500);
   }, []);
 
+  // 현재 선택된 노트의 인쇄/PDF용 단독 HTML 생성
+  const buildCurrentNotePrintableHtml = useCallback(() => {
+    const title = selected?.title || '노트';
+    const meta = selected
+      ? {
+          createdAt: selected.createdAt,
+          updatedAt: selected.updatedAt,
+          tags: selected.tags,
+        }
+      : undefined;
+    if (currentEditor) {
+      return exportToHtmlDocument(currentEditor, title, meta);
+    }
+    return buildPrintableFallbackHtml(title, noteBodyText(selected?.content || ''), meta);
+  }, [currentEditor, selected]);
+
   // 인쇄 실행
   const handlePrint = useCallback(() => {
-    void printNote(selected?.title || '노트');
-  }, [selected?.title]);
+    const html = buildCurrentNotePrintableHtml();
+    void printNote(selected?.title || '노트', html);
+  }, [buildCurrentNotePrintableHtml, selected?.title]);
 
   // 단축키: Ctrl + P (Mac: Cmd + P) -> 인쇄 미리보기 열기
   useEffect(() => {
@@ -1520,11 +1538,12 @@ export function NoteEditorView({
   // PDF 내보내기
   const handleExportPdf = useCallback(async () => {
     if (!selected) return;
-    const res = await exportToPdf(selected.title || '노트');
+    const html = buildCurrentNotePrintableHtml();
+    const res = await exportToPdf(selected.title || '노트', html);
     if (res.success) {
       showFeedback('PDF 내보내기 완료');
     }
-  }, [selected, showFeedback]);
+  }, [selected, buildCurrentNotePrintableHtml, showFeedback]);
 
   // 마크다운 복사
   const handleCopyMarkdown = useCallback(async () => {

@@ -72,6 +72,15 @@
         height: 20px;
         border-radius: 4px;
       }
+      .version-badge {
+        font-size: 10.5px;
+        font-weight: 600;
+        color: var(--muted);
+        background: var(--surface);
+        border: 1px solid var(--border);
+        padding: 1px 6px;
+        border-radius: 999px;
+      }
       .status {
         display: inline-flex;
         align-items: center;
@@ -299,6 +308,82 @@
         font-size: 11px;
         color: var(--muted);
       }
+      .settings-panel {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+        overflow: hidden;
+      }
+      .settings-summary {
+        padding: 8px 10px;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text);
+        cursor: pointer;
+        user-select: none;
+        list-style: none;
+      }
+      .settings-summary::-webkit-details-marker {
+        display: none;
+      }
+      .settings-summary::after {
+        content: '▾';
+        float: right;
+        color: var(--muted);
+        transition: transform 0.15s ease;
+      }
+      .settings-panel[open] .settings-summary::after {
+        transform: rotate(180deg);
+      }
+      .settings-body {
+        padding: 8px 10px 10px;
+        border-top: 1px solid var(--border);
+        background: var(--bg);
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .version-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 6px;
+      }
+      .version-item {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        padding: 6px 8px;
+        border-radius: 6px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+      }
+      .version-label {
+        font-size: 10.5px;
+        color: var(--muted);
+      }
+      .version-value {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text);
+      }
+      .instructions-textarea {
+        min-height: 84px;
+        font-size: 12px;
+      }
+      .settings-actions {
+        display: flex;
+        gap: 6px;
+      }
+      .settings-actions .btn {
+        flex: 1;
+        padding: 6px 8px;
+        font-size: 11.5px;
+      }
+      .settings-status {
+        min-height: 14px;
+        font-size: 11px;
+        color: var(--ok);
+      }
       .status-banner {
         display: none;
         padding: 8px 10px;
@@ -368,6 +453,7 @@
         <div class="brand">
           <img src="icons/icon128.png" alt="BullsNote" />
           <span>BullsNote Sidekick</span>
+          <span class="version-badge" id="versionBadge">v0.2.0</span>
         </div>
         <div class="status" id="statusBadge" title="로컬 BullsNote 연결 상태">
           <span id="statusText">○ 확인 중...</span>
@@ -392,6 +478,35 @@
         <button class="btn btn-ai" id="aiSummaryBtn" type="button">현재 페이지 AI 요약</button>
       </div>
       <div class="ai-meta" id="aiMeta"></div>
+
+      <details class="settings-panel" id="settingsPanel">
+        <summary class="settings-summary">⚙️ AI 요약 지침 &amp; 앱 버전</summary>
+        <div class="settings-body">
+          <div class="version-grid">
+            <div class="version-item">
+              <span class="version-label">확장 프로그램</span>
+              <span class="version-value" id="extVersionValue">v0.2.0</span>
+            </div>
+            <div class="version-item">
+              <span class="version-label">BullsNote 앱</span>
+              <span class="version-value" id="appVersionValue">확인 중...</span>
+            </div>
+          </div>
+          <label class="field">
+            AI 요약 지침
+            <textarea
+              id="aiInstructionsInput"
+              class="instructions-textarea"
+              placeholder="AI 요약 시 적용할 지침을 입력하세요..."
+            ></textarea>
+          </label>
+          <div class="settings-actions">
+            <button class="btn" id="saveInstructionsBtn" type="button">지침 저장</button>
+            <button class="btn" id="resetInstructionsBtn" type="button">기본값 복원</button>
+          </div>
+          <div class="settings-status" id="instructionsStatus"></div>
+        </div>
+      </details>
 
       <label class="field">
         제목

@@ -18,10 +18,38 @@ export function exportToMarkdown(editor: AnyEditor, title: string): string {
   return bodyMarkdown;
 }
 
-/** BlockNote 문서를 단독 열람 가능한 깔끔한 스타일의 HTML 문서로 변환 */
-export function exportToHtmlDocument(editor: AnyEditor, title: string): string {
-  const bodyHtml = editor.blocksToHTMLLossy(editor.document);
+export interface PrintableNoteMeta {
+  createdAt?: number;
+  updatedAt?: number;
+  tags?: string[];
+}
+
+function buildMetaBarHtml(meta?: PrintableNoteMeta): string {
+  if (!meta) return '';
+  const parts: string[] = [];
+  if (typeof meta.createdAt === 'number' && Number.isFinite(meta.createdAt)) {
+    parts.push(`<span>생성: ${escapeHtml(new Date(meta.createdAt).toLocaleString('ko-KR'))}</span>`);
+  }
+  if (typeof meta.updatedAt === 'number' && Number.isFinite(meta.updatedAt)) {
+    parts.push(`<span>수정: ${escapeHtml(new Date(meta.updatedAt).toLocaleString('ko-KR'))}</span>`);
+  }
+  if (Array.isArray(meta.tags) && meta.tags.length > 0) {
+    const formattedTags = meta.tags
+      .map((t) => `#${String(t).replace(/^#/, '')}`)
+      .join(' ');
+    parts.push(`<span>태그: ${escapeHtml(formattedTags)}</span>`);
+  }
+  if (parts.length === 0) return '';
+  return `<div class="note-meta">${parts.join('')}</div>`;
+}
+
+function renderPrintableHtmlDocument(
+  title: string,
+  bodyHtml: string,
+  meta?: PrintableNoteMeta
+): string {
   const displayTitle = title.trim() || '제목 없는 노트';
+  const metaHtml = buildMetaBarHtml(meta);
 
   return `<!DOCTYPE html>
 <html lang="ko">
@@ -42,9 +70,17 @@ export function exportToHtmlDocument(editor: AnyEditor, title: string): string {
     h1.note-title {
       font-size: 2rem;
       font-weight: 700;
-      margin-bottom: 24px;
+      margin-bottom: ${metaHtml ? '10px' : '24px'};
       border-bottom: 2px solid #eaeaea;
       padding-bottom: 12px;
+    }
+    .note-meta {
+      font-size: 0.85rem;
+      color: #555555;
+      margin-bottom: 22px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
     }
     img {
       max-width: 100%;
@@ -85,21 +121,51 @@ export function exportToHtmlDocument(editor: AnyEditor, title: string): string {
       background-color: #f3f4f6;
     }
     @media print {
+      @page {
+        size: A4 portrait;
+        margin: 15mm;
+        background: #ffffff;
+      }
       body {
         max-width: 100%;
         margin: 0;
         padding: 0;
+      }
+      pre, code, table, img, blockquote {
+        break-inside: avoid;
+        page-break-inside: avoid;
       }
     }
   </style>
 </head>
 <body>
   <h1 class="note-title">${escapeHtml(displayTitle)}</h1>
+  ${metaHtml}
   <div class="note-content">
     ${bodyHtml}
   </div>
 </body>
 </html>`;
+}
+
+/** BlockNote 문서를 단독 열람 가능한 깔끔한 스타일의 HTML 문서로 변환 */
+export function exportToHtmlDocument(
+  editor: AnyEditor,
+  title: string,
+  meta?: PrintableNoteMeta
+): string {
+  const bodyHtml = editor.blocksToHTMLLossy(editor.document);
+  return renderPrintableHtmlDocument(title, bodyHtml, meta);
+}
+
+/** 에디터 인스턴스가 없을 때(예: 로드 직후/텍스트 폴백) 사용할 인쇄용 HTML 문서 생성 */
+export function buildPrintableFallbackHtml(
+  title: string,
+  plainText: string,
+  meta?: PrintableNoteMeta
+): string {
+  const bodyHtml = `<div style="white-space: pre-wrap;">${escapeHtml(plainText || '')}</div>`;
+  return renderPrintableHtmlDocument(title, bodyHtml, meta);
 }
 
 function escapeHtml(text: string): string {
@@ -181,10 +247,10 @@ export async function shareNative(title: string, text: string): Promise<boolean>
  * 인쇄 (Electron: 실제 출력물 PDF를 미리보기 창에 띄우고 그 창에서 인쇄 / 브라우저: 기본 인쇄창)
  * Electron의 window.print()는 Chromium 인쇄 미리보기를 지원하지 않아 시스템 인쇄창에 미리보기가 비어 나온다.
  */
-export async function printNote(title: string): Promise<{ success: boolean }> {
+export async function printNote(title: string, html?: string): Promise<{ success: boolean }> {
   if (window.bullsNote?.print?.preview) {
     try {
-      const res = await window.bullsNote.print.preview(title);
+      const res = await window.bullsNote.print.preview(title, html);
       if (res.success) return { success: true };
       console.warn('인쇄 미리보기 창 생성 실패, window.print()로 fallback:', res.error);
     } catch (err) {
@@ -196,11 +262,14 @@ export async function printNote(title: string): Promise<{ success: boolean }> {
 }
 
 /** PDF 내보내기 (Electron 네이티브 PDF 저장 또는 브라우저 인쇄 fallback) */
-export async function exportToPdf(title: string): Promise<{ success: boolean; canceled?: boolean }> {
+export async function exportToPdf(
+  title: string,
+  html?: string
+): Promise<{ success: boolean; canceled?: boolean }> {
   // Electron 환경인 경우 네이티브 showSaveDialog + printToPDF 실행
   if (window.bullsNote?.print?.exportPdf) {
     try {
-      const res = await window.bullsNote.print.exportPdf(title);
+      const res = await window.bullsNote.print.exportPdf(title, html);
       if (res.canceled) return { success: false, canceled: true };
       if (res.success) return { success: true };
     } catch (err) {

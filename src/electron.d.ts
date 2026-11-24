@@ -19,9 +19,9 @@ export interface NotificationApi {
 }
 
 export interface PrintApi {
-  exportPdf(title: string): Promise<{ success: boolean; filePath?: string; canceled?: boolean; error?: string }>;
+  exportPdf(title: string, html?: string): Promise<{ success: boolean; filePath?: string; canceled?: boolean; error?: string }>;
   /** 인쇄될 PDF를 미리보기 창으로 연다 (창 안의 인쇄 버튼으로 출력) */
-  preview(title: string): Promise<{ success: boolean; error?: string }>;
+  preview(title: string, html?: string): Promise<{ success: boolean; error?: string }>;
 }
 
 export interface GoogleAuthResult {

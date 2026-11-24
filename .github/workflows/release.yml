@@ -99,6 +99,23 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build & Package Chrome Extension
+        run: |
+          cd extension
+          npm ci
+          npm run build
+          EXT_VERSION=$(node -p "require('./package.json').version")
+          mkdir -p ../dist-binaries
+          (cd dist && zip -r "../../dist-binaries/BullsNote-Clipper-Extension-v${EXT_VERSION}.zip" .)
+
       - name: Download all build artifacts
         uses: actions/download-artifact@v4
         with:

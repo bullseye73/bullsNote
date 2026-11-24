@@ -20,6 +20,13 @@ export interface ClipperStatus {
 
 const CLIPPER_DRAFT_KEY = 'bullsnote_clipper_draft';
 const CLIPPER_STATUS_KEY = 'bullsnote_clipper_status';
+const AI_INSTRUCTIONS_KEY = 'bullsnote_ai_instructions';
+
+export const DEFAULT_AI_SUMMARY_INSTRUCTIONS = [
+  '- 한국어 마크다운으로 핵심 내용을 3~5개 불릿(- )으로 요약하세요.',
+  '- 중요한 개념, 수치, 실행 포인트를 우선 포함하세요.',
+  '- 불필요한 서론/인사말 없이 요약 본문만 작성하세요.',
+].join('\n');
 
 export const DEFAULT_DRAFT: ClipperDraft = {
   url: '',
@@ -119,8 +126,28 @@ export async function setStatus(
   return next;
 }
 
+function normalizeAiInstructions(raw: unknown): string {
+  if (typeof raw !== 'string') return DEFAULT_AI_SUMMARY_INSTRUCTIONS;
+  const normalized = raw.replace(/\r\n/g, '\n').trim();
+  return normalized.length > 0 ? normalized : DEFAULT_AI_SUMMARY_INSTRUCTIONS;
+}
+
+export async function loadAiInstructions(): Promise<string> {
+  if (!chrome?.storage?.local) return DEFAULT_AI_SUMMARY_INSTRUCTIONS;
+  const res = await chrome.storage.local.get(AI_INSTRUCTIONS_KEY);
+  return normalizeAiInstructions(res[AI_INSTRUCTIONS_KEY]);
+}
+
+export async function saveAiInstructions(instructions: string): Promise<string> {
+  const next = normalizeAiInstructions(instructions);
+  if (chrome?.storage?.local) {
+    await chrome.storage.local.set({ [AI_INSTRUCTIONS_KEY]: next });
+  }
+  return next;
+}
+
 export function onClipperStorageChange(
-  cb: (changes: { draft?: ClipperDraft; status?: ClipperStatus }) => void,
+  cb: (changes: { draft?: ClipperDraft; status?: ClipperStatus; aiInstructions?: string }) => void,
 ): () => void {
   if (!chrome?.storage?.onChanged) return () => {};
 
@@ -129,7 +156,7 @@ export function onClipperStorageChange(
     areaName: string,
   ) => {
     if (areaName !== 'local') return;
-    const payload: { draft?: ClipperDraft; status?: ClipperStatus } = {};
+    const payload: { draft?: ClipperDraft; status?: ClipperStatus; aiInstructions?: string } = {};
     let hasChange = false;
     if (CLIPPER_DRAFT_KEY in changes) {
       payload.draft = normalizeDraft(changes[CLIPPER_DRAFT_KEY].newValue);
@@ -137,6 +164,10 @@ export function onClipperStorageChange(
     }
     if (CLIPPER_STATUS_KEY in changes) {
       payload.status = normalizeStatus(changes[CLIPPER_STATUS_KEY].newValue);
+      hasChange = true;
+    }
+    if (AI_INSTRUCTIONS_KEY in changes) {
+      payload.aiInstructions = normalizeAiInstructions(changes[AI_INSTRUCTIONS_KEY].newValue);
       hasChange = true;
     }
     if (hasChange) {

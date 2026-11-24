@@ -41,8 +41,8 @@ contextBridge.exposeInMainWorld('bullsNote', {
     writeSidecar: (data) => ipcRenderer.invoke('vault:writeSidecar', data),
   },
   print: {
-    exportPdf: (title) => ipcRenderer.invoke('print:exportPdf', { title }),
-    preview: (title) => ipcRenderer.invoke('print:preview', { title }),
+    exportPdf: (title, html) => ipcRenderer.invoke('print:exportPdf', { title, html }),
+    preview: (title, html) => ipcRenderer.invoke('print:preview', { title, html }),
   },
   mcp: {
     status: () => ipcRenderer.invoke('mcp:status'),

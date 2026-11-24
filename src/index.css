@@ -370,6 +370,12 @@ body,
     padding-left: 0 !important;
   }
 
+  .note-editor-wrapper,
+  .note-editor-stack {
+    display: block !important;
+    width: 100% !important;
+  }
+
   /* 인쇄 전용 헤더 노출 */
   .print-only {
     display: block !important;

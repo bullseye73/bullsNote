@@ -1,5 +1,7 @@
+import fs from 'fs';
 import http from 'http';
 import { createRequire } from 'module';
+import path from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { formatClipMarkdown, parseTagsInput } from '../../../extension/src/clipperClient';
 import { extractKeywordTags, summarizePageAsMarkdown } from '../../../extension/src/aiHelper';
@@ -102,6 +104,80 @@ describe('aiHelper (extractKeywordTags & summarizePageAsMarkdown)', () => {
     expect(result.tags.length).toBeGreaterThanOrEqual(3);
     expect(result.tags.length).toBeLessThanOrEqual(5);
     expect(result.tags).toContain('BullsNote');
+  });
+
+  it('summarizePageAsMarkdown은 customInstructions를 Summarizer context 및 LanguageModel system 프롬프트에 전달하고 지침 에코를 거부한다', async () => {
+    const g = globalThis as Record<string, unknown>;
+    const origSummarizer = g.Summarizer;
+    const origLanguageModel = g.LanguageModel;
+
+    const customInstructions = '- 수치와 실행 포인트를 우선으로 3줄 요약하세요.';
+
+    try {
+      const summarizeMock = vi.fn().mockResolvedValue('- 핵심 수치 42% 개선\n- 즉시 배포 가능');
+      g.Summarizer = {
+        availability: vi.fn().mockResolvedValue('available'),
+        create: vi.fn().mockResolvedValue({
+          summarize: summarizeMock,
+          destroy: vi.fn(),
+        }),
+      };
+
+      const sumRes = await summarizePageAsMarkdown(
+        '성능 개선 보고서',
+        '이번 릴리스에서는 렌더링 속도가 42% 개선되었습니다. 바로 배포를 진행할 수 있습니다.',
+        customInstructions,
+      );
+      expect(sumRes.engine).toBe('chrome-ai');
+      expect(summarizeMock).toHaveBeenCalledWith(expect.any(String), {
+        context: customInstructions,
+      });
+
+      delete g.Summarizer;
+      const lmCreateMock = vi.fn().mockResolvedValue({
+        prompt: vi.fn().mockResolvedValue('- 수치와 실행 포인트를 우선으로 3줄 요약하세요.'),
+        destroy: vi.fn(),
+      });
+      g.LanguageModel = {
+        availability: vi.fn().mockResolvedValue('available'),
+        create: lmCreateMock,
+      };
+
+      const echoRes = await summarizePageAsMarkdown(
+        '성능 개선 보고서',
+        '이번 릴리스에서는 렌더링 속도가 42% 개선되었습니다. 바로 배포를 진행할 수 있습니다.',
+        customInstructions,
+      );
+
+      expect(lmCreateMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          initialPrompts: [
+            expect.objectContaining({
+              role: 'system',
+              content: expect.stringContaining(customInstructions),
+            }),
+          ],
+        }),
+      );
+      expect(echoRes.engine).toBe('fallback');
+      expect(echoRes.markdown).toContain('## 핵심 요약');
+    } finally {
+      if (origSummarizer === undefined) delete g.Summarizer;
+      else g.Summarizer = origSummarizer;
+      if (origLanguageModel === undefined) delete g.LanguageModel;
+      else g.LanguageModel = origLanguageModel;
+    }
+  });
+});
+
+describe('extension version sync', () => {
+  it('extension/package.json과 extension/manifest.json의 버전이 0.2.0으로 일치한다', () => {
+    const extDir = path.resolve(__dirname, '../../../extension');
+    const pkg = JSON.parse(fs.readFileSync(path.join(extDir, 'package.json'), 'utf8')) as { version: string };
+    const manifest = JSON.parse(fs.readFileSync(path.join(extDir, 'manifest.json'), 'utf8')) as { version: string };
+
+    expect(pkg.version).toBe('0.2.0');
+    expect(manifest.version).toBe(pkg.version);
   });
 });
 

@@ -16,8 +16,50 @@ function safeTitle(title) {
   return String(title || '노트').slice(0, 120).replace(/[/\\?%*:|"<>]/g, '_').trim() || '노트';
 }
 
-/** 요청한 창의 현재 화면을 인쇄용(@media print) PDF로 렌더링 */
-function renderPdf(webContents) {
+/**
+ * 전달된 HTML이 있으면 전용 오프스크린 BrowserWindow에서 단독으로 PDF를 렌더링한다.
+ * (메인 창의 멀티 패널이나 목록이 인쇄되는 문제를 원천 차단)
+ * HTML이 없으면 호출한 webContents의 현재 화면(@media print)으로 폴백한다.
+ */
+async function renderPdf(webContents, html) {
+  if (typeof html === 'string' && html.trim().length > 0) {
+    let dir = null;
+    let printWin = null;
+    try {
+      dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'bullsnote-print-html-'));
+      const htmlPath = path.join(dir, 'note.html');
+      await fs.promises.writeFile(htmlPath, html, 'utf8');
+
+      printWin = new BrowserWindow({
+        show: false,
+        width: 900,
+        height: 1200,
+        backgroundColor: '#ffffff',
+        webPreferences: {
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true,
+        },
+      });
+
+      await printWin.loadFile(htmlPath);
+      await printWin.webContents
+        .executeJavaScript(
+          'document.fonts && document.fonts.ready ? document.fonts.ready.then(() => true) : true'
+        )
+        .catch(() => {});
+
+      return await printWin.webContents.printToPDF(PDF_OPTIONS);
+    } finally {
+      if (printWin && !printWin.isDestroyed()) {
+        printWin.destroy();
+      }
+      if (dir) {
+        await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => {});
+      }
+    }
+  }
+
   return webContents.printToPDF(PDF_OPTIONS);
 }
 
@@ -55,7 +97,7 @@ async function openPdfPreview(parent, pdfData, title) {
 }
 
 function registerPrintIpc() {
-  secureHandle('print:exportPdf', async (event, { title } = {}) => {
+  secureHandle('print:exportPdf', async (event, { title, html } = {}) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) return { success: false, error: '창을 찾을 수 없습니다.' };
 
@@ -67,7 +109,7 @@ function registerPrintIpc() {
     if (canceled || !filePath) return { success: false, canceled: true };
 
     try {
-      await fs.promises.writeFile(filePath, await renderPdf(event.sender));
+      await fs.promises.writeFile(filePath, await renderPdf(event.sender, html));
       return { success: true, filePath };
     } catch (err) {
       console.error('PDF 내보내기 실패:', err);
@@ -75,11 +117,11 @@ function registerPrintIpc() {
     }
   });
 
-  secureHandle('print:preview', async (event, { title } = {}) => {
+  secureHandle('print:preview', async (event, { title, html } = {}) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) return { success: false, error: '창을 찾을 수 없습니다.' };
     try {
-      await openPdfPreview(win, await renderPdf(event.sender), title);
+      await openPdfPreview(win, await renderPdf(event.sender, html), title);
       return { success: true };
     } catch (err) {
       console.error('인쇄 미리보기 실패:', err);

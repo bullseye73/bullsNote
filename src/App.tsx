@@ -525,7 +525,7 @@ function Shell() {
               </Box>
             )}
             {mobilePane === 'list' && (
-              <Box style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+              <Box className="no-print" style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
                 {plannerViewActive ? <PlannerView /> : <ListPanel />}
               </Box>
             )}

@@ -1,12 +1,14 @@
 {
   "name": "bullsnote-clipper-extension",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "BullsNote Clipper & Sidekick Chrome Extension (Manifest V3)",
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "build": "tsc --noEmit && node build.mjs"
+    "build": "tsc --noEmit && node build.mjs",
+    "version:patch": "npm version patch --no-git-tag-version && npm run build",
+    "version:minor": "npm version minor --no-git-tag-version && npm run build"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.287",

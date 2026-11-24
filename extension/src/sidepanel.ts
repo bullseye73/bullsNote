@@ -12,17 +12,27 @@ import {
 import {
   ClipperDraft,
   ClipperStatus,
+  DEFAULT_AI_SUMMARY_INSTRUCTIONS,
   getSuccessSaveMessage,
   getTargetLocationBadge,
+  loadAiInstructions,
   loadDraft,
   loadStatus,
   onClipperStorageChange,
+  saveAiInstructions,
   saveDraft,
   setStatus,
 } from './clipperState';
 
 const statusBadge = document.getElementById('statusBadge') as HTMLDivElement;
 const statusText = document.getElementById('statusText') as HTMLSpanElement;
+const versionBadge = document.getElementById('versionBadge') as HTMLSpanElement;
+const extVersionValue = document.getElementById('extVersionValue') as HTMLSpanElement;
+const appVersionValue = document.getElementById('appVersionValue') as HTMLSpanElement;
+const aiInstructionsInput = document.getElementById('aiInstructionsInput') as HTMLTextAreaElement;
+const saveInstructionsBtn = document.getElementById('saveInstructionsBtn') as HTMLButtonElement;
+const resetInstructionsBtn = document.getElementById('resetInstructionsBtn') as HTMLButtonElement;
+const instructionsStatus = document.getElementById('instructionsStatus') as HTMLDivElement;
 const targetLocationBadge = document.getElementById('targetLocationBadge') as HTMLSpanElement;
 const updateExistingInput = document.getElementById('updateExistingInput') as HTMLInputElement;
 const aiSummaryBtn = document.getElementById('aiSummaryBtn') as HTMLButtonElement;
@@ -42,6 +52,35 @@ const tabButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('.tab
 let currentMode: ClipMode = 'note';
 let previewMode: 'edit' | 'view' = 'edit';
 let rawExtractedText = '';
+let instructionsSaveTimer: number | undefined;
+let instructionsStatusTimer: number | undefined;
+
+function showInstructionsFeedback(message: string): void {
+  if (!instructionsStatus) return;
+  instructionsStatus.textContent = message;
+  if (instructionsStatusTimer !== undefined) {
+    window.clearTimeout(instructionsStatusTimer);
+  }
+  instructionsStatusTimer = window.setTimeout(() => {
+    instructionsStatus.textContent = '';
+  }, 3000);
+}
+
+async function persistAiInstructions(rawValue: string, feedbackMessage = '✓ AI 요약 지침이 저장되었습니다.'): Promise<string> {
+  const saved = await saveAiInstructions(rawValue);
+  if (aiInstructionsInput && aiInstructionsInput.value !== saved && document.activeElement !== aiInstructionsInput) {
+    aiInstructionsInput.value = saved;
+  }
+  showInstructionsFeedback(feedbackMessage);
+  return saved;
+}
+
+async function initializeAiInstructions(): Promise<void> {
+  const instructions = await loadAiInstructions();
+  if (aiInstructionsInput) {
+    aiInstructionsInput.value = instructions;
+  }
+}
 
 function isSafeHttpUrl(rawUrl: string): boolean {
   const trimmed = rawUrl.trim();
@@ -210,9 +249,15 @@ async function refreshHealth(): Promise<void> {
   if (health.ok) {
     statusBadge.classList.add('online');
     statusText.textContent = `● BullsNote 실행 중${health.version ? ` v${health.version}` : ''}`;
+    if (appVersionValue) {
+      appVersionValue.textContent = health.version ? `v${health.version}` : '연결됨';
+    }
   } else {
     statusBadge.classList.remove('online');
     statusText.textContent = '○ 앱 미실행 (로컬 큐 저장)';
+    if (appVersionValue) {
+      appVersionValue.textContent = '미연결';
+    }
   }
 }
 
@@ -399,7 +444,8 @@ async function runAiPageSummary(): Promise<void> {
       return;
     }
 
-    const result = await summarizePageAsMarkdown(targetTitle, targetText);
+    const instructions = aiInstructionsInput?.value.trim() || (await loadAiInstructions());
+    const result = await summarizePageAsMarkdown(targetTitle, targetText, instructions);
     const nextTags = result.tags.length > 0 ? formatTagsString(result.tags) : tagsInput.value;
 
     titleInput.value = targetTitle;
@@ -515,6 +561,46 @@ previewModeViewBtn.addEventListener('click', () => setPreviewMode('view'));
 aiSummaryBtn.addEventListener('click', () => void runAiPageSummary());
 savePrimaryBtn.addEventListener('click', () => void saveCurrentClip());
 
+aiInstructionsInput?.addEventListener('input', () => {
+  if (instructionsSaveTimer !== undefined) {
+    window.clearTimeout(instructionsSaveTimer);
+  }
+  instructionsSaveTimer = window.setTimeout(() => {
+    void persistAiInstructions(aiInstructionsInput.value);
+  }, 500);
+});
+
+aiInstructionsInput?.addEventListener('blur', () => {
+  if (instructionsSaveTimer !== undefined) {
+    window.clearTimeout(instructionsSaveTimer);
+    instructionsSaveTimer = undefined;
+  }
+  void persistAiInstructions(aiInstructionsInput.value);
+});
+
+saveInstructionsBtn?.addEventListener('click', () => {
+  if (instructionsSaveTimer !== undefined) {
+    window.clearTimeout(instructionsSaveTimer);
+    instructionsSaveTimer = undefined;
+  }
+  void (async () => {
+    const saved = await persistAiInstructions(aiInstructionsInput.value);
+    aiInstructionsInput.value = saved;
+  })();
+});
+
+resetInstructionsBtn?.addEventListener('click', () => {
+  if (instructionsSaveTimer !== undefined) {
+    window.clearTimeout(instructionsSaveTimer);
+    instructionsSaveTimer = undefined;
+  }
+  void (async () => {
+    const saved = await saveAiInstructions(DEFAULT_AI_SUMMARY_INSTRUCTIONS);
+    aiInstructionsInput.value = saved;
+    showInstructionsFeedback('✓ 기본 AI 요약 지침으로 복원되었습니다.');
+  })();
+});
+
 onClipperStorageChange((changes) => {
   if (changes.draft) {
     applyDraftToUi(changes.draft, true);
@@ -522,6 +608,19 @@ onClipperStorageChange((changes) => {
   if (changes.status) {
     applyStatusToUi(changes.status);
   }
+  if (changes.aiInstructions !== undefined && aiInstructionsInput && document.activeElement !== aiInstructionsInput) {
+    if (aiInstructionsInput.value !== changes.aiInstructions) {
+      aiInstructionsInput.value = changes.aiInstructions;
+    }
+  }
 });
 
-void Promise.all([refreshHealth(), initializeFromDraft(), renderRecentClips()]);
+const extensionVersion = chrome.runtime?.getManifest?.().version ?? '0.2.0';
+if (versionBadge) {
+  versionBadge.textContent = `v${extensionVersion}`;
+}
+if (extVersionValue) {
+  extVersionValue.textContent = `v${extensionVersion}`;
+}
+
+void Promise.all([refreshHealth(), initializeFromDraft(), initializeAiInstructions(), renderRecentClips()]);

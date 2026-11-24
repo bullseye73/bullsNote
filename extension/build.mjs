@@ -26,7 +26,22 @@ await esbuild.build({
   logLevel: 'info',
 });
 
-fs.copyFileSync(path.join(__dirname, 'manifest.json'), path.join(distDir, 'manifest.json'));
+const pkgPath = path.join(__dirname, 'package.json');
+const manifestPath = path.join(__dirname, 'manifest.json');
+const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+
+if (pkg.version && manifest.version !== pkg.version) {
+  manifest.version = pkg.version;
+  fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+  console.log(`[extension] Synced manifest.json version -> ${pkg.version}`);
+}
+
+const distManifest = {
+  ...manifest,
+  version: pkg.version || manifest.version,
+};
+fs.writeFileSync(path.join(distDir, 'manifest.json'), `${JSON.stringify(distManifest, null, 2)}\n`, 'utf8');
 fs.copyFileSync(path.join(__dirname, 'src', 'popup.html'), path.join(distDir, 'popup.html'));
 fs.copyFileSync(path.join(__dirname, 'src', 'sidepanel.html'), path.join(distDir, 'sidepanel.html'));
 
@@ -35,4 +50,4 @@ const fallbackIcon = path.join(__dirname, '..', 'electron', 'assets', 'icon.png'
 const iconSrc = fs.existsSync(publicIcon) ? publicIcon : fallbackIcon;
 fs.copyFileSync(iconSrc, path.join(iconsDistDir, 'icon128.png'));
 
-console.log('[extension] Built MV3 bundle ->', distDir);
+console.log('[extension] Built MV3 bundle ->', distDir, `(v${distManifest.version})`);
