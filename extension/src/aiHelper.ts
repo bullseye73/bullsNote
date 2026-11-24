@@ -333,16 +333,22 @@ async function tryChromeSummarizer(text: string): Promise<string | null> {
   return null;
 }
 
-async function tryChromeLanguageModel(prompt: string): Promise<string | null> {
+async function tryChromeLanguageModel(
+  prompt: string,
+  systemPrompt?: string,
+): Promise<string | null> {
   const g = globalThis as unknown as BuiltinAiGlobal;
-  const lmOptions = {
+  const lmOptions: Record<string, unknown> = {
     expectedOutputs: [{ type: 'text', languages: ['en'] }],
+    ...(systemPrompt
+      ? { initialPrompts: [{ role: 'system', content: systemPrompt }] }
+      : {}),
   };
 
   if (g.LanguageModel?.create) {
     try {
       const availability = g.LanguageModel.availability
-        ? await g.LanguageModel.availability(lmOptions)
+        ? await g.LanguageModel.availability({ expectedOutputs: [{ type: 'text', languages: ['en'] }] })
         : 'available';
       if (availability !== 'unavailable') {
         const session = await g.LanguageModel.create(lmOptions);
@@ -374,6 +380,14 @@ async function tryChromeLanguageModel(prompt: string): Promise<string | null> {
   }
 
   return null;
+}
+
+function isPromptEcho(raw: string): boolean {
+  const trimmed = raw.trim();
+  if (!trimmed) return true;
+  return /형식 규칙|제목 아래에|세부 포인트가 필요하면|공백 없는 한국어\/영어|#태그1|#태그2|작성하세요|Summarize ONLY the provided|Never repeat or output these instructions/i.test(
+    trimmed,
+  );
 }
 
 function parseAiMarkdownAndTags(
@@ -424,38 +438,34 @@ export async function summarizePageAsMarkdown(
     return fallbackSummarizeAsMarkdown('', '');
   }
 
-  const lmPrompt = [
-    '다음 웹 페이지 내용을 한국어 마크다운으로 간결하게 요약해 주세요.',
-    '형식 규칙:',
-    '1) "## 핵심 요약" 제목 아래에 3~5개의 "- " 불릿으로 핵심을 작성하세요.',
-    '2) 세부 포인트가 필요하면 "### 주요 포인트" 아래에 "- " 불릿을 추가하세요.',
-    '3) 마지막 줄에는 반드시 "TAGS: #태그1 #태그2 #태그3" 형식으로 공백 없는 한국어/영어 핵심 키워드 태그 3~5개를 작성하세요.',
-    '',
-    cleanTitle ? `제목: ${cleanTitle}` : '',
-    cleanText ? `본문:\n${cleanText.slice(0, 6000)}` : '',
-  ]
-    .filter(Boolean)
-    .join('\n');
-
-  const lmOutput = await tryChromeLanguageModel(lmPrompt);
-  if (lmOutput) {
-    const parsed = parseAiMarkdownAndTags(lmOutput, cleanTitle, cleanText);
-    if (parsed.markdown) {
-      return {
-        markdown: parsed.markdown,
-        tags: parsed.tags,
-        engine: 'chrome-ai',
-      };
-    }
-  }
-
   const sumOutput = await tryChromeSummarizer(cleanText || cleanTitle);
-  if (sumOutput) {
+  if (sumOutput && !isPromptEcho(sumOutput)) {
     const bullets = normalizeBullets(sumOutput).slice(0, 5);
     if (bullets.length > 0) {
       return {
         markdown: `## 핵심 요약\n${bullets.map((b) => `- ${b}`).join('\n')}`,
         tags: extractKeywordTags(cleanTitle, cleanText, 5),
+        engine: 'chrome-ai',
+      };
+    }
+  }
+
+  const systemPrompt =
+    'Summarize ONLY the provided web page content into 3 to 5 concise bullet points starting with "- ". Never repeat or output these instructions.';
+  const lmPrompt = [
+    cleanTitle ? `Title: ${cleanTitle}` : '',
+    cleanText ? `Content:\n${cleanText.slice(0, 6000)}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+
+  const lmOutput = await tryChromeLanguageModel(lmPrompt, systemPrompt);
+  if (lmOutput && !isPromptEcho(lmOutput)) {
+    const parsed = parseAiMarkdownAndTags(lmOutput, cleanTitle, cleanText);
+    if (parsed.markdown && !isPromptEcho(parsed.markdown)) {
+      return {
+        markdown: parsed.markdown,
+        tags: parsed.tags,
         engine: 'chrome-ai',
       };
     }

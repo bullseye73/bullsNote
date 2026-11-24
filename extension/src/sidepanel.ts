@@ -282,7 +282,9 @@ async function extractActiveTabContent(): Promise<{ title: string; url: string; 
       func: () => {
         const selection = window.getSelection()?.toString().trim() || '';
         const article = document.querySelector('article, main');
-        const text = selection || (article ? (article as HTMLElement).innerText : document.body?.innerText || '');
+        const articleText = article ? (article as HTMLElement).innerText.trim() : '';
+        const bodyText = document.body?.innerText?.trim() || '';
+        const text = selection || (articleText.length >= 200 ? articleText : bodyText || articleText);
         return {
           title: document.title || '',
           url: location.href,
