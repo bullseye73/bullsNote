@@ -666,7 +666,8 @@ export function GoogleSyncModal({ opened, onClose }: GoogleSyncModalProps) {
           </Card>
         )}
 
-        {/* 고급: 커스텀 Google OAuth 클라이언트 ID 설정 */}
+        {/* 고급: 기본 OAuth 클라이언트가 내장되어 있지 않거나 사용자가 이미 입력한 경우에만 노출 */}
+        {(resolveOAuthClient({}, BUILTIN_OAUTH_ENV).source === 'none' || Boolean(customClientId.trim())) && (
         <Card withBorder p="sm" radius="md">
           <Group
             justify="space-between"
@@ -707,6 +708,7 @@ export function GoogleSyncModal({ opened, onClose }: GoogleSyncModalProps) {
             </Stack>
           </Collapse>
         </Card>
+        )}
 
         {/* 보안 및 프라이버시 안내 */}
         <Alert icon={<IconInfoCircle size={16} />} color="blue" radius="md" styles={{ message: { fontSize: 11.5, lineHeight: 1.5 } }}>

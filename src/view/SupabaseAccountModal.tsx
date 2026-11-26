@@ -72,6 +72,7 @@ export function SupabaseAccountModal({ opened, onClose }: SupabaseAccountModalPr
   const [canResendConfirm, setCanResendConfirm] = useState(false);
 
   const currentCfg = SupabaseService.resolveSupabaseConfig();
+  const hasBakedEnv = currentCfg?.source === 'env';
   const [configOpened, setConfigOpened] = useState(!supabaseConfigured);
   const [supabaseUrl, setSupabaseUrl] = useState(currentCfg?.url || '');
   const [supabaseAnonKey, setSupabaseAnonKey] = useState(currentCfg?.anonKey || '');
@@ -396,39 +397,43 @@ export function SupabaseAccountModal({ opened, onClose }: SupabaseAccountModalPr
               </Stack>
             )}
 
-            <Divider />
+            {!hasBakedEnv && (
+              <>
+                <Divider />
 
-            <Button
-              variant="subtle"
-              size="xs"
-              color="gray"
-              leftSection={<IconSettings size={14} />}
-              rightSection={configOpened ? <IconChevronUp size={14} /> : <IconChevronDown size={14} />}
-              onClick={() => setConfigOpened((v) => !v)}
-            >
-              Supabase 연결 설정 (URL / Anon Key)
-            </Button>
-
-            <Collapse in={configOpened}>
-              <Stack gap="xs" p="xs" style={{ border: '1px solid var(--bn-border-subtle)', borderRadius: 8 }}>
-                <TextInput
-                  label="Supabase Project URL"
-                  placeholder="https://xxxx.supabase.co"
-                  value={supabaseUrl}
-                  onChange={(e) => setSupabaseUrl(e.currentTarget.value)}
+                <Button
+                  variant="subtle"
                   size="xs"
-                />
-                <SecretInput
-                  label="Supabase Anon Key"
-                  placeholder="eyJ..."
-                  value={supabaseAnonKey}
-                  onChange={setSupabaseAnonKey}
-                />
-                <Button size="xs" variant="light" onClick={handleSaveConfig}>
-                  연결 설정 저장
+                  color="gray"
+                  leftSection={<IconSettings size={14} />}
+                  rightSection={configOpened ? <IconChevronUp size={14} /> : <IconChevronDown size={14} />}
+                  onClick={() => setConfigOpened((v) => !v)}
+                >
+                  Supabase 연결 설정 (URL / Anon Key)
                 </Button>
-              </Stack>
-            </Collapse>
+
+                <Collapse in={configOpened}>
+                  <Stack gap="xs" p="xs" style={{ border: '1px solid var(--bn-border-subtle)', borderRadius: 8 }}>
+                    <TextInput
+                      label="Supabase Project URL"
+                      placeholder="https://xxxx.supabase.co"
+                      value={supabaseUrl}
+                      onChange={(e) => setSupabaseUrl(e.currentTarget.value)}
+                      size="xs"
+                    />
+                    <SecretInput
+                      label="Supabase Anon Key"
+                      placeholder="eyJ..."
+                      value={supabaseAnonKey}
+                      onChange={setSupabaseAnonKey}
+                    />
+                    <Button size="xs" variant="light" onClick={handleSaveConfig}>
+                      연결 설정 저장
+                    </Button>
+                  </Stack>
+                </Collapse>
+              </>
+            )}
           </>
         )}
 
