@@ -8,6 +8,34 @@ function base64Url(buf) {
   return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
+function escapeHtml(str) {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function focusMainAppWindow(app) {
+  try {
+    if (app && typeof app.focus === 'function') {
+      app.focus({ steal: true });
+    }
+    const wins = BrowserWindow.getAllWindows();
+    for (const win of wins) {
+      if (win && !win.isDestroyed()) {
+        if (win.isMinimized()) win.restore();
+        win.show();
+        win.focus();
+        break;
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 function registerGoogleAuthIpc(app) {
   secureHandle('googleAuth:startLogin', async (_event, options = {}) => {
     const clientId = (options.clientId || '').trim();
@@ -336,6 +364,173 @@ function registerGoogleAuthIpc(app) {
         error: `토큰 갱신 중 네트워크 오류: ${e instanceof Error ? e.message : String(e)}`,
       };
     }
+  });
+
+  // --- Supabase Google OAuth Loopback PKCE 핸들러 ---
+  let pendingSupabaseLoopback = null;
+
+  function closePendingSupabaseLoopback(cancelReason) {
+    if (!pendingSupabaseLoopback) return;
+    const current = pendingSupabaseLoopback;
+    pendingSupabaseLoopback = null;
+    if (current.timer) {
+      clearTimeout(current.timer);
+      current.timer = null;
+    }
+    try {
+      current.server.close();
+    } catch {
+      /* ignore */
+    }
+    if (cancelReason && current.resolve && !current.resolved) {
+      current.resolved = true;
+      current.resolve({ success: false, error: cancelReason });
+    }
+  }
+
+  secureHandle('googleAuth:prepareSupabaseLoopback', async () => {
+    closePendingSupabaseLoopback('새 로그인 요청으로 이전 인증이 취소되었습니다.');
+
+    return new Promise((resolve) => {
+      const server = http.createServer((req, res) => {
+        try {
+          const reqUrl = new URL(req.url || '/', `http://${req.headers.host || '127.0.0.1'}`);
+
+          if (reqUrl.pathname === '/favicon.ico') {
+            res.writeHead(204);
+            res.end();
+            return;
+          }
+
+          if (reqUrl.pathname !== '/auth/callback') {
+            res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+            res.end('Not Found');
+            return;
+          }
+
+          const code = reqUrl.searchParams.get('code');
+          const error = reqUrl.searchParams.get('error');
+          const errorDescription = reqUrl.searchParams.get('error_description');
+
+          const finishWithResult = (result) => {
+            const target = pendingSupabaseLoopback;
+            if (target && target.server === server) {
+              if (target.timer) {
+                clearTimeout(target.timer);
+                target.timer = null;
+              }
+              pendingSupabaseLoopback = null;
+              if (target.resolve && !target.resolved) {
+                target.resolved = true;
+                target.resolve(result);
+              } else {
+                target.bufferedResult = result;
+              }
+            }
+            setTimeout(() => {
+              try {
+                server.close();
+              } catch {
+                /* ignore */
+              }
+            }, 300);
+            focusMainAppWindow(app);
+          };
+
+          if (error || !code) {
+            const errMsg = errorDescription || error || '인증 코드를 받지 못했습니다.';
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+            res.end(`<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>BullsNote 로그인 오류</title></head>
+<body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#0f172a;color:#f8fafc;">
+  <div style="text-align:center;padding:36px 28px;background:#1e293b;border:1px solid rgba(255,255,255,0.1);border-radius:16px;max-width:420px;">
+    <h2 style="color:#fb7185;margin:0 0 12px 0;font-size:20px;">BullsNote 로그인 실패</h2>
+    <p style="color:#cbd5e1;font-size:14px;line-height:1.5;">${escapeHtml(errMsg)}</p>
+    <p style="color:#94a3b8;font-size:13px;">창을 닫고 BullsNote 앱으로 돌아가 다시 시도해주세요.</p>
+  </div>
+</body>
+</html>`);
+            finishWithResult({ success: false, error: errMsg });
+            return;
+          }
+
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+          res.end(`<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>BullsNote 로그인 완료</title></head>
+<body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#0f172a;color:#f8fafc;">
+  <div style="text-align:center;padding:36px 28px;background:#1e293b;border:1px solid rgba(255,255,255,0.1);border-radius:16px;max-width:420px;">
+    <h2 style="color:#38bdf8;margin:0 0 12px 0;font-size:20px;">✓ BullsNote 로그인 완료</h2>
+    <p style="color:#cbd5e1;font-size:14px;line-height:1.5;">BullsNote 로그인 완료 — 창을 닫고 앱으로 돌아가세요</p>
+  </div>
+  <script>setTimeout(() => { window.close(); }, 1000);</script>
+</body>
+</html>`);
+          finishWithResult({ success: true, code });
+        } catch (err) {
+          closePendingSupabaseLoopback(err instanceof Error ? err.message : String(err));
+        }
+      });
+
+      server.once('error', (err) => {
+        if (pendingSupabaseLoopback && pendingSupabaseLoopback.server === server) {
+          pendingSupabaseLoopback = null;
+        }
+        resolve({
+          success: false,
+          error: `루프백 서버 시작 실패: ${err instanceof Error ? err.message : String(err)}`,
+        });
+      });
+
+      server.listen(0, '127.0.0.1', () => {
+        const addr = server.address();
+        const port = addr && typeof addr === 'object' ? addr.port : 0;
+        const callbackUrl = `http://127.0.0.1:${port}/auth/callback`;
+        pendingSupabaseLoopback = {
+          server,
+          port,
+          callbackUrl,
+          resolved: false,
+          resolve: null,
+          timer: null,
+          bufferedResult: null,
+        };
+        resolve({ success: true, callbackUrl });
+      });
+    });
+  });
+
+  secureHandle('googleAuth:awaitSupabaseCallback', async (_event, options = {}) => {
+    const authUrl = options && typeof options.authUrl === 'string' ? options.authUrl : '';
+    if (!authUrl || !authUrl.startsWith('https://')) {
+      closePendingSupabaseLoopback('유효하지 않은 인증 URL입니다.');
+      return { success: false, error: '유효하지 않은 인증 URL입니다.' };
+    }
+
+    if (!pendingSupabaseLoopback || !pendingSupabaseLoopback.server) {
+      return { success: false, error: '루프백 인증 서버가 준비되지 않았습니다.' };
+    }
+
+    if (pendingSupabaseLoopback.bufferedResult) {
+      const res = pendingSupabaseLoopback.bufferedResult;
+      closePendingSupabaseLoopback();
+      return res;
+    }
+
+    return new Promise((resolve) => {
+      const state = pendingSupabaseLoopback;
+      state.resolve = resolve;
+      state.timer = setTimeout(() => {
+        closePendingSupabaseLoopback('인증 시간 초과 (3분이 경과했습니다)');
+      }, 180_000);
+
+      shell.openExternal(authUrl).catch((err) => {
+        closePendingSupabaseLoopback(
+          `시스템 브라우저를 열지 못했습니다: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
+    });
   });
 }
 

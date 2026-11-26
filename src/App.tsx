@@ -32,9 +32,11 @@ import {
   IconCalendarStats,
   IconChecklist,
   IconChevronRight,
+  IconCloudCheck,
   IconFolder,
   IconLayoutSidebarLeftCollapse,
   IconListTree,
+  IconLogin,
   IconMoon,
   IconNotes,
   IconPlus,
@@ -52,6 +54,7 @@ import { PlannerView } from './view/PlannerView';
 import { SidebarView } from './view/SidebarView';
 import { AlarmModal } from './view/AlarmModal';
 import { GoogleSyncModal } from './view/GoogleSyncModal';
+import { SupabaseAccountModal } from './view/SupabaseAccountModal';
 import { WelcomeView } from './view/WelcomeView';
 import { TodosView } from './view/todos/TodosView';
 import { TodayView } from './view/TodayView';
@@ -196,10 +199,16 @@ function Shell() {
     activeTag,
     create,
     openOrCreateDailyNote,
-    syncWithGoogleDrive,
     googleConnected,
     googleConfig,
-    guestMode,
+    primarySyncEngine,
+    isAuthenticated,
+    supabaseUser,
+    isSupabaseSyncing,
+    lastSupabaseSyncedAt,
+    supabaseAccountModalOpened,
+    openSupabaseAccountModal,
+    closeSupabaseAccountModal,
     isSyncing,
     lastSyncedAt,
     googleSyncModalOpened,
@@ -337,8 +346,25 @@ function Shell() {
     : projectPathText;
 
   const user = googleConfig?.user;
+  const isUnifiedSyncing = primarySyncEngine === 'supabase' ? isSupabaseSyncing : false;
+  const unifiedSyncLabel = isUnifiedSyncing
+    ? '동기화 중'
+    : supabaseUser
+    ? supabaseUser.name || supabaseUser.email || '계정'
+    : googleConnected || googleConfig.enabled
+    ? user?.name || 'Google Drive'
+    : '로그인 · 동기화';
+  const unifiedTooltipLabel = supabaseUser
+    ? `${supabaseUser.name || supabaseUser.email} · ${
+        lastSupabaseSyncedAt
+          ? `최근 동기화: ${new Date(lastSupabaseSyncedAt).toLocaleTimeString()}`
+          : 'Supabase 클라우드 연결됨'
+      }`
+    : googleConnected || googleConfig.enabled
+    ? `${user?.name || user?.email || 'Google Drive'} · ${lastSyncText}`
+    : '계정 · 동기화 설정';
 
-  if (!googleConnected && !guestMode) {
+  if (!isAuthenticated) {
     return <WelcomeView />;
   }
 
@@ -471,26 +497,22 @@ function Shell() {
               <ActionIcon
                 size="md"
                 variant="light"
-                color="teal"
-                onClick={() => {
-                  if (googleConnected) {
-                    void syncWithGoogleDrive(false);
-                  } else {
-                    openGoogleSyncModal();
-                  }
-                }}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  openGoogleSyncModal();
-                }}
-                aria-label="Google Drive 동기화"
+                color={supabaseUser ? 'blue' : googleConnected || googleConfig.enabled ? 'teal' : 'blue'}
+                onClick={openSupabaseAccountModal}
+                aria-label="계정 · 동기화"
               >
-                {isSyncing ? (
+                {isUnifiedSyncing ? (
                   <IconRefresh size={16} className="spin-animation" />
+                ) : supabaseUser?.avatarUrl ? (
+                  <Avatar src={supabaseUser.avatarUrl} size={20} radius="xl" />
+                ) : supabaseUser ? (
+                  <IconCloudCheck size={16} />
                 ) : user?.picture ? (
-                  <Avatar src={user.picture} size={20} radius="xl" onClick={(e) => { e.stopPropagation(); openGoogleSyncModal(); }} />
-                ) : (
+                  <Avatar src={user.picture} size={20} radius="xl" />
+                ) : googleConnected || googleConfig.enabled ? (
                   <IconBrandGoogleDrive size={16} />
+                ) : (
+                  <IconLogin size={16} />
                 )}
               </ActionIcon>
               <ActionIcon
@@ -691,6 +713,7 @@ function Shell() {
         )}
 
         <GoogleSyncModal opened={googleSyncModalOpened} onClose={closeGoogleSyncModal} />
+      <SupabaseAccountModal opened={supabaseAccountModalOpened} onClose={closeSupabaseAccountModal} />
         <QuickSearchModal opened={quickSearchModalOpened} onClose={closeQuickSearchModal} />
         <GeminiAiModal opened={geminiModalOpened} onClose={closeGeminiModal} initialTab={geminiModalTab} />
         <QuickCaptureModal />
@@ -851,31 +874,33 @@ function Shell() {
           </Tooltip>
 
 
-          {/* Google Drive 클라우드 동기화 및 계정 프로필 */}
-          <Tooltip
-            label={
-              user
-                ? `${user.name || user.email} (${user.email}) · 최근 동기화: ${lastSyncText}`
-                : `Google Drive 연동됨 (${lastSyncText})`
-            }
-          >
+          {/* 통합 계정 · 동기화 버튼 */}
+          <Tooltip label={unifiedTooltipLabel}>
             <Button
               size="compact-xs"
               variant="light"
-              color="teal"
+              color={supabaseUser ? 'blue' : googleConnected || googleConfig.enabled ? 'teal' : 'blue'}
               leftSection={
-                isSyncing ? (
+                isUnifiedSyncing ? (
                   <IconRefresh size={13} className="spin-animation" />
+                ) : supabaseUser?.avatarUrl ? (
+                  <Avatar src={supabaseUser.avatarUrl} size={16} radius="xl" />
+                ) : supabaseUser ? (
+                  <IconCloudCheck size={13} />
                 ) : user?.picture ? (
                   <Avatar src={user.picture} size={16} radius="xl" />
-                ) : (
+                ) : googleConnected || googleConfig.enabled ? (
                   <IconBrandGoogleDrive size={13} />
+                ) : (
+                  <IconLogin size={13} />
                 )
               }
-              onClick={openGoogleSyncModal}
-              styles={{ root: { height: 26, fontSize: 11.5, paddingLeft: 6, paddingRight: 8 } }}
+              onClick={openSupabaseAccountModal}
+              styles={{ root: { height: 26, fontSize: 11.5, paddingLeft: 6, paddingRight: 8, maxWidth: 180 } }}
             >
-              {isSyncing ? '동기화 중' : user?.name ? user.name.split(' ')[0] : 'Google Drive'}
+              <Text span truncate style={{ fontSize: 11.5, fontWeight: 600 }}>
+                {unifiedSyncLabel}
+              </Text>
             </Button>
           </Tooltip>
 
@@ -986,6 +1011,7 @@ function Shell() {
       </AppShell.Main>
 
       <GoogleSyncModal opened={googleSyncModalOpened} onClose={closeGoogleSyncModal} />
+      <SupabaseAccountModal opened={supabaseAccountModalOpened} onClose={closeSupabaseAccountModal} />
       <QuickSearchModal opened={quickSearchModalOpened} onClose={closeQuickSearchModal} />
       <GeminiAiModal opened={geminiModalOpened} onClose={closeGeminiModal} initialTab={geminiModalTab} />
       <QuickCaptureModal />

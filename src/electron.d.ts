@@ -44,9 +44,23 @@ export interface GoogleRefreshTokenResult {
   expiresAt?: number;
 }
 
+export interface SupabaseLoopbackPrepareResult {
+  success: boolean;
+  callbackUrl?: string;
+  error?: string;
+}
+
+export interface SupabaseLoopbackCallbackResult {
+  success: boolean;
+  code?: string;
+  error?: string;
+}
+
 export interface GoogleAuthApi {
   startLogin(opts?: { clientId?: string; clientSecret?: string }): Promise<GoogleAuthResult>;
   refreshToken(opts: { clientId?: string; clientSecret?: string; refreshToken: string }): Promise<GoogleRefreshTokenResult>;
+  prepareSupabaseLoopback?: () => Promise<SupabaseLoopbackPrepareResult>;
+  awaitSupabaseCallback?: (authUrl: string) => Promise<SupabaseLoopbackCallbackResult>;
 }
 
 export interface McpClientStatus {

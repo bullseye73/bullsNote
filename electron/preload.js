@@ -52,6 +52,8 @@ contextBridge.exposeInMainWorld('bullsNote', {
   googleAuth: {
     startLogin: (opts) => ipcRenderer.invoke('googleAuth:startLogin', opts),
     refreshToken: (opts) => ipcRenderer.invoke('googleAuth:refreshToken', opts),
+    prepareSupabaseLoopback: () => ipcRenderer.invoke('googleAuth:prepareSupabaseLoopback'),
+    awaitSupabaseCallback: (authUrl) => ipcRenderer.invoke('googleAuth:awaitSupabaseCallback', { authUrl }),
   },
   clipper: {
     getInfo: () => ipcRenderer.invoke('clipper:getInfo'),

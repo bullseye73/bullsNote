@@ -37,8 +37,8 @@ BullsNote는 **노트와 할일, 두 기둥**으로 이루어진 개인 지식�
 |---|---|
 | 노트와 할일이 이어져 있다 | 노트 속 체크리스트를 바로 할일로 만들고, 할일을 완료하면 원래 노트의 체크박스도 함께 체크됩니다. |
 | 일정은 할일을 보여주는 방법이다 | 따로 일정을 관리하지 않습니다. 할일의 마감일과 기간이 목록·보드·타임라인에서 서로 다른 모양으로 보입니다. |
-| 로그인 없이 바로 시작한다 | 설치하고 "바로 시작하기"를 누르면 끝입니다. 다른 기기와 쓰고 싶을 때만 Google 계정을 연결합니다. |
-| 데이터는 내 것이다 | 노트는 내 기기와 내 Google Drive에만 저장됩니다. 별도 서버가 없습니다. |
+| 로그인 없이 바로 시작하거나 클라우드로 이어쓴다 | 설치 후 게스트 모드로 바로 시작하거나, Supabase 계정(Google·이메일·매직링크)으로 여러 기기에서 이어서 쓸 수 있습니다. |
+| 데이터는 내 것이다 | 노트는 내 기기(`.md` 볼트/브라우저)에 1차 저장됩니다. 클라우드 동기화는 RLS가 적용된 내 Supabase 프로젝트를 사용하며, Google Drive 수동 백업·가져오기도 지원합니다. |
 
 ![첫 화면](docs/images/welcome.jpg)
 
@@ -113,7 +113,7 @@ BullsNote는 **노트와 할일, 두 기둥**으로 이루어진 개인 지식�
 - **댓글 · 답글(스레드):** 노트 하단에 댓글과 1단계 하위 답글을 달고, 수정·삭제·해결됨 표시 및 미해결 필터링을 할 수 있습니다. 댓글 내용은 노트 검색에도 포함됩니다.
 - **독립 창에서 편집:** 에디터 상단 버튼 또는 노트 목록 `⋯` 메뉴의 "새 창에서 열기"로 노트를 별도 창에 띄워 나란히 보며 편집할 수 있습니다. 메인 창과 독립 창 간 변경·삭제 내용은 실시간으로 동기화됩니다.
 - **편집 히스토리:** 최대 30개까지 자동으로 저장하고, 한 번에 되돌릴 수 있습니다.
-- **내보내기:** 인쇄, PDF 저장, 마크다운·HTML·일반 텍스트로 복사하거나 파일로 저장할 수 있습니다.
+- **내보내기:** 인쇄 미리보기, PDF 저장, 마크다운·HTML·일반 텍스트로 복사하거나 파일로 저장할 수 있습니다. 데스크톱 앱에서는 선택한 노트의 HTML만 오프스크린 창에서 단독 렌더링(`electron/print-ipc.js` · `exportUtils.ts`)하므로 노트 목록이나 사이드바가 섞이지 않습니다.
 
 ### 알림 · Google Calendar
 
@@ -123,11 +123,12 @@ BullsNote는 **노트와 할일, 두 기둥**으로 이루어진 개인 지식�
 - **마감일 알림:** 마감일만 정한 할일은 그날 09:00에 알려줍니다.
 - **Google Calendar 연동:** Google 계정을 연결하면 알림이 캘린더에도 등록됩니다. 그러면 휴대폰에서도 10분 전과 정각에 알림을 받습니다.
 
-### 동기화 — Google Drive
+### 클라우드 동기화 · 계정 (Supabase)
 
-- **저장 위치:** 사이드바 아래 "동기화"에서 "Google로 계속"을 누르면 내 Google Drive에 노트와 첨부파일이 저장됩니다.
-- **다른 기기 연결:** 다른 기기에서는 QR 코드나 연동 코드(`BNM1:…`)로 바로 이어서 쓸 수 있습니다.
-- **증분 동기화:** 바뀐 노트만 주고받습니다.
+- **원클릭 로그인 (`LoginView` · `SupabaseAccountModal`):** Google 원클릭 로그인(웹 PKCE 리디렉트 · Electron 데스크톱 루프백 PKCE), 이메일/비밀번호 회원가입·로그인, 매직링크(비밀번호 없는 로그인), 인증 메일 재발송을 지원합니다. 로그인 없이 게스트 모드로도 바로 사용할 수 있습니다.
+- **단일 클라우드 동기화 엔진 (`primarySyncEngine`):** 로그인 시 Supabase(`bullsnote_notes` · `bullsnote_projects` · `bullsnote_settings`)를 단일 기본 동기화 엔진(`'supabase' | 'local'`)으로 사용하며, RLS(Row Level Security)로 본인 데이터만 격리·동기화해 기존 Drive와의 이중 동기화(split-brain)를 제거했습니다.
+- **Google Drive 수동 백업 · 1회 가져오기:** Google Drive는 자동 노트 동기화 대신 **수동 백업 및 기존 노트 1회 가져오기** 용도로 전환되었습니다. **Google Calendar · Google Tasks**는 기존처럼 독립적인 양방향 연동으로 유지됩니다.
+- **자체 Supabase 연결:** 자세한 프로젝트 생성 및 스키마 적용 방법은 [`docs/SUPABASE_SETUP.md`](docs/SUPABASE_SETUP.md)를 참고하세요.
 
 ### 모바일
 
@@ -160,7 +161,8 @@ BullsNote는 **노트와 할일, 두 기둥**으로 이루어진 개인 지식�
 |---|---|
 | 데스크톱 앱 | `문서/BullsNote` 폴더에 노트 한 개당 `.md` 파일 한 개로 저장됩니다. 맨 위 frontmatter에 정보가 들어가고 본문은 Markdown입니다. 다른 편집기로 고친 내용도 앱이 감지해 다시 읽습니다. 저장 폴더는 사이드바에서 바꿀 수 있습니다. |
 | 웹 · PWA | 브라우저 저장소에 저장됩니다. |
-| Google Drive (선택) | 위 저장 위치와 별도로, 내 Drive에 노트와 첨부파일을 동기화합니다. |
+| Supabase 클라우드 (선택) | 로그인 시 단일 기본 동기화 엔진(`primarySyncEngine: 'supabase'`)으로 동작하며, RLS가 적용된 `bullsnote_notes` · `bullsnote_projects` · `bullsnote_settings` 테이블에 동기화됩니다. |
+| Google Drive (수동 백업 · 1회 가져오기) | 필요 시 내 Drive의 BullsNote 폴더로 수동 백업하거나 기존 노트를 1회 가져옵니다. |
 
 ---
 
@@ -210,14 +212,16 @@ npm run dist
 
 ### 환경 변수 (선택)
 
-"Google로 계속" 버튼으로 바로 로그인하려면 앱에 들어갈 Google OAuth 클라이언트가 필요합니다. 프로젝트 루트에 `.env.local` 파일을 만들고 아래 값을 넣으세요. 이 파일은 Git에 올리지 않습니다.
+Supabase 클라우드 인증·동기화와 Google Calendar/Tasks/Drive 수동 백업을 빌드 시 내장하려면 프로젝트 루트에 `.env.local`(또는 `.env`) 파일을 만들고 아래 값을 넣으세요. 이 파일은 Git에 올리지 않습니다.
 
 ```
+VITE_SUPABASE_URL=<Supabase Project URL>
+VITE_SUPABASE_ANON_KEY=<Supabase Anon Key>
 VITE_GOOGLE_CLIENT_ID=<Google Cloud OAuth 클라이언트 ID>
 VITE_GOOGLE_CLIENT_SECRET=<데스크톱 앱 클라이언트 보안 비밀>
 ```
 
-값이 없어도 앱은 동작합니다. 이때는 동기화 창의 "고급" 메뉴에서 사용자가 직접 클라이언트 ID를 넣어야 합니다.
+값이 없어도 앱은 동작합니다. 로그인 화면·계정 모달의 **"Supabase 연결 설정"** 또는 Google 연동 창의 **"고급"** 메뉴에서 사용자가 직접 입력해 `localStorage`에 저장할 수 있습니다. (세부 설정: [`docs/SUPABASE_SETUP.md`](docs/SUPABASE_SETUP.md))
 
 ### 릴리스 (GitHub Actions)
 
@@ -301,19 +305,22 @@ flowchart LR
         Clipper["Chrome Extension\n(BullsNote Clipper · MV3)"]
     end
 
-    subgraph BridgeLayer["Electron 로컬 브리지"]
+    subgraph ElectronIPC["Electron Main & IPC (electron/)"]
         Bridge["clipper-bridge.js\n(127.0.0.1:41905 HTTP)"]
+        AuthIPC["google-auth-ipc.js\n(PKCE Loopback OAuth)"]
+        PrintIPC["print-ipc.js\n(Offscreen PDF/Print)"]
     end
 
     subgraph App["BullsNote MVC (src/)"]
-        View["View (src/view/)\nToday · Todos · NoteEditorView · EditorToolbar"]
-        Ctrl["Controller (src/controller/)\nNotesController (상태 · 동기화 · 히스토리)"]
-        Model["Model (src/model/)\nNote/Todo 규칙 · codeHighlight · mermaidService · FileVault"]
+        View["View (src/view/)\nLoginView · SupabaseAccountModal\nToday · Todos · NoteEditorView"]
+        Ctrl["Controller (src/controller/)\nNotesController (primarySyncEngine · 상태 · 히스토리)"]
+        Model["Model (src/model/)\nSupabaseService · exportUtils · Note/Todo\ncodeHighlight · mermaidService · FileVault"]
     end
 
-    subgraph Ext["저장소 · AI · 외부 연동"]
+    subgraph Ext["저장소 · 클라우드 · 외부 연동"]
         Vault[("로컬 .md 볼트 / 브라우저 저장소")]
-        Drive["Google Drive · Calendar · Tasks"]
+        Supabase[("Supabase Cloud\n(Auth + RLS DB)")]
+        Google["Google Drive (수동 백업/가져오기)\nCalendar · Tasks (독립 연동)"]
         AI["Gemini API · MCP Server"]
     end
 
@@ -323,27 +330,33 @@ flowchart LR
     Bridge -->|IPC clipper:incoming| Ctrl
     View <--> Ctrl
     Ctrl --> Model
+    Ctrl -->|Auth/Print IPC| AuthIPC
+    Ctrl -->|HTML → PDF/Preview| PrintIPC
     Model --> Vault
-    Model --> Drive
+    Model --> Supabase
+    Model --> Google
     Model --> AI
 ```
 
 ```
 src/
-  model/        규칙과 저장 — 노트·할일·플래너 규칙, 빠른 입력 해석, Daily Note,
-                오늘 브리핑, Google Drive·Calendar 동기화, 창 간 동기화(NoteWindowSync),
+  model/        규칙과 저장 — 노트·할일·플래너 규칙, 빠른 입력 해석, Daily Note, 오늘 브리핑,
+                SupabaseService(Auth·RLS 클라우드 동기화), exportUtils(단독 노트 HTML·PDF/인쇄),
+                Google Drive(수동 백업/가져오기)·Calendar·Tasks, 창 간 동기화(NoteWindowSync),
                 파일 볼트 형식, 코드 강조(codeHighlight) · Mermaid 다이어그램(mermaidService, mermaidSlashMenu)
     __tests__/  Vitest 단위 테스트
-  controller/   NotesController.tsx — 앱 상태와 동작 (useNotes 컨텍스트)
-  view/         화면 — 오늘, 할일(목록·보드·타임라인), 노트 에디터(NoteEditorView · EditorToolbar)·댓글(NoteCommentsView),
-                사이드바, 모바일 화면
-electron/       데스크톱 셸 — 메인·독립 창, 트레이, 저장 폴더, Google 로그인, MCP 등록,
-                로컬 클리퍼 브리지(clipper-bridge.js)
+  controller/   NotesController.tsx — 앱 상태·동작, primarySyncEngine('supabase' | 'local') 오케스트레이션
+  view/         화면 — LoginView, SupabaseAccountModal, 오늘, 할일(목록·보드·타임라인),
+                노트 에디터(NoteEditorView · EditorToolbar)·댓글(NoteCommentsView), 사이드바, 모바일 화면
+electron/       데스크톱 셸 — 메인·독립 창, 트레이, 저장 폴더, PKCE 루프백 인증(google-auth-ipc.js),
+                오프스크린 노트 PDF/인쇄(print-ipc.js), MCP 등록, 로컬 클리퍼 브리지(clipper-bridge.js)
   mcp/          MCP 서버 (의존성 없는 stdio 서버)
+supabase/
+  schema.sql    bullsnote_notes · bullsnote_projects · bullsnote_settings 테이블 및 RLS 정책
 extension/      BullsNote Clipper & Sidekick Chrome MV3 확장프로그램 (Popup · SidePanel · AI 요약 · 오프라인 큐)
   CHROMEWEBSTORE.md  Chrome Web Store 등록 정보 및 Local-First 개인정보 처리방침
 public/         PWA 매니페스트, 서비스 워커, 아이콘
-docs/           설계 스펙과 README 이미지
+docs/           설계 스펙(SUPABASE_SETUP.md 포함) 및 README 이미지
 DESIGN.md       전체 시스템 아키텍처 및 구성도
 ```
 

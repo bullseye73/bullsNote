@@ -20,6 +20,7 @@ import {
   TextInput,
   Tooltip,
 } from '@mantine/core';
+import { useMediaQuery } from '@mantine/hooks';
 import {
   IconAlertCircle,
   IconBrandGoogle,
@@ -27,8 +28,6 @@ import {
   IconCheck,
   IconChevronDown,
   IconChevronUp,
-  IconCloudCheck,
-  IconCloudOff,
   IconCopy,
   IconDeviceMobile,
   IconExternalLink,
@@ -40,7 +39,7 @@ import {
 } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
 import { useNotes } from '../controller/NotesController';
-import { GoogleDriveConfig, GoogleDriveService } from '../model/GoogleDriveService';
+import { GoogleDriveService } from '../model/GoogleDriveService';
 import { GoogleTaskList, GoogleTasksService } from '../model/GoogleTasksService';
 import { SecretInput } from './SecretInput';
 import QRCode from 'qrcode';
@@ -180,11 +179,8 @@ export function GoogleSyncModal({ opened, onClose }: GoogleSyncModalProps) {
       setCustomClientId(cfg.customClientId || '');
       setCustomClientSecret(cfg.customClientSecret || '');
       setLoginError(null);
-      if (googleConnected && !cfg.lastSyncedAt && !isSyncing) {
-        void syncWithGoogleDrive(false);
-      }
     }
-  }, [opened, googleConfig, googleConnected, isSyncing, syncWithGoogleDrive]);
+  }, [opened, googleConfig]);
 
   const handleLogin = async () => {
     setIsLoggingIn(true);
@@ -244,24 +240,37 @@ export function GoogleSyncModal({ opened, onClose }: GoogleSyncModalProps) {
     : '기록 없음';
 
   const user = googleConfig?.user;
+  const isMobile = useMediaQuery('(max-width: 767px)');
 
   return (
     <Modal
       opened={opened}
       onClose={onClose}
+      fullScreen={isMobile}
       title={
         <Group gap="xs">
           <IconBrandGoogleDrive size={22} color="#0f9d58" />
           <Text fw={700} size="md">
-            Google Drive 클라우드 동기화
+            Google 캘린더 · 할일 / Drive 수동 백업
           </Text>
         </Group>
       }
       size="md"
-      radius="md"
+      radius={isMobile ? 0 : 'md'}
       centered
     >
       <Stack gap="md">
+        <Alert
+          icon={<IconInfoCircle size={16} />}
+          color="blue"
+          variant="light"
+          radius="md"
+          styles={{ message: { fontSize: 12, lineHeight: 1.5 } }}
+        >
+          <strong>Google Drive 수동 백업 · 1회 가져오기 (자동 노트 동기화는 Supabase 클라우드로 통합되었습니다)</strong>
+          <br />
+          Google 캘린더·할일(Tasks)은 자동으로 동기화되며, Drive는 수동 백업 및 기존 노트 가져오기 용도로만 사용됩니다.
+        </Alert>
         {/* 상단 연결 상태 카드 */}
         <Paper
           p="md"
@@ -303,11 +312,11 @@ export function GoogleSyncModal({ opened, onClose }: GoogleSyncModalProps) {
 
               <Divider my={4} />
 
-              <Group justify="space-between" align="center">
+              <Group justify="space-between" align="center" wrap="wrap" gap="xs">
                 <Text size="xs" c="dimmed">
-                  최근 동기화: <strong>{lastSyncText}</strong>
+                  최근 수동 백업: <strong>{lastSyncText}</strong>
                 </Text>
-                <Group gap="xs">
+                <Group gap="xs" wrap="wrap">
                   <Button
                     size="compact-xs"
                     variant="light"
@@ -341,7 +350,7 @@ export function GoogleSyncModal({ opened, onClose }: GoogleSyncModalProps) {
                     disabled={isSyncing}
                     onClick={() => void syncWithGoogleDrive(false)}
                   >
-                    {isSyncing ? '동기화 중...' : '지금 동기화'}
+                    {isSyncing ? '백업/가져오기 중...' : '수동 백업 · 가져오기'}
                   </Button>
                   <Button
                     size="compact-xs"
@@ -446,12 +455,12 @@ export function GoogleSyncModal({ opened, onClose }: GoogleSyncModalProps) {
               </Avatar>
               <div style={{ textAlign: 'center' }}>
                 <Text size="sm" fw={700}>
-                  Google Drive로 백업하고 기기 간 맞추기
+                  Google 캘린더 · 할일 연동 및 Drive 수동 백업
                 </Text>
                 <Stack gap={2} mt={8} align="flex-start" style={{ maxWidth: 360, marginInline: 'auto' }}>
-                  <Text size="xs" c="dimmed">✓ 내 Drive의 BullsNote 폴더에만 저장돼요</Text>
-                  <Text size="xs" c="dimmed">✓ 휴대폰 알림은 Google 캘린더로 받아요</Text>
-                  <Text size="xs" c="dimmed">✓ 언제든 끌 수 있고, 꺼도 이 기기 데이터는 그대로예요</Text>
+                  <Text size="xs" c="dimmed">✓ 리마인더 알림을 Google 캘린더와 연동해요</Text>
+                  <Text size="xs" c="dimmed">✓ Google Tasks 할 일 목록을 양방향으로 동기화해요</Text>
+                  <Text size="xs" c="dimmed">✓ 필요 시 내 Drive의 BullsNote 폴더에 수동 백업/가져오기를 실행해요</Text>
                 </Stack>
               </div>
 
@@ -525,16 +534,16 @@ export function GoogleSyncModal({ opened, onClose }: GoogleSyncModalProps) {
         <Card withBorder p="sm" radius="md">
           <Stack gap="sm">
             <Text size="xs" fw={700} c="dimmed" tt="uppercase">
-              동기화 환경 설정
+              Google Tasks 동기화 환경 설정
             </Text>
 
             <Group justify="space-between" align="center">
               <div>
                 <Text size="sm" fw={600}>
-                  실시간 자동 동기화 (Auto-Sync)
+                  Google Tasks 자동 동기화
                 </Text>
                 <Text size="xs" c="dimmed">
-                  노트 작성 후 자동으로 Google Drive에 변경 사항을 업로드합니다.
+                  할일 변경 사항을 주기적으로 Google Tasks와 동기화합니다. (노트 자동 동기화는 Supabase 사용)
                 </Text>
               </div>
               <Switch
@@ -547,8 +556,8 @@ export function GoogleSyncModal({ opened, onClose }: GoogleSyncModalProps) {
             <Divider />
 
             <Select
-              label="원격 변경 감지 폴링 주기"
-              description="다른 기기에서 수정한 내용을 확인하는 주기입니다. 백그라운드에서 트래픽을 거의 발생시키지 않는 초경량 체크로 동작합니다."
+              label="Google Tasks 변경 감지 폴링 주기"
+              description="Google Tasks에서 변경된 할일을 확인하는 주기입니다."
               data={POLLING_INTERVAL_OPTIONS}
               value={pollingInterval}
               onChange={(val) => setPollingInterval(val || '30000')}

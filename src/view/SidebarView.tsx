@@ -29,6 +29,7 @@ import {
   IconLayoutDashboard,
   IconChevronDown,
   IconChevronRight,
+  IconCloudCheck,
   IconCommand,
   IconDots,
   IconFilterOff,
@@ -37,6 +38,7 @@ import {
   IconHash,
   IconIndentDecrease,
   IconIndentIncrease,
+  IconLogin,
   IconPencil,
   IconPlugConnected,
   IconPlus,
@@ -135,6 +137,11 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
     isSyncing,
     syncError,
     openGoogleSyncModal,
+    primarySyncEngine,
+    supabaseUser,
+    isSupabaseSyncing,
+    supabaseSyncError,
+    openSupabaseAccountModal,
     plannerViewActive,
     openPlannerView,
     closePlannerView,
@@ -298,8 +305,45 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
 
   return (
     <Stack gap={8} p="xs" h="100%" style={{ backgroundColor: 'var(--bn-surface-sidebar)' }}>
-      {/* 구글 계정 프로필 카드 */}
-      {user && (
+      {/* 계정 · 클라우드 동기화 프로필 카드 */}
+      {primarySyncEngine === 'supabase' && supabaseUser ? (
+        <Paper
+          p={6}
+          radius="md"
+          withBorder
+          onClick={openSupabaseAccountModal}
+          style={{
+            cursor: 'pointer',
+            backgroundColor: 'var(--bn-card-bg)',
+            borderColor: 'var(--bn-border-subtle)',
+          }}
+        >
+          <Group gap="xs" wrap="nowrap" justify="space-between">
+            <Group gap="xs" wrap="nowrap" style={{ minWidth: 0, flex: 1 }}>
+              <Avatar src={supabaseUser.avatarUrl} size={24} radius="xl" color="blue">
+                <IconCloudCheck size={14} />
+              </Avatar>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <Text size="xs" fw={700} truncate>
+                  {supabaseUser.name || supabaseUser.email || '로그인 사용자'}
+                </Text>
+                {supabaseUser.email && (
+                  <Text size="10px" c="dimmed" truncate>
+                    {supabaseUser.email}
+                  </Text>
+                )}
+              </div>
+            </Group>
+            <Badge
+              size="xs"
+              variant="light"
+              color={supabaseSyncError ? 'red' : isSupabaseSyncing ? 'blue' : 'teal'}
+            >
+              {supabaseSyncError ? '오류' : isSupabaseSyncing ? '동기화중' : 'Cloud'}
+            </Badge>
+          </Group>
+        </Paper>
+      ) : user && googleConfig.enabled ? (
         <Paper
           p={6}
           radius="md"
@@ -331,6 +375,37 @@ export function SidebarView({ onOpenGoogleSyncModal: _onOpenGoogleSyncModal }: S
               color={syncError ? 'red' : isSyncing ? 'blue' : 'teal'}
             >
               {syncError ? '오류' : isSyncing ? '동기화중' : 'Drive'}
+            </Badge>
+          </Group>
+        </Paper>
+      ) : (
+        <Paper
+          p={6}
+          radius="md"
+          withBorder
+          onClick={openSupabaseAccountModal}
+          style={{
+            cursor: 'pointer',
+            backgroundColor: 'var(--bn-card-bg)',
+            borderColor: 'var(--bn-border-subtle)',
+          }}
+        >
+          <Group gap="xs" wrap="nowrap" justify="space-between">
+            <Group gap="xs" wrap="nowrap" style={{ minWidth: 0, flex: 1 }}>
+              <Avatar size={24} radius="xl" color="blue">
+                <IconLogin size={14} />
+              </Avatar>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <Text size="xs" fw={700} truncate>
+                  로그인 · 클라우드 동기화
+                </Text>
+                <Text size="10px" c="dimmed" truncate>
+                  클릭하여 계정 연결
+                </Text>
+              </div>
+            </Group>
+            <Badge size="xs" variant="light" color="gray">
+              로컬
             </Badge>
           </Group>
         </Paper>

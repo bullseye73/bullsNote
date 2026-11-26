@@ -107,6 +107,7 @@
     }
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.119.2",
     "mermaid": "^12.3.0",
     "qrcode": "^1.5.4"
   }
